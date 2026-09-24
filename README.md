@@ -39,6 +39,12 @@ Khi gọi API trên Swagger hoặc Postman, truyền header: `Authorization: Bea
 - `Bearer usr-admin-1`: Quản trị viên hệ thống (Admin Catalog, can thiệp khẩn cấp, tra cứu `access_logs`).
 - `Bearer usr-admin-2`: Quản trị viên độc lập thứ 2 (dùng thực hiện hậu kiểm Four-Eyes Post-Review `CANNOT_REVIEW_OWN_ACTION`).
 
+## 📱 Luồng đăng nhập OTP trên Mobile
+
+Prototype hỗ trợ đăng nhập bằng số điện thoại (SMS) hoặc email với OTP 6 chữ số. Hai endpoint `/auth/v1/otp` và `/auth/v1/verify` trong `openapi.json` thuộc **Supabase Auth**, không phải router của DrugTime; app Flutter nên gọi Supabase Auth SDK (`signInWithOtp` và `verifyOtp`). UI có thể cho gửi lại mã sau 45 giây, còn rate limit do cấu hình Supabase quyết định.
+
+Sau khi OTP được xác thực, app dùng `access_token` nhận được để gọi `POST /api/v1/auth/sync-profile`. Xem chi tiết request/response và ví dụ SMS/email tại `openapi.json` (tag `Supabase Auth (Mobile OTP)`).
+
 ---
 
 ## 🗺️ Bản Đồ Đối Chiếu Toàn Bộ Endpoints (Spec Mapping Table)
@@ -118,4 +124,3 @@ Khi gọi API trên Swagger hoặc Postman, truyền header: `Authorization: Bea
 | 9.14| `/admin/data-deletion-requests` | `/api/v1/admin/data-deletion-requests` | GET | `done` | Danh sách yêu cầu xóa dữ liệu (Phân trang) |
 | 9.15| `/admin/data-deletion-requests/{id}/process`| `/api/v1/admin/data-deletion-requests/{id}/process`| POST | `done` | Duyệt / từ chối yêu cầu xóa dữ liệu cá nhân |
 | 9.16| `/admin/dpia-records` | `/api/v1/admin/dpia-records` | GET/POST | `done` | Quản lý hồ sơ đánh giá tác động riêng tư DPIA |
-

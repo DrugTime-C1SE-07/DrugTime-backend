@@ -6,6 +6,30 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/auth/v1/otp": {
+      "post": {
+        "tags": ["Supabase Auth (Mobile OTP)"],
+        "summary": "Gửi mã OTP đến số điện thoại hoặc email",
+        "description": "Endpoint của Supabase Auth, không thuộc API Gateway DrugTime. App gọi Supabase Auth SDK (signInWithOtp) với phone hoặc email; không gửi cả hai. Supabase gửi OTP qua SMS/email theo phương thức đã chọn. Giao diện có thể bật gửi lại sau 45 giây; giới hạn thực tế do Supabase Auth cấu hình. Sau khi xác thực thành công, gọi POST /api/v1/auth/sync-profile với access token.",
+        "operationId": "supabase_send_otp_auth_v1_otp_post",
+        "servers": [{"url": "https://{supabaseProject}.supabase.co", "variables": {"supabaseProject": {"default": "<project-ref>", "description": "Supabase project reference"}}}],
+        "parameters": [{"name": "apikey", "in": "header", "required": true, "description": "Supabase anon/publishable key", "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/SupabasePhoneOtpRequest"}, {"$ref": "#/components/schemas/SupabaseEmailOtpRequest"}]}, "examples": {"phone": {"value": {"phone": "+84912345678", "create_user": true}}, "email": {"value": {"email": "ten@example.com", "create_user": true}}}}}},
+        "responses": {"200": {"description": "OTP request accepted; Supabase sends the code using its configured provider.", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}}}}, "400": {"description": "Invalid destination or provider configuration"}, "429": {"description": "Rate limit reached; wait before requesting another OTP"}}
+      }
+    },
+    "/auth/v1/verify": {
+      "post": {
+        "tags": ["Supabase Auth (Mobile OTP)"],
+        "summary": "Xác thực OTP 6 chữ số",
+        "description": "Endpoint của Supabase Auth. App gọi Auth SDK (verifyOtp) với cùng phone/email, token là OTP và type tương ứng. Thành công trả session/access token để gọi API DrugTime; nếu mã sai hoặc hết hạn, người dùng quay lại nhập địa chỉ để gửi mã mới.",
+        "operationId": "supabase_verify_otp_auth_v1_verify_post",
+        "servers": [{"url": "https://{supabaseProject}.supabase.co", "variables": {"supabaseProject": {"default": "<project-ref>", "description": "Supabase project reference"}}}],
+        "parameters": [{"name": "apikey", "in": "header", "required": true, "description": "Supabase anon/publishable key", "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/SupabasePhoneOtpVerifyRequest"}, {"$ref": "#/components/schemas/SupabaseEmailOtpVerifyRequest"}]}, "examples": {"phone": {"value": {"phone": "+84912345678", "token": "123456", "type": "sms"}}, "email": {"value": {"email": "ten@example.com", "token": "123456", "type": "email"}}}}}},
+        "responses": {"200": {"description": "OTP verified; returns Supabase session tokens.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SupabaseAuthSession"}}}}, "400": {"description": "Invalid or expired OTP"}, "429": {"description": "Rate limit reached"}}
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -5606,6 +5630,11 @@
   },
   "components": {
     "schemas": {
+      "SupabasePhoneOtpRequest": {"type": "object", "required": ["phone"], "additionalProperties": false, "properties": {"phone": {"type": "string", "description": "Số điện thoại dạng E.164, ví dụ +84912345678", "pattern": "^\\+[1-9]\\d{7,14}$"}, "create_user": {"type": "boolean", "default": true, "description": "Cho phép tạo tài khoản nếu số điện thoại chưa đăng ký"}}},
+      "SupabaseEmailOtpRequest": {"type": "object", "required": ["email"], "additionalProperties": false, "properties": {"email": {"type": "string", "format": "email"}, "create_user": {"type": "boolean", "default": true, "description": "Cho phép tạo tài khoản nếu email chưa đăng ký"}}},
+      "SupabasePhoneOtpVerifyRequest": {"type": "object", "required": ["phone", "token", "type"], "additionalProperties": false, "properties": {"phone": {"type": "string", "description": "Số điện thoại dạng E.164", "pattern": "^\\+[1-9]\\d{7,14}$"}, "token": {"type": "string", "pattern": "^\\d{6}$", "description": "Mã OTP 6 chữ số"}, "type": {"type": "string", "enum": ["sms"]}}},
+      "SupabaseEmailOtpVerifyRequest": {"type": "object", "required": ["email", "token", "type"], "additionalProperties": false, "properties": {"email": {"type": "string", "format": "email"}, "token": {"type": "string", "pattern": "^\\d{6}$", "description": "Mã OTP 6 chữ số"}, "type": {"type": "string", "enum": ["email"]}}},
+      "SupabaseAuthSession": {"type": "object", "required": ["access_token", "token_type", "expires_in", "refresh_token", "user"], "additionalProperties": true, "properties": {"access_token": {"type": "string", "description": "Bearer token dùng gọi API DrugTime"}, "token_type": {"type": "string", "example": "bearer"}, "expires_in": {"type": "integer"}, "expires_at": {"type": "integer"}, "refresh_token": {"type": "string"}, "user": {"type": "object", "additionalProperties": true}}},
       "AcknowledgeRecommendationRequest": {
         "properties": {
           "da_xem": {
