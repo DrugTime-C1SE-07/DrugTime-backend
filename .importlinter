@@ -1,0 +1,464 @@
+# FILE SINH TỰ ĐỘNG bởi scripts/gen_import_contracts.py. Không sửa tay.
+
+[importlinter]
+root_package = drugtime
+include_external_packages = True
+
+[importlinter:contract:hexagon-layers]
+name = Each module: api > adapters > application > domain
+type = layers
+layers =
+    api
+    adapters
+    application
+    domain
+containers =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:pure-core]
+name = domain/application do not import frameworks or I/O libraries
+type = forbidden
+source_modules =
+    drugtime.modules.identity.domain
+    drugtime.modules.identity.application
+    drugtime.modules.consent.domain
+    drugtime.modules.consent.application
+    drugtime.modules.family.domain
+    drugtime.modules.family.application
+    drugtime.modules.access.domain
+    drugtime.modules.access.application
+    drugtime.modules.catalog.domain
+    drugtime.modules.catalog.application
+    drugtime.modules.interaction.domain
+    drugtime.modules.interaction.application
+    drugtime.modules.medication.domain
+    drugtime.modules.medication.application
+    drugtime.modules.adherence.domain
+    drugtime.modules.adherence.application
+    drugtime.modules.ai_meal.domain
+    drugtime.modules.ai_meal.application
+    drugtime.modules.health.domain
+    drugtime.modules.health.application
+forbidden_modules =
+    fastapi
+    starlette
+    sqlalchemy
+    psycopg
+    redis
+    rq
+    rq_scheduler
+    httpx
+    jwt
+    pydantic_settings
+
+[importlinter:contract:shared-kernel]
+name = shared does not depend on modules or entrypoints
+type = forbidden
+source_modules =
+    drugtime.shared
+forbidden_modules =
+    drugtime.modules
+    drugtime.runtime
+    drugtime.notification_gateway
+    drugtime.main
+    drugtime.worker
+
+[importlinter:contract:modules-no-entrypoints]
+name = modules do not import runtime, notification_gateway or entrypoints
+type = forbidden
+source_modules =
+    drugtime.modules
+forbidden_modules =
+    drugtime.runtime
+    drugtime.notification_gateway
+    drugtime.main
+    drugtime.worker
+
+[importlinter:contract:boundary-identity]
+name = Others use identity only through identity.api
+type = forbidden
+source_modules =
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.identity.adapters
+    drugtime.modules.identity.application
+    drugtime.modules.identity.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-identity]
+name = identity application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.identity.application
+    drugtime.modules.identity.domain
+forbidden_modules =
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:boundary-consent]
+name = Others use consent only through consent.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.consent.adapters
+    drugtime.modules.consent.application
+    drugtime.modules.consent.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-consent]
+name = consent application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.consent.application
+    drugtime.modules.consent.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:boundary-family]
+name = Others use family only through family.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.family.adapters
+    drugtime.modules.family.application
+    drugtime.modules.family.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-family]
+name = family application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.family.application
+    drugtime.modules.family.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:boundary-access]
+name = Others use access only through access.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.access.adapters
+    drugtime.modules.access.application
+    drugtime.modules.access.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-access]
+name = access application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.access.application
+    drugtime.modules.access.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:boundary-catalog]
+name = Others use catalog only through catalog.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.catalog.adapters
+    drugtime.modules.catalog.application
+    drugtime.modules.catalog.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-catalog]
+name = catalog application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.catalog.application
+    drugtime.modules.catalog.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:boundary-interaction]
+name = Others use interaction only through interaction.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.interaction.adapters
+    drugtime.modules.interaction.application
+    drugtime.modules.interaction.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-interaction]
+name = interaction application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.interaction.application
+    drugtime.modules.interaction.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:boundary-medication]
+name = Others use medication only through medication.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.medication.adapters
+    drugtime.modules.medication.application
+    drugtime.modules.medication.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-medication]
+name = medication application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.medication.application
+    drugtime.modules.medication.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:boundary-adherence]
+name = Others use adherence only through adherence.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.adherence.adapters
+    drugtime.modules.adherence.application
+    drugtime.modules.adherence.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-adherence]
+name = adherence application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.adherence.application
+    drugtime.modules.adherence.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.ai_meal
+    drugtime.modules.health
+
+[importlinter:contract:boundary-ai_meal]
+name = Others use ai_meal only through ai_meal.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.health
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.ai_meal.adapters
+    drugtime.modules.ai_meal.application
+    drugtime.modules.ai_meal.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-ai_meal]
+name = ai_meal application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.ai_meal.application
+    drugtime.modules.ai_meal.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.health
+
+[importlinter:contract:boundary-health]
+name = Others use health only through health.api
+type = forbidden
+source_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
+    drugtime.runtime
+    drugtime.notification_gateway
+forbidden_modules =
+    drugtime.modules.health.adapters
+    drugtime.modules.health.application
+    drugtime.modules.health.domain
+allow_indirect_imports = True
+
+[importlinter:contract:core-isolation-health]
+name = health application/domain do not import other modules
+type = forbidden
+source_modules =
+    drugtime.modules.health.application
+    drugtime.modules.health.domain
+forbidden_modules =
+    drugtime.modules.identity
+    drugtime.modules.consent
+    drugtime.modules.family
+    drugtime.modules.access
+    drugtime.modules.catalog
+    drugtime.modules.interaction
+    drugtime.modules.medication
+    drugtime.modules.adherence
+    drugtime.modules.ai_meal
