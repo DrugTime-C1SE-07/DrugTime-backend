@@ -17,11 +17,39 @@ class SupabaseAuth:
     def _ident(self, phone: str | None, email: str | None) -> dict:
         return {"phone": phone} if phone else {"email": email}
 
-    def request_otp(self, *, phone: str | None, email: str | None) -> None:
+    def create_user_without_password(self, *, email: str, phone: str) -> dict:
+        headers = {"apikey": self._service, "Authorization": f"Bearer {self._service}"}
+        r = httpx.post(
+            f"{self._base}/admin/users",
+            headers=headers,
+            json={
+                "email": email,
+                "phone": phone,
+                "email_confirm": True,
+                "phone_confirm": True,
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def login_with_password(self, *, email: str, password: str) -> dict:
+        r = httpx.post(
+            f"{self._base}/token?grant_type=password",
+            headers={"apikey": self._anon},
+            json={"email": email, "password": password},
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def request_otp(
+        self, *, phone: str | None, email: str | None, create_user: bool = False
+    ) -> None:
         r = httpx.post(
             f"{self._base}/otp",
             headers={"apikey": self._anon},
-            json={**self._ident(phone, email), "create_user": True},
+            json={**self._ident(phone, email), "create_user": create_user},
             timeout=10,
         )
         r.raise_for_status()

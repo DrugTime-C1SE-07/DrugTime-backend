@@ -2,7 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-from drugtime.modules.identity.domain.user import UserRecord
+from drugtime.modules.identity.domain.user import RegistrationProfile, UserRecord
 from drugtime.shared.uow import UnitOfWork
 
 
@@ -29,6 +29,25 @@ class SqlUsers:
             {"id": user_id, "phone": phone, "email": email},
         )
 
+    def create_registered_user(self, profile: RegistrationProfile) -> None:
+        self._c.execute(
+            text("""
+            INSERT INTO users (
+                ho_ten, ngay_sinh, gioi_tinh, so_dien_thoai, vai_tro
+            )
+            VALUES (
+                :ho_ten, :ngay_sinh, :gioi_tinh, :so_dien_thoai, :vai_tro
+            )
+            """),
+            {
+                "ho_ten": profile.full_name,
+                "ngay_sinh": profile.date_of_birth,
+                "gioi_tinh": profile.gender,
+                "so_dien_thoai": profile.phone_number,
+                "vai_tro": _account_type_to_db(profile.account_type),
+            },
+        )
+
     def device_tokens(self, user_ids: list[UUID], platform: str) -> list[tuple[UUID, str]]:
         rows = self._c.execute(
             text(
@@ -49,3 +68,10 @@ class SqlUsers:
             ),
             {"u": user_id},
         )
+
+
+def _account_type_to_db(account_type) -> str:
+    return {
+        "patient": "Patient",
+        "family_member": "Family Member",
+    }[str(account_type)]

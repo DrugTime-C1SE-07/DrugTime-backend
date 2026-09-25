@@ -7,4 +7,13 @@ def test_liveness_and_routes_mounted():
     client = TestClient(create_app())
     assert client.get("/health/live").json() == {"status": "ok"}
     paths = client.get("/openapi.json").json()["paths"]
-    assert {"/auth/otp", "/auth/verify", "/doses/batch"} <= set(paths)
+    assert {
+        "/auth/register",
+        "/auth/mobile/otp",
+        "/auth/mobile/verify",
+        "/auth/admin/login",
+        "/auth/admin/session/refresh",
+        "/auth/otp",
+        "/auth/verify",
+        "/doses/batch",
+    } <= set(paths)
