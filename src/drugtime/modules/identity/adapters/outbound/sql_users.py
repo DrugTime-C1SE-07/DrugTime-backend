@@ -12,12 +12,19 @@ class SqlUsers:
 
     def get(self, user_id: UUID) -> UserRecord | None:
         row = self._c.execute(
-            text("SELECT id, system_role, erased_at FROM users WHERE id = :id"), {"id": user_id}
+            text(
+                "SELECT id, system_role, erased_at, full_name IS NOT NULL AS profile_complete "
+                "FROM users WHERE id = :id"
+            ),
+            {"id": user_id},
         ).first()
         if row is None:
             return None
         return UserRecord(
-            id=row.id, is_admin=row.system_role == "admin", erased=row.erased_at is not None
+            id=row.id,
+            is_admin=row.system_role == "admin",
+            erased=row.erased_at is not None,
+            profile_complete=row.profile_complete,
         )
 
     def create_minimal(self, user_id: UUID, *, phone: str | None, email: str | None) -> None:
@@ -32,20 +39,28 @@ class SqlUsers:
     def create_registered_user(self, profile: RegistrationProfile) -> None:
         self._c.execute(
             text("""
-            INSERT INTO users (
-                ho_ten, ngay_sinh, gioi_tinh, so_dien_thoai, vai_tro
-            )
-            VALUES (
-                :ho_ten, :ngay_sinh, :gioi_tinh, :so_dien_thoai, :vai_tro
-            )
+            INSERT INTO users (id, full_name, date_of_birth, gender, phone_number, email)
+            VALUES (:id, :full_name, :date_of_birth, :gender, :phone_number, :email)
             """),
             {
-                "ho_ten": profile.full_name,
-                "ngay_sinh": profile.date_of_birth,
-                "gioi_tinh": profile.gender,
-                "so_dien_thoai": profile.phone_number,
-                "vai_tro": _account_type_to_db(profile.account_type),
+                "id": profile.id,
+                "full_name": profile.full_name,
+                "date_of_birth": profile.date_of_birth,
+                "gender": profile.gender,
+                "phone_number": profile.phone_number,
+                "email": profile.email,
             },
+        )
+
+    def update_profile(
+        self, user_id: UUID, *, full_name: str, date_of_birth, gender: str
+    ) -> None:
+        self._c.execute(
+            text(
+                "UPDATE users SET full_name = :full_name, date_of_birth = :dob, gender = :gender "
+                "WHERE id = :id"
+            ),
+            {"full_name": full_name, "dob": date_of_birth, "gender": gender, "id": user_id},
         )
 
     def device_tokens(self, user_ids: list[UUID], platform: str) -> list[tuple[UUID, str]]:
@@ -69,9 +84,3 @@ class SqlUsers:
             {"u": user_id},
         )
 
-
-def _account_type_to_db(account_type) -> str:
-    return {
-        "patient": "Patient",
-        "family_member": "Family Member",
-    }[str(account_type)]
