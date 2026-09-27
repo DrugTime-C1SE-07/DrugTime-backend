@@ -8,6 +8,9 @@ dist/
 build/
 *.egg-info/
 .env
+.env.production
+.env.worker.production
+.env.*.local
 .venv
 env/
 venv/

@@ -15,11 +15,7 @@ class UserRecord:
     id: UUID
     is_admin: bool
     erased: bool
-
-
-class AccountType(StrEnum):
-    PATIENT = "patient"
-    FAMILY_MEMBER = "family_member"
+    profile_complete: bool
 
 
 class SessionType(StrEnum):
@@ -35,7 +31,6 @@ class RegistrationProfile:
     full_name: str
     date_of_birth: date
     gender: str
-    account_type: AccountType
 
 
 @dataclass(frozen=True)

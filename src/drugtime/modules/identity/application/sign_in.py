@@ -1,12 +1,11 @@
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 import jwt
 
 from drugtime.modules.identity.application.ports import AuthProvider, UserRepository
 from drugtime.modules.identity.domain.user import (
-    AccountType,
     AppSession,
     RegistrationProfile,
     SessionType,
@@ -16,12 +15,6 @@ from drugtime.shared.errors import DomainError, Forbidden, Unauthorized
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _GENDERS = {"nam", "nu", "khac", "male", "female", "other"}
-_ACCOUNT_TYPES = {
-    "patient": AccountType.PATIENT,
-    "benh_nhan": AccountType.PATIENT,
-    "family_member": AccountType.FAMILY_MEMBER,
-    "nguoi_than": AccountType.FAMILY_MEMBER,
-}
 
 
 def register_user(
@@ -33,16 +26,14 @@ def register_user(
     so_dien_thoai: str,
     ngay_sinh: date,
     gioi_tinh: str,
-    loai_tai_khoan: str,
     now: datetime,
 ) -> dict:
     email = _validate_email(email)
     phone = _normalize_phone(so_dien_thoai)
-    full_name, gender, account_type = _validate_registration_profile(
+    full_name, gender= _validate_registration_profile(
         ho_ten=ho_ten,
         ngay_sinh=ngay_sinh,
         gioi_tinh=gioi_tinh,
-        loai_tai_khoan=loai_tai_khoan,
         now=now,
     )
 
@@ -55,7 +46,6 @@ def register_user(
         full_name=full_name,
         date_of_birth=ngay_sinh,
         gender=gender,
-        account_type=account_type,
     )
     try:
         users.create_registered_user(profile)
@@ -65,14 +55,13 @@ def register_user(
         raise
     return {
         "user_id": str(user_id),
-        "account_type": str(account_type),
         "supabase": session,
     }
 
 
 def request_mobile_otp(auth: AuthProvider, *, phone: str | None, email: str | None) -> None:
     phone, email = _validate_one_login_identifier(phone=phone, email=email)
-    auth.request_otp(phone=phone, email=email, create_user=False)
+    auth.request_otp(phone=phone, email=email, create_user=True)
 
 
 def verify_mobile_otp(
@@ -88,13 +77,36 @@ def verify_mobile_otp(
     token = _validate_required_text(token, "token")
     supabase_session = auth.verify_otp(phone=phone, email=email, token=token)
     user_id = _user_id_from_session(supabase_session)
+
     user = users.get(user_id)
-    if user is None or user.erased:
+    if user is None:
+        users.create_minimal(user_id, phone=phone, email=email)
+        user = users.get(user_id)
+
+    if user.erased:
         raise Unauthorized("Account cannot be authenticated")
     if user.is_admin:
         raise Forbidden("Admin accounts must use admin web login")
+
     app_session = issue_app_session(user_id, SessionType.MOBILE, now)
-    return _auth_response(user_id, supabase_session, app_session)
+    result = _auth_response(user_id, supabase_session, app_session)
+    result["profile_complete"] = user.profile_complete
+    return result
+
+
+def complete_profile(
+    users: UserRepository,
+    *,
+    user_id: UUID,
+    ho_ten: str,
+    ngay_sinh: date,
+    gioi_tinh: str,
+    now: datetime,
+) -> None:
+    full_name, gender = _validate_registration_profile(
+        ho_ten=ho_ten, ngay_sinh=ngay_sinh, gioi_tinh=gioi_tinh, now=now
+    )
+    users.update_profile(user_id, full_name=full_name, date_of_birth=ngay_sinh, gender=gender)
 
 
 def login_admin(
@@ -130,28 +142,6 @@ def refresh_admin_session(users: UserRepository, *, session_token: str, now: dat
         raise Forbidden("Admin access required")
     app_session = issue_app_session(user_id, SessionType.ADMIN_WEB, now)
     return {"user_id": str(user_id), "session": _session_to_dict(app_session)}
-
-
-def request_otp(auth: AuthProvider, *, phone: str | None, email: str | None) -> None:
-    request_mobile_otp(auth, phone=phone, email=email)
-
-
-def verify_otp(
-    auth: AuthProvider,
-    users: UserRepository,
-    *,
-    phone: str | None,
-    email: str | None,
-    token: str,
-) -> dict:
-    return verify_mobile_otp(
-        auth,
-        users,
-        phone=phone,
-        email=email,
-        token=token,
-        now=datetime.now(UTC),
-    )
 
 
 def issue_app_session(user_id: UUID, session_type: SessionType, now: datetime) -> AppSession:
@@ -271,26 +261,17 @@ def _validate_gender(value: str) -> str:
     return gender
 
 
-def _validate_account_type(value: str) -> AccountType:
-    account_type = _validate_required_text(value, "loai_tai_khoan").lower()
-    if account_type not in _ACCOUNT_TYPES:
-        raise DomainError("Invalid loai_tai_khoan")
-    return _ACCOUNT_TYPES[account_type]
-
-
 def _validate_registration_profile(
     *,
     ho_ten: str,
     ngay_sinh: date,
     gioi_tinh: str,
-    loai_tai_khoan: str,
     now: datetime,
-) -> tuple[str, str, AccountType]:
+) -> tuple[str, str]:
     full_name = _validate_required_text(ho_ten, "ho_ten")
     gender = _validate_gender(gioi_tinh)
-    account_type = _validate_account_type(loai_tai_khoan)
     _validate_birth_date(ngay_sinh, now)
-    return full_name, gender, account_type
+    return full_name, gender
 
 
 def _validate_birth_date(value: date, now: datetime) -> None:

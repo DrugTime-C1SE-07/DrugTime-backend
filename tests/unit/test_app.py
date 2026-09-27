@@ -11,9 +11,8 @@ def test_liveness_and_routes_mounted():
         "/auth/register",
         "/auth/mobile/otp",
         "/auth/mobile/verify",
+        "/auth/profile",
         "/auth/admin/login",
         "/auth/admin/session/refresh",
-        "/auth/otp",
-        "/auth/verify",
         "/doses/batch",
     } <= set(paths)

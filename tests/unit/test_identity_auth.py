@@ -41,12 +41,15 @@ class FakeUsers:
         return self.user
 
     def create_minimal(self, user_id, *, phone, email):
-        pass
+        self.user = UserRecord(user_id, is_admin=False, erased=False, profile_complete=False)
 
     def create_registered_user(self, profile):
         if self.fail_create:
             raise RuntimeError("db down")
         self.created_profile = profile
+
+    def update_profile(self, user_id, *, full_name, date_of_birth, gender):
+        self.updated_profile = (user_id, full_name, date_of_birth, gender)
 
     def device_tokens(self, user_ids, platform):
         return []
@@ -76,7 +79,6 @@ def test_register_creates_supabase_user_without_password_and_local_profile():
         so_dien_thoai="0901234567",
         ngay_sinh=date(1990, 1, 1),
         gioi_tinh="nam",
-        loai_tai_khoan="patient",
         now=datetime(2026, 9, 25, tzinfo=UTC),
     )
 
@@ -99,7 +101,6 @@ def test_register_compensates_supabase_user_when_local_create_fails():
             so_dien_thoai="+84901234567",
             ngay_sinh=date(1990, 1, 1),
             gioi_tinh="nam",
-            loai_tai_khoan="patient",
             now=datetime(2026, 9, 25, tzinfo=UTC),
         )
 
@@ -114,10 +115,29 @@ def test_mobile_otp_requires_exactly_one_identifier():
         sign_in.request_mobile_otp(auth, phone="+84901234567", email="u@example.com")
 
 
+def test_mobile_verify_auto_provisions_new_user_and_flags_incomplete_profile():
+    user_id = uuid4()
+    auth = FakeAuth(user_id)
+    users = FakeUsers(user=None)
+
+    result = sign_in.verify_mobile_otp(
+        auth,
+        users,
+        phone="+84901234567",
+        email=None,
+        token="123456",
+        now=datetime(2026, 9, 25, tzinfo=UTC),
+    )
+
+    assert result["profile_complete"] is False
+    assert users.user is not None
+    assert users.user.id == user_id
+
+
 def test_mobile_verify_rejects_erased_user():
     user_id = uuid4()
     auth = FakeAuth(user_id)
-    users = FakeUsers(UserRecord(user_id, is_admin=False, erased=True))
+    users = FakeUsers(UserRecord(user_id, is_admin=False, erased=True, profile_complete=True))
 
     with pytest.raises(Unauthorized):
         sign_in.verify_mobile_otp(
@@ -133,7 +153,7 @@ def test_mobile_verify_rejects_erased_user():
 def test_admin_login_rejects_non_admin():
     user_id = uuid4()
     auth = FakeAuth(user_id)
-    users = FakeUsers(UserRecord(user_id, is_admin=False, erased=False))
+    users = FakeUsers(UserRecord(user_id, is_admin=False, erased=False, profile_complete=True))
 
     with pytest.raises(Forbidden):
         sign_in.login_admin(
