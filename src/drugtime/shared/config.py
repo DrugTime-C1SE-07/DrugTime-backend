@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     llm_api_url: str = ""
     llm_api_key: str = ""
 
+    session_jwt_secret: str = ""
+    mobile_session_days: int = 10
+    admin_session_idle_minutes: int = 20
+
     timezone: str = "Asia/Ho_Chi_Minh"
     tick_interval_seconds: int = 300
     missed_dose_grace_minutes: int = 60

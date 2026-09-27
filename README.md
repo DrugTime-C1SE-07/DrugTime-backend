@@ -117,5 +117,4 @@ Khi gọi API trên Swagger hoặc Postman, truyền header: `Authorization: Bea
 | 9.13| *(Mới - Điểm 26, 27)*| `/api/v1/admin/audit-logs/{id}/post-review` | POST | `done` | **[MỚI]** Hậu kiểm Four-Eyes trong 24h (3 trạng thái, 5 guardrails, chống tự review) |
 | 9.14| `/admin/data-deletion-requests` | `/api/v1/admin/data-deletion-requests` | GET | `done` | Danh sách yêu cầu xóa dữ liệu (Phân trang) |
 | 9.15| `/admin/data-deletion-requests/{id}/process`| `/api/v1/admin/data-deletion-requests/{id}/process`| POST | `done` | Duyệt / từ chối yêu cầu xóa dữ liệu cá nhân |
-| 9.16| `/admin/dpia-records` | `/api/v1/admin/dpia-records` | GET/POST | `done` | Quản lý hồ sơ đánh giá tác động riêng tư DPIA |
 
