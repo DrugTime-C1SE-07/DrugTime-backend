@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from drugtime.modules.access.application.ports import AccessLog, FactsReader
-from drugtime.modules.access.domain.rules import SCOPE_PURPOSE, Scope, decide
+from drugtime.modules.access.domain.rules import SCOPE_PURPOSE, Action, Scope, decide
 from drugtime.shared.errors import Forbidden
 from drugtime.shared.uow import UnitOfWork
 
@@ -15,8 +15,9 @@ def authorize(
     caller_is_admin: bool,
     patient_id: UUID,
     scope: Scope,
+    action: Action = Action.READ,
 ) -> None:
-    decision = decide(facts.read(uow, caller_id, caller_is_admin, patient_id, scope))
+    decision = decide(facts.read(uow, caller_id, caller_is_admin, patient_id, scope), action)
     if decision.allowed:
         if decision.log_role is not None:
             # Cùng transaction với request: ghi log lỗi thì request lỗi (fail-closed).
