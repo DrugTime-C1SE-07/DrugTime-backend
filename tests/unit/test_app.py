@@ -15,4 +15,8 @@ def test_liveness_and_routes_mounted():
         "/auth/admin/login",
         "/auth/admin/session/refresh",
         "/doses/batch",
+        "/medications",
+        "/medications/{id}",
     } <= set(paths)
+    assert {"post"} <= set(paths["/medications"])
+    assert {"get", "patch"} <= set(paths["/medications/{id}"])

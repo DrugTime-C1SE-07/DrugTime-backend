@@ -1,8 +1,18 @@
 """Giao diện công khai của catalog."""
 
 from drugtime.modules.catalog.adapters.inbound.http import router
+from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
+from drugtime.modules.catalog.domain.medication import CatalogMedication
+from drugtime.shared.uow import UnitOfWork
 
-__all__ = ["router", "run_sync", "sync_if_due"]
+__all__ = ["CatalogMedication", "get_medication", "router", "run_sync", "sync_if_due"]
+
+
+def get_medication(
+    uow: UnitOfWork, medication_id: int, *, include_deleted: bool = False
+) -> CatalogMedication | None:
+    """Thuốc trong danh mục; None nếu không có hoặc đã xóa mềm (trừ khi include_deleted)."""
+    return SqlCatalog().get_medication(uow, medication_id, include_deleted=include_deleted)
 
 
 def sync_if_due(uow_factory) -> None:

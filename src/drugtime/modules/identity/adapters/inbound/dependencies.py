@@ -43,9 +43,10 @@ def _decode(token: str) -> dict:
 
 
 def current_user(
-    authorization: str = Header(...), uow: SqlUnitOfWork = Depends(get_uow)
+    authorization: str | None = Header(None), uow: SqlUnitOfWork = Depends(get_uow)
 ) -> CurrentUser:
-    scheme, _, token = authorization.partition(" ")
+    # Header tùy chọn để thiếu header trả 401 (contract), không phải 422 của FastAPI.
+    scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise Unauthorized("Missing bearer token")
     user = SqlUsers(uow).get(UUID(_decode(token)["sub"]))
