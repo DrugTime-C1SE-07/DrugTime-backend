@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
@@ -21,16 +21,6 @@ class UserRecord:
 class SessionType(StrEnum):
     MOBILE = "mobile"
     ADMIN_WEB = "admin_web"
-
-
-@dataclass(frozen=True)
-class RegistrationProfile:
-    id: UUID
-    email: str
-    phone_number: str
-    full_name: str
-    date_of_birth: date
-    gender: str
 
 
 @dataclass(frozen=True)

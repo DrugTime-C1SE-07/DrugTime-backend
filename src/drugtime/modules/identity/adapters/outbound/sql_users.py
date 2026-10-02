@@ -2,7 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-from drugtime.modules.identity.domain.user import RegistrationProfile, UserRecord
+from drugtime.modules.identity.domain.user import UserRecord
 from drugtime.shared.uow import UnitOfWork
 
 
@@ -34,22 +34,6 @@ class SqlUsers:
                 "ON CONFLICT (id) DO NOTHING"
             ),
             {"id": user_id, "phone": phone, "email": email},
-        )
-
-    def create_registered_user(self, profile: RegistrationProfile) -> None:
-        self._c.execute(
-            text("""
-            INSERT INTO users (id, full_name, date_of_birth, gender, phone_number, email)
-            VALUES (:id, :full_name, :date_of_birth, :gender, :phone_number, :email)
-            """),
-            {
-                "id": profile.id,
-                "full_name": profile.full_name,
-                "date_of_birth": profile.date_of_birth,
-                "gender": profile.gender,
-                "phone_number": profile.phone_number,
-                "email": profile.email,
-            },
         )
 
     def update_profile(

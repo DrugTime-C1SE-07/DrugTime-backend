@@ -1,7 +1,9 @@
-from datetime import date
+from datetime import date, datetime
+from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from drugtime.modules.identity.adapters.inbound.dependencies import current_user
 from drugtime.modules.identity.adapters.outbound.sql_users import SqlUsers
@@ -14,12 +16,13 @@ from drugtime.shared.db import SqlUnitOfWork, get_uow
 router = APIRouter(prefix="/auth", tags=["identity"])
 
 
-class RegisterRequest(BaseModel):
-    email: str
-    ho_ten: str
-    so_dien_thoai: str
-    ngay_sinh: date
-    gioi_tinh: str
+class ErrorOut(BaseModel):
+    detail: str
+
+
+def _errors(*codes: int) -> dict:
+    """Khai báo mã lỗi để OpenAPI sinh ra khớp contract (body do handler chung trong main.py)."""
+    return {code: {"model": ErrorOut} for code in codes}
 
 
 class OtpRequest(BaseModel):
@@ -28,7 +31,7 @@ class OtpRequest(BaseModel):
 
 
 class OtpVerifyRequest(OtpRequest):
-    token: str
+    token: str = Field(min_length=1)
 
 
 class CompleteProfileRequest(BaseModel):
@@ -46,26 +49,35 @@ class AdminSessionRefreshRequest(BaseModel):
     session_token: str
 
 
-@router.post("/register")
-def register(body: RegisterRequest, uow: SqlUnitOfWork = Depends(get_uow)) -> dict:
-    return sign_in.register_user(
-        SupabaseAuth(),
-        SqlUsers(uow),
-        email=body.email,
-        ho_ten=body.ho_ten,
-        so_dien_thoai=body.so_dien_thoai,
-        ngay_sinh=body.ngay_sinh,
-        gioi_tinh=body.gioi_tinh,
-        now=now(),
-    )
+class AppSessionOut(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"]
+    session_type: Literal["mobile", "admin_web"]
+    expires_at: datetime
+    expires_in: int
 
 
-@router.post("/mobile/otp", status_code=204)
+class MobileAuthResultOut(BaseModel):
+    user_id: UUID
+    session: AppSessionOut
+    profile_complete: bool
+
+
+class AdminAuthResultOut(BaseModel):
+    user_id: UUID
+    session: AppSessionOut
+
+
+@router.post("/mobile/otp", status_code=204, responses=_errors(422, 429, 503))
 def request_mobile_otp(body: OtpRequest) -> None:
     sign_in.request_mobile_otp(SupabaseAuth(), phone=body.phone, email=body.email)
 
 
-@router.post("/mobile/verify")
+@router.post(
+    "/mobile/verify",
+    response_model=MobileAuthResultOut,
+    responses=_errors(401, 403, 429, 503),
+)
 def verify_mobile_otp(
     body: OtpVerifyRequest, uow: SqlUnitOfWork = Depends(get_uow)
 ) -> dict:
@@ -79,7 +91,7 @@ def verify_mobile_otp(
     )
 
 
-@router.post("/profile", status_code=204)
+@router.post("/profile", status_code=204, responses=_errors(401))
 def complete_profile(
     body: CompleteProfileRequest,
     user: CurrentUser = Depends(current_user),
@@ -95,7 +107,11 @@ def complete_profile(
     )
 
 
-@router.post("/admin/login")
+@router.post(
+    "/admin/login",
+    response_model=AdminAuthResultOut,
+    responses=_errors(401, 403, 429, 503),
+)
 def login_admin(body: AdminLoginRequest, uow: SqlUnitOfWork = Depends(get_uow)) -> dict:
     return sign_in.login_admin(
         SupabaseAuth(),
@@ -106,7 +122,11 @@ def login_admin(body: AdminLoginRequest, uow: SqlUnitOfWork = Depends(get_uow)) 
     )
 
 
-@router.post("/admin/session/refresh")
+@router.post(
+    "/admin/session/refresh",
+    response_model=AdminAuthResultOut,
+    responses=_errors(401, 403),
+)
 def refresh_admin_session(
     body: AdminSessionRefreshRequest, uow: SqlUnitOfWork = Depends(get_uow)
 ) -> dict:

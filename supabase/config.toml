@@ -247,6 +247,11 @@ otp_expiry = 3600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
+# Email OTP: mẫu mặc định chỉ có link; Mobile App cần mã 6 số ({{ .Token }}).
+[auth.email.template.magic_link]
+subject = "Mã đăng nhập DrugTime"
+content_path = "./supabase/templates/magic_link.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true
@@ -255,7 +260,8 @@ otp_expiry = 3600
 
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
-enable_signup = false
+# Bật ở local để thử OTP số điện thoại bằng test_otp bên dưới (chỉ ảnh hưởng Supabase local).
+enable_signup = true
 # If enabled, users need to confirm their phone number before signing in.
 enable_confirmations = false
 # Template for sending OTP to users
@@ -264,8 +270,9 @@ template = "Your code is {{ .Code }}"
 max_frequency = "5s"
 
 # Use pre-defined map of phone number to OTP for testing.
-# [auth.sms.test_otp]
-# 4152127777 = "123456"
+# Số thử cho Mobile App/test tích hợp: nhập 0900000001 (= +84900000001), mã 123456. Không gửi SMS thật.
+[auth.sms.test_otp]
+84900000001 = "123456"
 
 # Configure logged in session timeouts.
 # [auth.sessions]
@@ -285,12 +292,14 @@ max_frequency = "5s"
 # uri = "pg-functions://<database>/<schema>/<hook_name>"
 
 # Configure one of the supported SMS providers: `twilio`, `twilio_verify`, `messagebird`, `textlocal`, `vonage`.
+# Bật với giá trị GIẢ chỉ để GoTrue local chấp nhận test_otp ở trên; số không có trong test_otp
+# sẽ gửi thất bại (không có SMS thật). Không phải secret. Supabase hosted cấu hình riêng trên dashboard.
 [auth.sms.twilio]
-enabled = false
-account_sid = ""
-message_service_sid = ""
+enabled = true
+account_sid = "AC_LOCAL_FAKE"
+message_service_sid = "MG_LOCAL_FAKE"
 # DO NOT commit your Twilio auth token to git. Use environment variable substitution instead:
-auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
+auth_token = "local-fake-not-a-secret"
 
 # Multi-factor-authentication is available to Supabase Pro plan.
 [auth.mfa]
