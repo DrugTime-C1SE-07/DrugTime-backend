@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     mobile_session_days: int = 10
     admin_session_idle_minutes: int = 20
 
+    # Origin trình duyệt được gọi API (ví dụ Flutter web khi dev), cách nhau bởi dấu phẩy.
+    # Rỗng = không bật CORS. Admin Web gọi qua route handler phía server nên không cần.
+    cors_allowed_origins: str = ""
+
     timezone: str = "Asia/Ho_Chi_Minh"
     tick_interval_seconds: int = 300
     missed_dose_grace_minutes: int = 60

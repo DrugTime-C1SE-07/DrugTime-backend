@@ -15,38 +15,36 @@ class FakeAuth:
         self.deleted = []
         self.otp_requests = []
 
-    def create_user_without_password(self, *, email, phone):
-        return {"id": str(self.user_id), "email": email, "phone": phone}
-
     def login_with_password(self, *, email, password):
-        return {"user": {"id": str(self.user_id)}, "email": email}
+        return {
+            "user": {"id": str(self.user_id)},
+            "access_token": "supabase-access",
+            "refresh_token": "supabase-refresh",
+        }
 
     def request_otp(self, *, phone, email, create_user=False):
         self.otp_requests.append((phone, email, create_user))
 
     def verify_otp(self, *, phone, email, token):
-        return {"user": {"id": str(self.user_id)}, "token": token}
+        return {
+            "user": {"id": str(self.user_id)},
+            "access_token": "supabase-access",
+            "refresh_token": "supabase-refresh",
+        }
 
     def delete_account(self, user_id):
         self.deleted.append(user_id)
 
 
 class FakeUsers:
-    def __init__(self, user=None, fail_create=False):
+    def __init__(self, user=None):
         self.user = user
-        self.fail_create = fail_create
-        self.created_profile = None
 
     def get(self, user_id):
         return self.user
 
     def create_minimal(self, user_id, *, phone, email):
         self.user = UserRecord(user_id, is_admin=False, erased=False, profile_complete=False)
-
-    def create_registered_user(self, profile):
-        if self.fail_create:
-            raise RuntimeError("db down")
-        self.created_profile = profile
 
     def update_profile(self, user_id, *, full_name, date_of_birth, gender):
         self.updated_profile = (user_id, full_name, date_of_birth, gender)
@@ -64,47 +62,6 @@ def session_secret(monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
-
-
-def test_register_creates_supabase_user_without_password_and_local_profile():
-    user_id = uuid4()
-    auth = FakeAuth(user_id)
-    users = FakeUsers()
-
-    result = sign_in.register_user(
-        auth,
-        users,
-        email="USER@example.com",
-        ho_ten="Nguyen Van A",
-        so_dien_thoai="0901234567",
-        ngay_sinh=date(1990, 1, 1),
-        gioi_tinh="nam",
-        now=datetime(2026, 9, 25, tzinfo=UTC),
-    )
-
-    assert result["user_id"] == str(user_id)
-    assert users.created_profile.email == "user@example.com"
-    assert users.created_profile.phone_number == "+84901234567"
-    assert users.created_profile.full_name == "Nguyen Van A"
-
-
-def test_register_compensates_supabase_user_when_local_create_fails():
-    user_id = uuid4()
-    auth = FakeAuth(user_id)
-
-    with pytest.raises(RuntimeError):
-        sign_in.register_user(
-            auth,
-            FakeUsers(fail_create=True),
-            email="user@example.com",
-            ho_ten="Nguyen Van A",
-            so_dien_thoai="+84901234567",
-            ngay_sinh=date(1990, 1, 1),
-            gioi_tinh="nam",
-            now=datetime(2026, 9, 25, tzinfo=UTC),
-        )
-
-    assert auth.deleted == [user_id]
 
 
 def test_mobile_otp_requires_exactly_one_identifier():
@@ -181,3 +138,134 @@ def test_mobile_session_targets_10_days():
     )
 
     assert session.expires_in_seconds == int(timedelta(days=10).total_seconds())
+
+
+NOW = datetime(2026, 9, 25, tzinfo=UTC)
+
+
+def _user(user_id, *, admin=False, erased=False, complete=True):
+    return UserRecord(user_id, is_admin=admin, erased=erased, profile_complete=complete)
+
+
+def test_mobile_verify_response_has_no_supabase_field():
+    user_id = uuid4()
+
+    result = sign_in.verify_mobile_otp(
+        FakeAuth(user_id),
+        FakeUsers(_user(user_id)),
+        phone=None,
+        email="a@b.vn",
+        token="123456",
+        now=NOW,
+    )
+
+    assert set(result) == {"user_id", "session", "profile_complete"}
+    assert "supabase" not in repr(result) and "refresh_token" not in repr(result)
+    assert result["session"]["session_type"] == "mobile"
+
+
+def test_admin_login_response_has_no_supabase_field():
+    user_id = uuid4()
+
+    result = sign_in.login_admin(
+        FakeAuth(user_id),
+        FakeUsers(_user(user_id, admin=True)),
+        email="admin@b.vn",
+        password="password-123",
+        now=NOW,
+    )
+
+    assert set(result) == {"user_id", "session"}
+    assert "supabase" not in repr(result) and "refresh_token" not in repr(result)
+    assert result["session"]["session_type"] == "admin_web"
+
+
+def _verify(user=None, **kw):
+    user_id = user.id if user else uuid4()
+    args = {"phone": None, "email": "a@b.vn", "token": "123456", **kw}
+    return sign_in.verify_mobile_otp(FakeAuth(user_id), FakeUsers(user), now=NOW, **args)
+
+
+def _admin_login(user=None, **kw):
+    user_id = user.id if user else uuid4()
+    args = {"email": "admin@b.vn", "password": "password-123", **kw}
+    return sign_in.login_admin(FakeAuth(user_id), FakeUsers(user), now=NOW, **args)
+
+
+def _profile(**kw):
+    args = {"ho_ten": "Nguyễn Thị Lan", "ngay_sinh": date(1958, 4, 12), "gioi_tinh": "nu", **kw}
+    return sign_in.complete_profile(FakeUsers(), user_id=uuid4(), now=NOW, **args)
+
+
+@pytest.mark.parametrize(
+    "call, error, code",
+    [
+        (
+            lambda: sign_in.request_mobile_otp(FakeAuth(uuid4()), phone=None, email=None),
+            DomainError,
+            "login_identifier_required",
+        ),
+        (
+            lambda: sign_in.request_mobile_otp(FakeAuth(uuid4()), phone="0901", email="a@b.vn"),
+            DomainError,
+            "login_identifier_required",
+        ),
+        (
+            lambda: sign_in.request_mobile_otp(FakeAuth(uuid4()), phone=None, email="not-an-email"),
+            DomainError,
+            "invalid_email",
+        ),
+        (
+            lambda: sign_in.request_mobile_otp(FakeAuth(uuid4()), phone="12ab", email=None),
+            DomainError,
+            "invalid_phone",
+        ),
+        (lambda: _verify(phone="+8412", email=None), DomainError, "invalid_phone"),
+        (lambda: _admin_login(email="nope"), DomainError, "invalid_email"),
+        (lambda: _admin_login(password="short"), DomainError, "password_too_short"),
+        (lambda: _profile(ho_ten="   "), DomainError, "invalid_full_name"),
+        (lambda: _profile(gioi_tinh="x"), DomainError, "invalid_gender"),
+        (lambda: _profile(ngay_sinh=date(2026, 9, 26)), DomainError, "invalid_date_of_birth"),
+        (lambda: _verify(_user(uuid4(), admin=True)), Forbidden, "admin_must_use_web"),
+        (lambda: _admin_login(_user(uuid4(), admin=False)), Forbidden, "admin_required"),
+    ],
+)
+def test_error_codes_are_stable(call, error, code):
+    with pytest.raises(error) as err:
+        call()
+
+    assert str(err.value) == code
+
+
+def test_blank_otp_is_treated_as_wrong_code():
+    with pytest.raises(Unauthorized):
+        _verify(_user(uuid4()), token="   ")
+
+
+def test_refresh_rejects_user_whose_admin_role_was_removed():
+    user_id = uuid4()
+    now = datetime.now(UTC)
+    token = sign_in.issue_app_session(user_id, sign_in.SessionType.ADMIN_WEB, now).token
+
+    with pytest.raises(Forbidden) as err:
+        sign_in.refresh_admin_session(
+            FakeUsers(_user(user_id, admin=False)), session_token=token, now=now
+        )
+
+    assert str(err.value) == "admin_required"
+
+
+def test_complete_profile_accepts_valid_profile():
+    users = FakeUsers()
+    user_id = uuid4()
+
+    sign_in.complete_profile(
+        users,
+        user_id=user_id,
+        ho_ten=" Nguyễn Thị Lan ",
+        ngay_sinh=date(1958, 4, 12),
+        gioi_tinh="NU",
+        now=NOW,
+    )
+
+    assert users.updated_profile == (user_id, "Nguyễn Thị Lan", date(1958, 4, 12), "nu")

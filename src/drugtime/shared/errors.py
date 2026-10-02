@@ -12,3 +12,11 @@ class Unauthorized(Exception):
 
 class Forbidden(Exception):
     """Không có quyền (HTTP 403)."""
+
+
+class TooManyRequests(Exception):
+    """Gửi quá nhanh hoặc quá nhiều lần (HTTP 429)."""
+
+
+class ServiceUnavailable(Exception):
+    """Dịch vụ phụ thuộc lỗi hoặc không phản hồi (HTTP 503)."""

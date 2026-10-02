@@ -2,13 +2,12 @@ from datetime import date
 from typing import Protocol
 from uuid import UUID
 
-from drugtime.modules.identity.domain.user import RegistrationProfile, UserRecord
+from drugtime.modules.identity.domain.user import UserRecord
 
 
 class AuthProvider(Protocol):
     """Supabase Auth: credentials live in Supabase, not public.users."""
 
-    def create_user_without_password(self, *, email: str, phone: str) -> dict: ...
     def login_with_password(self, *, email: str, password: str) -> dict: ...
     def request_otp(
         self, *, phone: str | None, email: str | None, create_user: bool = False
@@ -20,7 +19,6 @@ class AuthProvider(Protocol):
 class UserRepository(Protocol):
     def get(self, user_id: UUID) -> UserRecord | None: ...
     def create_minimal(self, user_id: UUID, *, phone: str | None, email: str | None) -> None: ...
-    def create_registered_user(self, profile: RegistrationProfile) -> None: ...
     def update_profile(
         self, user_id: UUID, *, full_name: str, date_of_birth: date, gender: str
     ) -> None: ...
