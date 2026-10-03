@@ -213,7 +213,13 @@ def test_get_own_medication_returns_contract_fields_only(
     assert r.status_code == 200 and r.json() == out
     # Không lộ user_id, client_uuid, prescription_id hay cột nội bộ khác.
     assert set(out) == CONTRACT_FIELDS
-    assert set(out["medication"]) == {"id", "name", "strength_text", "dosage_form"}
+    assert set(out["medication"]) == {
+        "id",
+        "name",
+        "active_ingredient",
+        "strength_text",
+        "dosage_form",
+    }
     assert set(out["schedules"][0]) == {
         "id",
         "intake_time",

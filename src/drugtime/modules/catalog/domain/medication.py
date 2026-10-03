@@ -10,3 +10,4 @@ class CatalogMedication:
     strength_text: str | None
     dosage_form: str | None
     has_active_ingredients: bool  # False = chưa đủ dữ liệu để kiểm tương tác
+    active_ingredient: str | None = None  # medications.raw_active_ingredient, chỉ để hiển thị

@@ -141,6 +141,27 @@ def test_plan_update_rule_violations(st, ch):
         plan_update(st, ch)
 
 
+def test_plan_update_unstop_stopped_reactivates():
+    p = plan_update(state(stopped=True), changes(stopped=False))
+    assert p.reactivate and not p.stop and not p.close_open_schedules and p.fields == {}
+    assert not p.is_noop
+
+
+def test_plan_update_unstop_active_is_noop():
+    assert plan_update(state(), changes(stopped=False)).is_noop
+    assert plan_update(state(A), changes(stopped=False)).is_noop
+
+
+@pytest.mark.parametrize("stopped", [True, False])
+def test_plan_update_stop_or_unstop_with_other_field_violation(stopped):
+    with rule_error():
+        plan_update(state(stopped=True), changes(stopped=stopped, stock_quantity=3))
+
+
+def test_plan_update_stop_does_not_reactivate():
+    assert not plan_update(state(), changes(stopped=True)).reactivate
+
+
 def test_plan_update_stopped_medication_rejects_changes():
     with rule_error("medication_stopped"):
         plan_update(state(stopped=True), changes(quantity_per_dose=Decimal("2")))

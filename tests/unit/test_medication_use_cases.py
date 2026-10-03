@@ -5,7 +5,9 @@ from uuid import uuid4
 import pytest
 
 from drugtime.modules.medication.application.create_medication import create_medication
+from drugtime.modules.medication.application.delete_medication import delete_medication
 from drugtime.modules.medication.application.get_medication import get_medication
+from drugtime.modules.medication.application.list_medications import list_medications
 from drugtime.modules.medication.application.update_medication import update_medication
 from drugtime.modules.medication.domain.user_medication import (
     DosingMode,
@@ -53,9 +55,32 @@ class FakeCatalog:
 
 
 class Meds:
-    def __init__(self, calls, existing=None, owner=PATIENT, insert_result=7, stopped=False):
+    def __init__(
+        self,
+        calls,
+        existing=None,
+        owner=PATIENT,
+        insert_result=7,
+        stopped=False,
+        deleted=False,
+        mode=DosingMode.SCHEDULED,
+        ids=(9, 4),
+        reopened=2,
+    ):
         self.calls, self.existing, self.owner = calls, existing, owner
-        self.insert_result, self.stopped = insert_result, stopped
+        self.insert_result, self.stopped, self.deleted = insert_result, stopped, deleted
+        self.mode, self.ids, self.reopened = mode, list(ids), reopened
+
+    def ids_of(self, uow, user_id):
+        self.calls.append(("ids_of", user_id))
+        return self.ids
+
+    def mark_deleted(self, uow, i, at):
+        self.calls.append(("mark_deleted", i, at))
+
+    def reactivate(self, uow, i, at):
+        self.calls.append(("reactivate", i, at))
+        return self.reopened
 
     def owner_of(self, uow, i):
         self.calls.append(("owner_of", i))
@@ -79,7 +104,8 @@ class Meds:
 
     def lock(self, uow, i):
         self.calls.append(("lock", i))
-        return MedicationState(DosingMode.SCHEDULED, self.stopped, (1, 2)), LOCKED_AT
+        state = MedicationState(self.mode, self.stopped, (1, 2), deleted=self.deleted)
+        return state, LOCKED_AT
 
     def update_fields(self, uow, i, fields):
         self.calls.append(("update_fields", i, fields))
@@ -114,6 +140,8 @@ WRITES = {
     "update_fields",
     "close_open_schedules",
     "stop",
+    "mark_deleted",
+    "reactivate",
 }
 
 
@@ -191,7 +219,7 @@ def test_create_replay_returns_existing_without_catalog_check():
     # Body sai quy tắc và danh mục đã mất thuốc: lần gửi lại vẫn trả thuốc cũ.
     bad = cmd(intake_times=None)
     view, created = create(
-        calls, bad, meds=Meds(calls, existing=5), catalog=FakeCatalog(calls, info=INFO)
+        calls, bad, meds=Meds(calls, existing=(5, False)), catalog=FakeCatalog(calls, info=INFO)
     )
     assert not created and view.record.id == 5
     assert calls.names() == ["authorize_write", "find_by_client_uuid", "read", "catalog"]
@@ -203,7 +231,7 @@ def test_create_race_returns_row_of_winner():
     class RacingMeds(Meds):
         def find_by_client_uuid(self, uow, user_id, client_uuid):
             super().find_by_client_uuid(uow, user_id, client_uuid)
-            return None if self.calls.names().count("find_by_client_uuid") == 1 else 9
+            return None if self.calls.names().count("find_by_client_uuid") == 1 else (9, False)
 
     view, created = create(calls, meds=RacingMeds(calls, insert_result=None))
     assert not created and view.record.id == 9
@@ -304,3 +332,168 @@ def test_update_stop_and_repeat_stop():
         meds=Meds(calls, stopped=True),
     )
     assert not WRITES & set(calls.names())
+
+
+# --- Gửi lại client_uuid của thuốc đã xoá (contract Q3) --------------------------
+
+
+def test_create_replay_of_deleted_404_creates_nothing():
+    calls = Calls()
+    with pytest.raises(NotFound, match="^user_medication_not_found$"):
+        create(calls, meds=Meds(calls, existing=(5, True)))
+    assert calls.names() == ["authorize_write", "find_by_client_uuid"]
+
+
+def test_create_race_winner_deleted_404():
+    calls = Calls()
+
+    class RacingMeds(Meds):
+        def find_by_client_uuid(self, uow, user_id, client_uuid):
+            super().find_by_client_uuid(uow, user_id, client_uuid)
+            return None if self.calls.names().count("find_by_client_uuid") == 1 else (9, True)
+
+    with pytest.raises(NotFound):
+        create(calls, meds=RacingMeds(calls, insert_result=None))
+    assert "insert_schedules" not in calls.names()
+
+
+# --- Danh sách -------------------------------------------------------------------
+
+
+def lst(calls, caller=PATIENT, **ports):
+    return list_medications(
+        None,
+        caller_id=caller,
+        caller_is_admin=False,
+        access=ports.get("access", Guard(calls)),
+        catalog=ports.get("catalog", FakeCatalog(calls)),
+        meds=ports.get("meds", Meds(calls)),
+    )
+
+
+def test_list_authorizes_self_read_before_reading():
+    calls = Calls()
+    lst(calls)
+    assert calls[0] == ("authorize_read", PATIENT, PATIENT)
+    assert calls[1] == ("ids_of", PATIENT)
+
+
+def test_list_returns_views_in_port_order():
+    calls = Calls()
+    views = lst(calls, meds=Meds(calls, ids=(9, 4, 2)))
+    assert [v.record.id for v in views] == [9, 4, 2]
+
+
+def test_list_empty():
+    calls = Calls()
+    assert lst(calls, meds=Meds(calls, ids=())) == []
+
+
+def test_list_forbidden_reads_nothing():
+    calls = Calls()
+    with pytest.raises(Forbidden):
+        lst(calls, access=Guard(calls, allow_read=False))
+    assert calls.names() == ["authorize_read"]
+
+
+# --- Xoá -------------------------------------------------------------------------
+
+
+def delete(calls, caller=PATIENT, **ports):
+    return delete_medication(
+        None,
+        caller_id=caller,
+        caller_is_admin=False,
+        user_medication_id=7,
+        access=ports.get("access", Guard(calls)),
+        meds=ports.get("meds", Meds(calls)),
+    )
+
+
+def test_delete_unknown_or_deleted_404_before_authorize():
+    calls = Calls()
+    with pytest.raises(NotFound, match="^user_medication_not_found$"):
+        delete(calls, meds=Meds(calls, owner=None))
+    assert calls.names() == ["owner_of"]
+
+
+def test_delete_forbidden_writes_nothing():
+    calls = Calls()
+    with pytest.raises(Forbidden):
+        delete(calls, caller=OTHER, access=Guard(calls, allow_write=False))
+    assert calls.names() == ["owner_of", "authorize_write"]
+    assert calls[1] == ("authorize_write", OTHER, PATIENT)
+
+
+def test_delete_closes_stops_marks_with_same_at():
+    calls = Calls()
+    delete(calls)
+    assert calls == [
+        ("owner_of", 7),
+        ("authorize_write", PATIENT, PATIENT),
+        ("lock", 7),
+        ("close_open_schedules", 7, LOCKED_AT),
+        ("stop", 7, LOCKED_AT),
+        ("mark_deleted", 7, LOCKED_AT),
+    ]
+
+
+def test_delete_race_deleted_after_lock_404():
+    calls = Calls()
+    with pytest.raises(NotFound):
+        delete(calls, meds=Meds(calls, deleted=True))
+    assert not WRITES & set(calls.names())
+
+
+# --- Sửa sau khi xoá, dùng lại ----------------------------------------------------
+
+UNSTOP = MedicationChanges(frozenset({"stopped"}), stopped=False)
+
+
+def test_update_deleted_after_lock_404():
+    calls = Calls()
+    with pytest.raises(NotFound):
+        update(
+            calls,
+            MedicationChanges(frozenset({"quantity_per_dose"}), quantity_per_dose=Decimal("2")),
+            meds=Meds(calls, deleted=True),
+        )
+    assert not WRITES & set(calls.names())
+
+
+def test_reactivate_scheduled_reopens_at_lock_time():
+    calls = Calls()
+    update(calls, UNSTOP, meds=Meds(calls, stopped=True))
+    assert ("reactivate", 7, LOCKED_AT) in calls
+    assert WRITES & set(calls.names()) == {"reactivate"}
+
+
+def test_reactivate_scheduled_zero_schedules_violation():
+    calls = Calls()
+    with pytest.raises(DomainError, match="^medication_rule_violation$"):
+        update(calls, UNSTOP, meds=Meds(calls, stopped=True, reopened=0))
+
+
+def test_reactivate_as_needed_ok_without_schedules():
+    calls = Calls()
+    update(calls, UNSTOP, meds=Meds(calls, stopped=True, mode=DosingMode.AS_NEEDED, reopened=0))
+    assert ("reactivate", 7, LOCKED_AT) in calls
+
+
+def test_unstop_active_is_noop():
+    calls = Calls()
+    update(calls, UNSTOP)
+    assert not WRITES & set(calls.names())
+
+
+def test_reactivate_denied_writes_nothing():
+    calls = Calls()
+    with pytest.raises(Forbidden):
+        update(
+            calls,
+            UNSTOP,
+            caller=OTHER,
+            access=Guard(calls, allow_write=False),
+            meds=Meds(calls, stopped=True),
+        )
+    assert calls.names() == ["owner_of", "authorize_write"]

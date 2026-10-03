@@ -50,4 +50,5 @@ class CatalogAdapter:
             strength_text=m.strength_text,
             dosage_form=m.dosage_form,
             has_active_ingredients=m.has_active_ingredients,
+            active_ingredient=m.active_ingredient,
         )

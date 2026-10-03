@@ -47,6 +47,10 @@ def signed_in():
         ("get", "/medications/1", None),
         ("patch", "/medications/1", {"stopped": True}),
         ("patch", "/medications/1", {}),
+        ("get", "/medications", None),
+        ("delete", "/medications/1", None),
+        ("get", "/catalog/medications?q=amlo", None),
+        ("get", "/catalog/medications?q=", None),  # q sai vẫn 401
         ("post", "/doses/batch", []),
     ],
 )
@@ -102,8 +106,9 @@ def test_create_structural_errors_422_array(signed_in, body, loc):
     "body",
     [
         {},
-        {"stopped": False},
         {"stopped": None},
+        {"stopped": "false"},
+        {"stopped": 0},
         {"quantity_per_dose": None},
         {"dosing_mode": None},
         {"medication_id": 2},
@@ -120,3 +125,26 @@ def test_update_structural_errors_422_array(signed_in, body):
 def test_path_id_must_be_positive_int(signed_in):
     assert signed_in.get("/medications/0").status_code == 422
     assert signed_in.get("/medications/abc").status_code == 422
+
+
+def test_delete_path_id_must_be_positive_int(signed_in):
+    assert signed_in.delete("/medications/0").status_code == 422
+    assert signed_in.delete("/medications/abc").status_code == 422
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "",  # thiếu q
+        "?q=",
+        "?q=%20%20%20",  # toàn khoảng trắng
+        "?q=" + "a" * 101,
+        "?q=amlo&limit=0",
+        "?q=amlo&limit=51",
+        "?q=amlo&limit=abc",
+    ],
+)
+def test_catalog_search_query_errors_422_array(signed_in, query):
+    r = signed_in.get("/catalog/medications" + query)
+    assert r.status_code == 422
+    assert isinstance(r.json()["detail"], list)

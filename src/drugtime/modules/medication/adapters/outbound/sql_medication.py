@@ -80,17 +80,32 @@ class SqlMedication:
 
     def owner_of(self, uow: UnitOfWork, user_medication_id: int) -> UUID | None:
         row = uow.connection.execute(
-            text("SELECT user_id FROM user_medications WHERE id = :id"),
+            text("SELECT user_id FROM user_medications WHERE id = :id AND deleted_at IS NULL"),
             {"id": user_medication_id},
         ).first()
         return None if row is None else row.user_id
 
-    def find_by_client_uuid(self, uow: UnitOfWork, user_id: UUID, client_uuid: UUID) -> int | None:
+    def find_by_client_uuid(
+        self, uow: UnitOfWork, user_id: UUID, client_uuid: UUID
+    ) -> tuple[int, bool] | None:
         row = uow.connection.execute(
-            text("SELECT id FROM user_medications WHERE user_id = :u AND client_uuid = :c"),
+            text(
+                "SELECT id, deleted_at IS NOT NULL AS deleted FROM user_medications "
+                "WHERE user_id = :u AND client_uuid = :c"
+            ),
             {"u": user_id, "c": client_uuid},
         ).first()
-        return None if row is None else row.id
+        return None if row is None else (row.id, row.deleted)
+
+    def ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[int]:
+        rows = uow.connection.execute(
+            text(
+                "SELECT id FROM user_medications WHERE user_id = :u AND deleted_at IS NULL "
+                "ORDER BY id DESC"
+            ),
+            {"u": user_id},
+        )
+        return [r.id for r in rows]
 
     def default_prescription(self, uow: UnitOfWork, user_id: UUID) -> int:
         c = uow.connection
@@ -167,7 +182,10 @@ class SqlMedication:
     def lock(self, uow: UnitOfWork, user_medication_id: int) -> tuple[MedicationState, datetime]:
         c = uow.connection
         row = c.execute(
-            text("SELECT dosing_mode, ended_at FROM user_medications WHERE id = :id FOR UPDATE"),
+            text(
+                "SELECT dosing_mode, ended_at, deleted_at FROM user_medications "
+                "WHERE id = :id FOR UPDATE"
+            ),
             {"id": user_medication_id},
         ).one()
         # Câu lệnh riêng, chạy sau khi đã có khóa: clock_timestamp() là giờ thật lúc này.
@@ -184,6 +202,7 @@ class SqlMedication:
             dosing_mode=_MODE_FROM_DB[row.dosing_mode],
             stopped=row.ended_at is not None,
             open_days_of_week=None if days is None else tuple(sorted(days.days_of_week)),
+            deleted=row.deleted_at is not None,
         )
         return state, at
 
@@ -211,6 +230,38 @@ class SqlMedication:
             text("UPDATE user_medications SET ended_at = :at WHERE id = :id AND ended_at IS NULL"),
             {"id": user_medication_id, "at": at},
         )
+
+    def mark_deleted(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> None:
+        uow.connection.execute(
+            text(
+                "UPDATE user_medications SET deleted_at = :at "
+                "WHERE id = :id AND deleted_at IS NULL"
+            ),
+            {"id": user_medication_id, "at": at},
+        )
+
+    def reactivate(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> int:
+        c = uow.connection
+        # Lịch đóng lúc ngừng có ended_at đúng bằng ended_at của thuốc (stop và
+        # close_open_schedules dùng cùng mốc `at`). Lịch đóng ở lần đổi giờ trước đó thì không.
+        reopened = c.execute(
+            text(
+                "INSERT INTO medication_schedules "
+                "(user_medication_id, intake_time, days_of_week, reminder_enabled, effective_from) "
+                "SELECT ms.user_medication_id, ms.intake_time, ms.days_of_week, "
+                "ms.reminder_enabled, :at "
+                "FROM medication_schedules ms JOIN user_medications um "
+                "ON um.id = ms.user_medication_id "
+                "WHERE um.id = :id AND ms.ended_at = um.ended_at "
+                "ORDER BY ms.intake_time, ms.id"
+            ),
+            {"id": user_medication_id, "at": at},
+        ).rowcount
+        c.execute(
+            text("UPDATE user_medications SET ended_at = NULL WHERE id = :id"),
+            {"id": user_medication_id},
+        )
+        return reopened
 
     def read(self, uow: UnitOfWork, user_medication_id: int) -> UserMedicationRecord:
         c = uow.connection
