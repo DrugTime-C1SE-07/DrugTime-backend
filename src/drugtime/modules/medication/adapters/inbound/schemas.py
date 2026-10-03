@@ -10,7 +10,14 @@ from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 from drugtime.modules.medication.domain.user_medication import (
     DosingMode,
@@ -91,7 +98,7 @@ class UserMedicationUpdate(BaseModel):
     max_doses_per_day: MaxDosesPerDay = None
     intake_timing: IntakeTiming | None = None
     stock_quantity: StockQuantity = None
-    stopped: Literal[True] = None
+    stopped: StrictBool = None  # "false" dạng chuỗi bị 422, như contract (boolean)
 
     @field_validator("intake_times")
     @classmethod
@@ -124,6 +131,7 @@ class UserMedicationUpdate(BaseModel):
 class CatalogMedicationSummary(BaseModel):
     id: int
     name: str
+    active_ingredient: str | None
     strength_text: str | None
     dosage_form: str | None
 
@@ -156,7 +164,11 @@ class UserMedication(BaseModel):
         return cls(
             id=r.id,
             medication=CatalogMedicationSummary(
-                id=m.id, name=m.name, strength_text=m.strength_text, dosage_form=m.dosage_form
+                id=m.id,
+                name=m.name,
+                active_ingredient=m.active_ingredient,
+                strength_text=m.strength_text,
+                dosage_form=m.dosage_form,
             ),
             dosing_mode=r.dosing_mode,
             quantity_per_dose=float(r.quantity_per_dose),
@@ -177,3 +189,9 @@ class UserMedication(BaseModel):
                 for s in r.schedules
             ],
         )
+
+
+class UserMedicationList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[UserMedication]

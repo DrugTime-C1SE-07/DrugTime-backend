@@ -29,10 +29,19 @@ class Catalog(Protocol):
 
 
 class UserMedications(Protocol):
-    def owner_of(self, uow: UnitOfWork, user_medication_id: int) -> UUID | None: ...
+    def owner_of(self, uow: UnitOfWork, user_medication_id: int) -> UUID | None:
+        """Chủ thuốc; None nếu không có hoặc đã xoá mềm (mọi endpoint coi như không tồn tại)."""
+        ...
+
     def find_by_client_uuid(
         self, uow: UnitOfWork, user_id: UUID, client_uuid: UUID
-    ) -> int | None: ...
+    ) -> tuple[int, bool] | None:
+        """(id, đã xoá mềm) của thuốc tạo bằng client_uuid này; None nếu chưa dùng."""
+        ...
+
+    def ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[int]:
+        """Id thuốc chưa xoá của người dùng, id giảm dần."""
+        ...
     def default_prescription(self, uow: UnitOfWork, user_id: UUID) -> int:
         """Id đơn thuốc mặc định của người dùng; tạo nếu chưa có (an toàn khi chạy song song)."""
         ...
@@ -72,4 +81,14 @@ class UserMedications(Protocol):
         self, uow: UnitOfWork, user_medication_id: int, at: datetime
     ) -> None: ...
     def stop(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> None: ...
+    def mark_deleted(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> None:
+        """Đặt deleted_at; gọi sau close_open_schedules và stop (CHECK cần ended_at)."""
+        ...
+
+    def reactivate(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> int:
+        """Dùng lại thuốc đã ngừng: chép từng lịch đóng cùng lúc với lần ngừng gần nhất
+        (ended_at của lịch = ended_at của thuốc) thành lịch mới effective_from = at, **rồi**
+        mới bỏ ended_at của thuốc. Trả số lịch đã mở lại."""
+        ...
+
     def read(self, uow: UnitOfWork, user_medication_id: int) -> UserMedicationRecord: ...

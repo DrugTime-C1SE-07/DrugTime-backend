@@ -12,9 +12,12 @@ from drugtime.main import create_app
 
 CONTRACT = Path(__file__).resolve().parents[3] / "api_contract" / "openapi.json"
 OPERATIONS = [
+    ("get", "/medications"),
     ("post", "/medications"),
     ("get", "/medications/{id}"),
     ("patch", "/medications/{id}"),
+    ("delete", "/medications/{id}"),
+    ("get", "/catalog/medications"),
 ]
 
 pytestmark = pytest.mark.skipif(not CONTRACT.exists(), reason="api_contract chưa checkout")
@@ -85,3 +88,20 @@ def test_request_bodies_forbid_unknown_fields(specs):
         op = app["paths"][path][method]
         if "requestBody" in op:
             assert _object(app, _request(app, op)).get("additionalProperties") is False
+
+
+def _query_params(op):
+    return {
+        p["name"]: (p.get("required", False), {k: p["schema"].get(k) for k in BOUNDS})
+        for p in op.get("parameters", [])
+        if p["in"] == "query"
+    }
+
+
+BOUNDS = ("minLength", "maxLength", "pattern", "minimum", "maximum", "default")
+
+
+def test_catalog_search_query_params_match_contract(specs):
+    contract, app = specs
+    path = "/catalog/medications"
+    assert _query_params(contract["paths"][path]["get"]) == _query_params(app["paths"][path]["get"])

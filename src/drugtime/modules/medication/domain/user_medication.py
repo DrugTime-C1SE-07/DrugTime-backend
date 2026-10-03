@@ -74,6 +74,7 @@ class MedicationState:
     dosing_mode: DosingMode
     stopped: bool
     open_days_of_week: tuple[int, ...] | None  # của lịch đang mở; None nếu không có lịch mở
+    deleted: bool = False  # đã xoá mềm; đọc dưới khóa để thấy lần xoá vừa commit
 
 
 @dataclass(frozen=True)
@@ -83,10 +84,17 @@ class UpdatePlan:
     new_intake_times: tuple[time, ...] = ()
     new_days_of_week: tuple[int, ...] = ALL_WEEK
     stop: bool = False
+    reactivate: bool = False  # dùng lại thuốc đã ngừng: mở lại lịch của lần ngừng gần nhất
 
     @property
     def is_noop(self) -> bool:
-        return not (self.fields or self.close_open_schedules or self.new_intake_times or self.stop)
+        return not (
+            self.fields
+            or self.close_open_schedules
+            or self.new_intake_times
+            or self.stop
+            or self.reactivate
+        )
 
 
 @dataclass(frozen=True)
@@ -98,6 +106,7 @@ class MedicationInfo:
     strength_text: str | None
     dosage_form: str | None
     has_active_ingredients: bool
+    active_ingredient: str | None = None  # văn bản thô của danh mục, chỉ để hiển thị
 
 
 @dataclass(frozen=True)
@@ -161,7 +170,12 @@ def plan_update(state: MedicationState, changes: MedicationChanges) -> UpdatePla
     if "stopped" in sent:
         if sent != {"stopped"}:
             raise _violation()
-        return UpdatePlan() if state.stopped else UpdatePlan(close_open_schedules=True, stop=True)
+        if changes.stopped:
+            if state.stopped:
+                return UpdatePlan()
+            return UpdatePlan(close_open_schedules=True, stop=True)
+        # stopped: false = dùng lại; thuốc đang dùng thì không đổi gì (gửi lại an toàn).
+        return UpdatePlan(reactivate=True) if state.stopped else UpdatePlan()
     if state.stopped:
         raise DomainError(STOPPED)
 

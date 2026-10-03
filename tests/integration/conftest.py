@@ -150,13 +150,29 @@ class Factory:
         self.link(patient_id, family_id, sharing=sharing)
         return family_id
 
-    def catalog_medication(self, *, with_ingredient: bool = True, deleted: bool = False) -> int:
+    def catalog_medication(
+        self,
+        *,
+        with_ingredient: bool = True,
+        deleted: bool = False,
+        name: str | None = None,
+        active_ingredient: str | None = None,
+        dosage_form: str | None = "Viên nén",
+    ) -> int:
+        """`active_ingredient` là medications.raw_active_ingredient (văn bản thô, để hiển thị);
+        `with_ingredient` là liên kết hoạt chất chuẩn dùng cho has_interaction_data."""
         mid = self.db.execute(
             text(
-                "INSERT INTO medications (name, strength_text, dosage_form, deleted_at) "
-                "VALUES (:n, '5 mg', 'Viên nén', CASE WHEN :d THEN now() END) RETURNING id"
+                "INSERT INTO medications (name, raw_active_ingredient, strength_text, "
+                "dosage_form, deleted_at) "
+                "VALUES (:n, :ai, '5 mg', :form, CASE WHEN :d THEN now() END) RETURNING id"
             ),
-            {"n": f"Test drug {uuid4().hex[:8]}", "d": deleted},
+            {
+                "n": name or f"Test drug {uuid4().hex[:8]}",
+                "ai": active_ingredient,
+                "form": dosage_form,
+                "d": deleted,
+            },
         ).scalar_one()
         if with_ingredient:
             aid = self.db.execute(
@@ -189,6 +205,51 @@ class Factory:
             {"u": user_id},
         ).one()
         return dict(row._mapping)
+
+    def schedules(self, user_medication_id: int) -> list[dict]:
+        """Mọi lịch (mở và đóng) của một thuốc, theo id."""
+        rows = self.db.execute(
+            text(
+                "SELECT id, to_char(intake_time, 'HH24:MI') AS intake_time, days_of_week, "
+                "reminder_enabled, effective_from, ended_at FROM medication_schedules "
+                "WHERE user_medication_id = :i ORDER BY id"
+            ),
+            {"i": user_medication_id},
+        )
+        return [dict(r._mapping) for r in rows]
+
+    def medication_row(self, user_medication_id: int) -> dict:
+        row = self.db.execute(
+            text(
+                "SELECT quantity_per_dose, doses_per_day, stock_quantity, ended_at, deleted_at "
+                "FROM user_medications WHERE id = :i"
+            ),
+            {"i": user_medication_id},
+        ).one()
+        return dict(row._mapping)
+
+    def dose_log(self, schedule_id: int, scheduled_at: datetime, status: str = "bo_lo") -> int:
+        """Ghi một liều cho lịch (bo_lo không có taken_at; da_uong/uong_tre có taken_at)."""
+        return self.db.execute(
+            text(
+                "INSERT INTO dose_logs (medication_schedule_id, scheduled_at, taken_at, status) "
+                "VALUES (:s, :at, CASE WHEN :st = 'bo_lo' THEN NULL ELSE :at END, "
+                "CAST(:st AS dose_status)) RETURNING id"
+            ),
+            {"s": schedule_id, "at": scheduled_at, "st": status},
+        ).scalar_one()
+
+    def dose_logs_of(self, user_medication_id: int) -> list[dict]:
+        rows = self.db.execute(
+            text(
+                "SELECT dl.id, dl.medication_schedule_id, dl.scheduled_at, dl.status::text "
+                "AS status FROM dose_logs dl JOIN medication_schedules ms "
+                "ON ms.id = dl.medication_schedule_id WHERE ms.user_medication_id = :i "
+                "ORDER BY dl.id"
+            ),
+            {"i": user_medication_id},
+        )
+        return [dict(r._mapping) for r in rows]
 
     def access_logs(self, patient_id: UUID) -> list[dict]:
         rows = self.db.execute(

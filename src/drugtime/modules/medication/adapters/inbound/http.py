@@ -5,6 +5,7 @@ from drugtime.modules.identity import api as identity
 from drugtime.modules.medication.adapters.inbound.schemas import (
     UserMedication,
     UserMedicationCreate,
+    UserMedicationList,
     UserMedicationUpdate,
 )
 from drugtime.modules.medication.adapters.outbound.other_modules import (
@@ -13,7 +14,9 @@ from drugtime.modules.medication.adapters.outbound.other_modules import (
 )
 from drugtime.modules.medication.adapters.outbound.sql_medication import SqlMedication
 from drugtime.modules.medication.application.create_medication import create_medication
+from drugtime.modules.medication.application.delete_medication import delete_medication
 from drugtime.modules.medication.application.get_medication import get_medication
+from drugtime.modules.medication.application.list_medications import list_medications
 from drugtime.modules.medication.application.update_medication import update_medication
 from drugtime.shared.db import SqlUnitOfWork, get_uow
 
@@ -40,6 +43,27 @@ _UNPROCESSABLE = {
 MedicationId = Path(ge=1, description="Id thuốc của người bệnh (UserMedication.id)")
 
 
+@router.get(
+    "",
+    response_model=UserMedicationList,
+    responses=_ERRORS,
+    operation_id="listUserMedications",
+)
+def get_user_medications(
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> UserMedicationList:
+    views = list_medications(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+    )
+    return UserMedicationList(items=[UserMedication.from_view(v) for v in views])
+
+
 @router.post(
     "",
     status_code=201,
@@ -47,6 +71,10 @@ MedicationId = Path(ge=1, description="Id thuốc của người bệnh (UserMed
     responses={
         200: {"model": UserMedication, "description": "Gửi lại với client_uuid đã dùng"},
         **_ERRORS,
+        404: {
+            "model": ErrorDetail,
+            "description": "user_medication_not_found: gửi lại client_uuid của thuốc đã xoá",
+        },
         **_UNPROCESSABLE,
     },
     operation_id="createUserMedication",
@@ -117,3 +145,26 @@ def patch_user_medication(
         meds=SqlMedication(),
     )
     return UserMedication.from_view(view)
+
+
+@router.delete(
+    "/{id}",
+    status_code=204,
+    response_class=Response,
+    responses={**_ERRORS, **_NOT_FOUND},
+    operation_id="deleteUserMedication",
+)
+def delete_user_medication(
+    id: int = MedicationId,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> Response:
+    delete_medication(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        user_medication_id=id,
+        access=AccessGuardAdapter(),
+        meds=SqlMedication(),
+    )
+    return Response(status_code=204)
