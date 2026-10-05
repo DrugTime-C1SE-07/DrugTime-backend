@@ -45,4 +45,12 @@ class ConsentStore(Protocol):
         """None khi mục đích đó đã có consent hiệu lực (kể cả do request song song)."""
         ...
 
+    def replace_active(
+        self, uow: UnitOfWork, user_id: UUID, purpose: Purpose, document_version: str
+    ) -> ActiveConsent | None:
+        """Thu hồi dòng hiệu lực có phiên bản khác rồi ghi dòng mới, cùng transaction.
+
+        None khi request song song đã thay trước (đã có dòng hiệu lực mới)."""
+        ...
+
     def withdraw_active(self, uow: UnitOfWork, user_id: UUID, purpose: Purpose) -> None: ...

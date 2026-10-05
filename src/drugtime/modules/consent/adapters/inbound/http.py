@@ -73,7 +73,13 @@ def post_consent(
 @router.post(
     "/consents/{purpose}/withdraw",
     response_model=Consent,
-    responses={**_UNAUTHORIZED, 422: {"description": "purpose không hợp lệ"}},
+    responses={
+        **_UNAUTHORIZED,
+        422: {
+            "description": "ValidationError khi purpose không hợp lệ, "
+            "hoặc ErrorDetail consent_not_withdrawable khi purpose là terms"
+        },
+    },
     operation_id="withdrawConsent",
 )
 def post_withdraw_consent(
