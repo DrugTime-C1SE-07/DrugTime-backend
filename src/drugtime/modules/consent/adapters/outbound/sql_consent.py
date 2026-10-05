@@ -47,6 +47,24 @@ class SqlConsents:
         ).first()
         return None if row is None else ActiveConsent(row.consented_at, row.document_version)
 
+    def replace_active(
+        self, uow: UnitOfWork, user_id: UUID, purpose: Purpose, document_version: str
+    ) -> ActiveConsent | None:
+        # Hai câu trong transaction của request. Request song song: câu UPDATE chờ khóa dòng cũ,
+        # sau khi bên kia commit thì dòng cũ không còn dong_y nên không khớp; câu INSERT gặp dòng
+        # mới của bên kia ở index một-dòng-hiệu-lực và trả None. clock_timestamp(): xem
+        # withdraw_active.
+        uow.connection.execute(
+            text(
+                "UPDATE user_consents SET status = 'thu_hoi', "
+                "revoked_at = GREATEST(clock_timestamp(), consented_at) "
+                "WHERE user_id = :u AND consent_type = CAST(:p AS consent_type) "
+                "AND status = 'dong_y' AND document_version <> :v"
+            ),
+            {"u": user_id, "p": str(purpose), "v": document_version},
+        )
+        return self.insert_active(uow, user_id, purpose, document_version)
+
     def withdraw_active(self, uow: UnitOfWork, user_id: UUID, purpose: Purpose) -> None:
         # Không dùng now(): đó là thời điểm bắt đầu transaction, có thể sớm hơn consented_at của
         # dòng vừa được một request cấp song song commit → vi phạm CHECK revoked_at >= consented_at.

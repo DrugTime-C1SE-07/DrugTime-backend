@@ -10,8 +10,11 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-PURPOSES = ["health_data", "family_sharing", "ai_meal"]
+# Thứ tự khai báo của Purpose = thứ tự GET /consents trả (contract). terms: task
+# adhoc-20261003-login-medication-ui-fixes.
+PURPOSES = ["health_data", "family_sharing", "ai_meal", "terms"]
 VERSION = "2026-10-v1"
+OLD_VERSION = "2026-09-v0"
 
 
 def _rows(db, user_id: UUID) -> list[dict]:
@@ -53,7 +56,7 @@ def _create_medication(client, auth, user_id, make, scheduled_body):
 # ------------------------------------------------------------------ AC1
 
 
-def test_new_user_lists_three_not_granted__AC1(client, db, make, auth):
+def test_new_user_lists_four_not_granted__AC1_AC31(client, db, make, auth):
     user = make.user(consents=())
 
     r = client.get("/consents", headers=auth(user))
@@ -104,6 +107,7 @@ def test_grant_health_data_creates_one_row__AC2(client, db, make, auth):
         "health_data": "granted",
         "family_sharing": "not_granted",
         "ai_meal": "not_granted",
+        "terms": "not_granted",
     }
 
 
@@ -334,6 +338,7 @@ def test_only_touches_caller__AC10(client, db, make, auth):
         "health_data": "not_granted",
         "family_sharing": "not_granted",
         "ai_meal": "granted",
+        "terms": "not_granted",
     }
     assert {r["purpose"] for r in _rows(db, a)} == {"health_data", "ai_meal"}
 
@@ -349,7 +354,7 @@ def test_admin_web_session_sees_own_consents(client, make):
     r = client.get("/consents", headers={"Authorization": f"Bearer {token}"})
 
     assert r.status_code == 200, r.text
-    assert [c["status"] for c in r.json()["items"]] == ["not_granted"] * 3
+    assert [c["status"] for c in r.json()["items"]] == ["not_granted"] * len(PURPOSES)
 
 
 # ------------------------------------------------------------------ M1 (review vòng 1, chạy đua)
@@ -386,3 +391,237 @@ def test_withdraw_in_transaction_started_before_concurrent_grant__M1(client, db,
     assert [r["status"] for r in rows] == ["thu_hoi", "thu_hoi"]
     assert all(r["revoked_at"] >= r["consented_at"] for r in rows)
     assert _status(client, auth, user)["health_data"] == "not_granted"
+
+
+# ================================================================== terms
+# Đồng ý Điều khoản dịch vụ và Chính sách quyền riêng tư (task
+# adhoc-20261003-login-medication-ui-fixes, AC24–AC31 của task đó).
+
+
+def _seed_terms(db, user_id: UUID, version: str = OLD_VERSION) -> None:
+    """Dòng terms đang hiệu lực ở phiên bản cho trước, như người dùng đã đồng ý bản cũ.
+
+    Chèn thẳng vì API chỉ nhận phiên bản hiện hành; consented_at lùi một ngày cho rõ thứ tự."""
+    db.execute(
+        text(
+            "INSERT INTO user_consents (user_id, consent_type, document_version, consented_at) "
+            "VALUES (:u, 'terms', :v, now() - interval '1 day')"
+        ),
+        {"u": user_id, "v": version},
+    )
+
+
+def _terms_rows(db, user_id: UUID) -> list[dict]:
+    return [r for r in _rows(db, user_id) if r["purpose"] == "terms"]
+
+
+def _race(send, n: int = 2) -> list:
+    """Chạy n request cùng lúc (sau một barrier), trả các response."""
+    barrier = threading.Barrier(n)
+    responses = []
+
+    def run():
+        barrier.wait()
+        responses.append(send())
+
+    threads = [threading.Thread(target=run) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+    return responses
+
+
+def test_terms_listed_last_with_current_version__AC31(client, make, auth):
+    user = make.user(consents=())
+
+    items = client.get("/consents", headers=auth(user)).json()["items"]
+
+    assert [i["purpose"] for i in items] == PURPOSES
+    assert items[-1] == {
+        "purpose": "terms",
+        "status": "not_granted",
+        "granted_at": None,
+        "document_version": None,
+        "current_document_version": "2026-10-v1",
+    }
+
+
+def test_grant_terms_201_then_200_one_row__AC25(client, db, make, auth):
+    user = make.user(consents=())
+
+    first = _grant(client, auth, user, "terms")
+    again = _grant(client, auth, user, "terms")
+
+    assert (first.status_code, again.status_code) == (201, 200), first.text
+    assert first.json()["purpose"] == "terms"
+    assert (first.json()["status"], first.json()["document_version"]) == ("granted", VERSION)
+    assert again.json() == first.json()  # tick lại không tạo dòng mới, granted_at giữ nguyên
+    [row] = _rows(db, user)
+    assert (row["purpose"], row["status"], row["document_version"]) == ("terms", "dong_y", VERSION)
+    assert _status(client, auth, user)["terms"] == "granted"
+
+
+def test_grant_terms_replaces_outdated_version__AC26(client, db, make, auth):
+    user = make.user(consents=())
+    _seed_terms(db, user)
+    [old] = _terms_rows(db, user)
+    listed = client.get("/consents", headers=auth(user)).json()["items"][-1]
+    assert (listed["document_version"], listed["current_document_version"]) == (
+        OLD_VERSION,
+        VERSION,
+    )
+
+    r = _grant(client, auth, user, "terms")
+
+    assert r.status_code == 201, r.text
+    assert (r.json()["document_version"], r.json()["status"]) == (VERSION, "granted")
+    revoked, active = _terms_rows(db, user)
+    assert (revoked["id"], revoked["status"], revoked["document_version"]) == (
+        old["id"],
+        "thu_hoi",
+        OLD_VERSION,
+    )
+    assert revoked["revoked_at"] is not None
+    assert revoked["revoked_at"] >= revoked["consented_at"]
+    assert (active["status"], active["document_version"], active["revoked_at"]) == (
+        "dong_y",
+        VERSION,
+        None,
+    )
+    assert datetime.fromisoformat(r.json()["granted_at"]) == active["consented_at"]
+
+    again = _grant(client, auth, user, "terms")  # đã đúng bản hiện hành: không thay nữa
+    assert again.status_code == 200
+    assert len(_terms_rows(db, user)) == 2
+
+
+def test_outdated_health_data_is_kept_not_replaced(client, db, make, auth):
+    """Thay phiên bản chỉ áp dụng cho terms; health_data giữ hành vi 1.14 (task riêng)."""
+    user = make.user(consents=())
+    make.consent(user, "health_data")  # document_version 'test', khác bản hiện hành
+
+    r = _grant(client, auth, user, "health_data")
+
+    assert r.status_code == 200
+    assert r.json()["document_version"] == "test"
+    assert [(row["status"], row["document_version"]) for row in _rows(db, user)] == [
+        ("dong_y", "test")
+    ]
+
+
+def test_grant_terms_wrong_version_422_writes_nothing__AC27(client, db, make, auth):
+    fresh = make.user(consents=())
+    seeded = make.user(consents=())
+    _seed_terms(db, seeded)
+    seeded_before = _rows(db, seeded)
+
+    for user in (fresh, seeded):
+        for version in (OLD_VERSION, "2026-11-v1", "2026-10-V1"):
+            r = _grant(client, auth, user, "terms", version=version)
+            assert (r.status_code, r.json()) == (422, {"detail": "consent_document_outdated"})
+
+    assert _rows(db, fresh) == []
+    assert _rows(db, seeded) == seeded_before  # bản cũ không bị thu hồi
+
+
+def test_withdraw_terms_422_keeps_row__AC28(client, db, make, auth):
+    user = make.user(consents=())
+    _grant(client, auth, user, "terms")
+    before = _rows(db, user)
+
+    r = _withdraw(client, auth, user, "terms")
+
+    assert (r.status_code, r.json()) == (422, {"detail": "consent_not_withdrawable"})
+    assert _rows(db, user) == before
+    assert before[0]["status"] == "dong_y"
+    assert _status(client, auth, user)["terms"] == "granted"
+
+
+def test_withdraw_terms_without_active_is_also_422__AC28(client, db, make, auth):
+    user = make.user(consents=())
+
+    r = _withdraw(client, auth, user, "terms")
+
+    assert (r.status_code, r.json()) == (422, {"detail": "consent_not_withdrawable"})
+    assert _rows(db, user) == []
+
+
+def test_concurrent_terms_replace_one_active_row__AC29(client, db, make, auth):
+    # Lặp vài người dùng để tăng khả năng hai transaction thực sự chồng nhau.
+    for _ in range(3):
+        user = make.user(consents=())
+        _seed_terms(db, user)
+
+        responses = _race(lambda user=user: _grant(client, auth, user, "terms"))
+
+        assert sorted(r.status_code for r in responses) == [200, 201], [r.text for r in responses]
+        assert responses[0].json() == responses[1].json()
+        rows = _terms_rows(db, user)
+        assert [(r["status"], r["document_version"]) for r in rows] == [
+            ("thu_hoi", OLD_VERSION),
+            ("dong_y", VERSION),
+        ]
+        assert rows[0]["revoked_at"] >= rows[0]["consented_at"]
+
+
+def test_concurrent_first_terms_grant_one_row__AC29(client, db, make, auth):
+    user = make.user(consents=())
+
+    responses = _race(lambda: _grant(client, auth, user, "terms"))
+
+    assert sorted(r.status_code for r in responses) == [200, 201]
+    assert [(r["status"], r["document_version"]) for r in _terms_rows(db, user)] == [
+        ("dong_y", VERSION)
+    ]
+
+
+def test_terms_does_not_affect_pep__AC30(client, make, auth, scheduled_body):
+    """terms không phải quyền truy cập dữ liệu: rút health_data vẫn chặn ngay ở request kế tiếp."""
+    user = make.user(consents=())
+    _grant(client, auth, user, "terms")
+    _grant(client, auth, user, "health_data")
+    med = _create_medication(client, auth, user, make, scheduled_body)
+    assert med.status_code == 201, med.text
+
+    # Thử rút terms (bị từ chối) không làm đổi quyền đọc thuốc.
+    assert _withdraw(client, auth, user, "terms").status_code == 422
+    assert client.get("/medications", headers=auth(user)).status_code == 200
+
+    assert _withdraw(client, auth, user, "health_data").status_code == 200
+    denied = client.get("/medications", headers=auth(user))
+    assert (denied.status_code, denied.json()) == (403, {"detail": "consent_revoked"})
+
+
+def test_terms_alone_does_not_open_medications__AC30(client, make, auth, scheduled_body):
+    user = make.user(consents=())
+    assert _grant(client, auth, user, "terms").status_code == 201
+
+    for r in (
+        client.get("/medications", headers=auth(user)),
+        _create_medication(client, auth, user, make, scheduled_body),
+    ):
+        assert (r.status_code, r.json()) == (403, {"detail": "consent_revoked"})
+
+
+def test_terms_without_health_data_family_still_denied__AC30(client, make, auth, scheduled_body):
+    """Người bệnh có terms + family_sharing nhưng đã rút health_data: người thân bị từ chối,
+    có dòng denied. Cặp được phép kiểm trước khi rút."""
+    patient = make.user(consents=())
+    for purpose in ("terms", "health_data", "family_sharing"):
+        assert _grant(client, auth, patient, purpose).status_code == 201
+    family = make.user(consents=())
+    make.link(patient, family, sharing=True)
+    med = _create_medication(client, auth, patient, make, scheduled_body).json()
+
+    allowed = client.get(f"/medications/{med['id']}", headers=auth(family))
+    assert allowed.status_code == 200, allowed.text
+    assert make.access_logs(patient)[-1]["result"] == "allowed"
+
+    _withdraw(client, auth, patient, "health_data")
+
+    denied = client.get(f"/medications/{med['id']}", headers=auth(family))
+    assert denied.status_code == 403
+    last = make.access_logs(patient)[-1]
+    assert (last["actor_user_id"], last["result"]) == (family, "denied")
+    assert _status(client, auth, patient)["terms"] == "granted"

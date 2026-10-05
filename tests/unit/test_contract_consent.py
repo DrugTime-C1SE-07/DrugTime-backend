@@ -15,7 +15,7 @@ OPERATIONS = [
     ("post", "/consents"),
     ("post", "/consents/{purpose}/withdraw"),
 ]
-PURPOSES = ["health_data", "family_sharing", "ai_meal"]
+PURPOSES = ["health_data", "family_sharing", "ai_meal", "terms"]
 
 pytestmark = pytest.mark.skipif(not CONTRACT.exists(), reason="api_contract chưa checkout")
 
@@ -61,3 +61,19 @@ def test_purpose_and_status_enums_match_contract(specs):
     )
     status = _object(app, app["components"]["schemas"]["Consent"]["properties"]["status"])
     assert status["enum"] == contract["components"]["schemas"]["ConsentStatus"]["enum"]
+
+
+def test_withdraw_declares_422_for_not_withdrawable(specs):
+    contract, app = specs
+    c_422 = contract["paths"]["/consents/{purpose}/withdraw"]["post"]["responses"]["422"]
+    a_422 = app["paths"]["/consents/{purpose}/withdraw"]["post"]["responses"]["422"]
+    assert c_422["content"]["application/json"]["examples"]["not_withdrawable"]["value"] == {
+        "detail": "consent_not_withdrawable"
+    }
+    assert "consent_not_withdrawable" in a_422["description"]
+
+
+def test_consent_list_has_one_item_per_purpose(specs):
+    contract, _ = specs
+    items = contract["components"]["schemas"]["ConsentList"]["properties"]["items"]
+    assert items["minItems"] == items["maxItems"] == len(PURPOSES)

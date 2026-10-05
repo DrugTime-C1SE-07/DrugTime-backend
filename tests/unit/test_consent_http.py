@@ -74,6 +74,20 @@ def test_withdraw_invalid_purpose_422(signed_in):
     assert r.json()["detail"][0]["loc"] == ["path", "purpose"]
 
 
+def test_withdraw_terms_422_not_withdrawable(signed_in):
+    # Bị chặn ở domain trước khi chạm store, nên không cần DB.
+    r = signed_in.post("/consents/terms/withdraw")
+    assert r.status_code == 422
+    assert r.json() == {"detail": "consent_not_withdrawable"}
+
+
+def test_grant_accepts_terms_purpose_in_body(signed_in):
+    # Sai phiên bản bị chặn ở domain trước khi chạm store: chứng minh body nhận purpose terms.
+    r = signed_in.post("/consents", json={"purpose": "terms", "document_version": "2026-09-v0"})
+    assert r.status_code == 422
+    assert r.json() == {"detail": "consent_document_outdated"}
+
+
 def test_consent_routes_mounted():
     paths = TestClient(create_app()).get("/openapi.json").json()["paths"]
     assert {"get", "post"} <= set(paths["/consents"])
