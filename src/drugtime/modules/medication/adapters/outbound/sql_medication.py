@@ -8,7 +8,7 @@ from drugtime.shared.uow import UnitOfWork
 
 
 class SqlMedication:
-    def schedule_owner(self, uow: UnitOfWork, schedule_id: UUID) -> UUID | None:
+    def schedule_owner(self, uow: UnitOfWork, schedule_id: int) -> UUID | None:
         row = uow.connection.execute(
             text(
                 "SELECT um.user_id FROM medication_schedules ms "
@@ -18,7 +18,7 @@ class SqlMedication:
         ).first()
         return None if row is None else row.user_id
 
-    def schedule_ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[UUID]:
+    def schedule_ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[int]:
         rows = uow.connection.execute(
             text(
                 "SELECT ms.id FROM medication_schedules ms "
