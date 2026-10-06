@@ -3,7 +3,11 @@ from typing import Protocol
 from uuid import UUID
 
 from drugtime.modules.adherence.domain.alert import Alert
-from drugtime.modules.adherence.domain.dose import DoseConfirmation
+from drugtime.modules.adherence.domain.dose import (
+    DoseConfirmation,
+    DoseConfirmationPersistenceResult,
+    DoseStatus,
+)
 from drugtime.shared.uow import UnitOfWork
 
 
@@ -14,14 +18,14 @@ class NotificationPort(Protocol):
 
 
 class DoseLogs(Protocol):
-    def upsert_confirmation(self, uow: UnitOfWork, c: DoseConfirmation) -> None: ...
-    def mark_missed(
-        self, uow: UnitOfWork, schedule_id: UUID, scheduled_at: datetime
-    ) -> UUID | None:
+    def upsert_confirmation(
+        self, uow: UnitOfWork, c: DoseConfirmation, status: DoseStatus
+    ) -> DoseConfirmationPersistenceResult: ...
+    def mark_missed(self, uow: UnitOfWork, schedule_id: int, scheduled_at: datetime) -> int | None:
         """Tạo dòng Bỏ lỡ nếu chưa có; trả id dòng mới, None nếu đã tồn tại."""
         ...
 
-    def erase_for_schedules(self, uow: UnitOfWork, schedule_ids: list[UUID]) -> None: ...
+    def erase_for_schedules(self, uow: UnitOfWork, schedule_ids: list[int]) -> None: ...
 
 
 class Notifications(Protocol):
@@ -47,8 +51,8 @@ class AccessGuard(Protocol):
 
 
 class Schedules(Protocol):
-    def owner(self, uow: UnitOfWork, schedule_id: UUID) -> UUID | None: ...
-    def ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[UUID]: ...
+    def owner(self, uow: UnitOfWork, schedule_id: int) -> UUID | None: ...
+    def ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[int]: ...
     def occurrences_between(self, uow: UnitOfWork, start: datetime, end: datetime) -> list: ...
 
 
