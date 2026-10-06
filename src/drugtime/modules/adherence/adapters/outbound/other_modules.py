@@ -26,10 +26,10 @@ class AccessGuardAdapter:
 
 
 class SchedulesAdapter:
-    def owner(self, uow: UnitOfWork, schedule_id: UUID) -> UUID | None:
+    def owner(self, uow: UnitOfWork, schedule_id: int) -> UUID | None:
         return medication.schedule_owner(uow, schedule_id)
 
-    def ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[UUID]:
+    def ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[int]:
         return medication.schedule_ids_of(uow, user_id)
 
     def occurrences_between(self, uow: UnitOfWork, start: datetime, end: datetime) -> list:

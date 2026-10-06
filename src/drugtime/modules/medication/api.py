@@ -18,11 +18,11 @@ __all__ = [
 ]
 
 
-def schedule_owner(uow: UnitOfWork, schedule_id: UUID) -> UUID | None:
+def schedule_owner(uow: UnitOfWork, schedule_id: int) -> UUID | None:
     return SqlMedication().schedule_owner(uow, schedule_id)
 
 
-def schedule_ids_of(uow: UnitOfWork, user_id: UUID) -> list[UUID]:
+def schedule_ids_of(uow: UnitOfWork, user_id: UUID) -> list[int]:
     return SqlMedication().schedule_ids_of(uow, user_id)
 
 
