@@ -23,6 +23,11 @@ SCOPE_PURPOSE: dict[Scope, str] = {
 }
 
 
+class Action(StrEnum):
+    READ = "read"
+    WRITE = "write"
+
+
 class ActorRole(StrEnum):
     FAMILY = "family"
     ADMIN = "admin"
@@ -46,11 +51,20 @@ class Decision:
     reason: str | None = None
 
 
-def decide(f: AccessFacts) -> Decision:
+def _role(f: AccessFacts) -> ActorRole:
+    if f.active_sharing_link and f.family_sharing_consent and f.purpose_consent:
+        return ActorRole.FAMILY
+    if f.caller_is_admin:
+        return ActorRole.ADMIN
+    return ActorRole.NO_ACCESS
+
+
+def decide(f: AccessFacts, action: Action = Action.READ) -> Decision:
+    """Chính chủ: theo purpose consent, không ghi log. Người khác chỉ được đọc;
+    ghi luôn bị từ chối, log_role vẫn là vai thực tế để nhật ký phân biệt được."""
     if f.caller_id == f.patient_id:
         return Decision(f.purpose_consent, None, None if f.purpose_consent else "consent_revoked")
-    if f.active_sharing_link and f.family_sharing_consent and f.purpose_consent:
-        return Decision(True, ActorRole.FAMILY)
-    if f.caller_is_admin:
-        return Decision(True, ActorRole.ADMIN)
-    return Decision(False, ActorRole.NO_ACCESS, "khong_co_quyen")
+    role = _role(f)
+    if action is Action.READ and role is not ActorRole.NO_ACCESS:
+        return Decision(True, role)
+    return Decision(False, role, "khong_co_quyen")

@@ -1,6 +1,7 @@
 """Composition root của Backend API (container Backend API)."""
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from drugtime.modules.access import api as access
@@ -13,7 +14,15 @@ from drugtime.modules.health import api as health
 from drugtime.modules.identity import api as identity
 from drugtime.modules.interaction import api as interaction
 from drugtime.modules.medication import api as medication
-from drugtime.shared.errors import DomainError, Forbidden, NotFound, Unauthorized
+from drugtime.shared.config import get_settings
+from drugtime.shared.errors import (
+    DomainError,
+    Forbidden,
+    NotFound,
+    ServiceUnavailable,
+    TooManyRequests,
+    Unauthorized,
+)
 
 MODULES = [
     identity,
@@ -28,11 +37,27 @@ MODULES = [
     health,
 ]
 
-_STATUS = {NotFound: 404, Unauthorized: 401, Forbidden: 403, DomainError: 422}
+_STATUS = {
+    NotFound: 404,
+    Unauthorized: 401,
+    Forbidden: 403,
+    DomainError: 422,
+    TooManyRequests: 429,
+    ServiceUnavailable: 503,
+}
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="DrugTime API", version="0.1.0")
+    origins = [o.strip() for o in get_settings().cors_allowed_origins.split(",") if o.strip()]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=False,  # xác thực bằng bearer, không dùng cookie
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
     for module in MODULES:
         app.include_router(module.router)
 

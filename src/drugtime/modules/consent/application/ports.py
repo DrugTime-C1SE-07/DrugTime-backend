@@ -1,7 +1,9 @@
 from typing import Protocol
 from uuid import UUID
 
+from drugtime.modules.consent.domain.consent import ActiveConsent
 from drugtime.modules.consent.domain.deletion_request import DeletionRequest
+from drugtime.modules.consent.domain.purpose import Purpose
 from drugtime.shared.uow import UnitOfWork
 
 
@@ -30,3 +32,25 @@ class DeletionRequests(Protocol):
 
 class ConsentReader(Protocol):
     def has_active(self, uow: UnitOfWork, user_id: UUID, purpose: str) -> bool: ...
+
+
+class ConsentStore(Protocol):
+    """user_consents chỉ ghi thêm: cấp là dòng mới, rút là đánh dấu dòng đang hiệu lực."""
+
+    def active(self, uow: UnitOfWork, user_id: UUID) -> dict[Purpose, ActiveConsent]: ...
+
+    def insert_active(
+        self, uow: UnitOfWork, user_id: UUID, purpose: Purpose, document_version: str
+    ) -> ActiveConsent | None:
+        """None khi mục đích đó đã có consent hiệu lực (kể cả do request song song)."""
+        ...
+
+    def replace_active(
+        self, uow: UnitOfWork, user_id: UUID, purpose: Purpose, document_version: str
+    ) -> ActiveConsent | None:
+        """Thu hồi dòng hiệu lực có phiên bản khác rồi ghi dòng mới, cùng transaction.
+
+        None khi request song song đã thay trước (đã có dòng hiệu lực mới)."""
+        ...
+
+    def withdraw_active(self, uow: UnitOfWork, user_id: UUID, purpose: Purpose) -> None: ...

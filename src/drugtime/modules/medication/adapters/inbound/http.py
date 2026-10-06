@@ -1,7 +1,170 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Path, Response
+from pydantic import BaseModel
+
+from drugtime.modules.identity import api as identity
+from drugtime.modules.medication.adapters.inbound.schemas import (
+    UserMedication,
+    UserMedicationCreate,
+    UserMedicationList,
+    UserMedicationUpdate,
+)
+from drugtime.modules.medication.adapters.outbound.other_modules import (
+    AccessGuardAdapter,
+    CatalogAdapter,
+)
+from drugtime.modules.medication.adapters.outbound.sql_medication import SqlMedication
+from drugtime.modules.medication.application.create_medication import create_medication
+from drugtime.modules.medication.application.delete_medication import delete_medication
+from drugtime.modules.medication.application.get_medication import get_medication
+from drugtime.modules.medication.application.list_medications import list_medications
+from drugtime.modules.medication.application.update_medication import update_medication
+from drugtime.shared.db import SqlUnitOfWork, get_uow
 
 router = APIRouter(prefix="/medications", tags=["medication"])
 
-# TODO: CRUD thuốc/lịch của patient (authorize qua access.api, validate qua catalog.api);
-#       GET /patients/{id}/schedules cho Mobile kéo lịch về (DM2).
-#       Tạo lịch hoặc sửa intake_time/days_of_week phải đặt effective_from = now().
+# TODO: GET /patients/{id}/schedules cho Mobile kéo lịch về (DM2) — task lịch uống.
+
+
+class ErrorDetail(BaseModel):
+    detail: str
+
+
+_ERRORS = {
+    401: {"model": ErrorDetail, "description": "Chưa xác thực"},
+    403: {"model": ErrorDetail, "description": "khong_co_quyen | consent_revoked"},
+}
+_NOT_FOUND = {404: {"model": ErrorDetail, "description": "user_medication_not_found"}}
+_UNPROCESSABLE = {
+    422: {
+        "description": "ValidationError, hoặc ErrorDetail với catalog_medication_not_found | "
+        "medication_rule_violation | medication_stopped"
+    }
+}
+MedicationId = Path(ge=1, description="Id thuốc của người bệnh (UserMedication.id)")
+
+
+@router.get(
+    "",
+    response_model=UserMedicationList,
+    responses=_ERRORS,
+    operation_id="listUserMedications",
+)
+def get_user_medications(
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> UserMedicationList:
+    views = list_medications(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+    )
+    return UserMedicationList(items=[UserMedication.from_view(v) for v in views])
+
+
+@router.post(
+    "",
+    status_code=201,
+    response_model=UserMedication,
+    responses={
+        200: {"model": UserMedication, "description": "Gửi lại với client_uuid đã dùng"},
+        **_ERRORS,
+        404: {
+            "model": ErrorDetail,
+            "description": "user_medication_not_found: gửi lại client_uuid của thuốc đã xoá",
+        },
+        **_UNPROCESSABLE,
+    },
+    operation_id="createUserMedication",
+)
+def post_medication(
+    body: UserMedicationCreate,
+    response: Response,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> UserMedication:
+    view, created = create_medication(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        cmd=body.to_domain(),
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+    )
+    response.status_code = 201 if created else 200
+    response.headers["Location"] = f"/medications/{view.record.id}"
+    return UserMedication.from_view(view)
+
+
+@router.get(
+    "/{id}",
+    response_model=UserMedication,
+    responses={**_ERRORS, **_NOT_FOUND},
+    operation_id="getUserMedication",
+)
+def get_user_medication(
+    id: int = MedicationId,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> UserMedication:
+    view = get_medication(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        user_medication_id=id,
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+    )
+    return UserMedication.from_view(view)
+
+
+@router.patch(
+    "/{id}",
+    response_model=UserMedication,
+    responses={**_ERRORS, **_NOT_FOUND, **_UNPROCESSABLE},
+    operation_id="updateUserMedication",
+)
+def patch_user_medication(
+    body: UserMedicationUpdate,
+    id: int = MedicationId,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> UserMedication:
+    view = update_medication(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        user_medication_id=id,
+        changes=body.to_domain(),
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+    )
+    return UserMedication.from_view(view)
+
+
+@router.delete(
+    "/{id}",
+    status_code=204,
+    response_class=Response,
+    responses={**_ERRORS, **_NOT_FOUND},
+    operation_id="deleteUserMedication",
+)
+def delete_user_medication(
+    id: int = MedicationId,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> Response:
+    delete_medication(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        user_medication_id=id,
+        access=AccessGuardAdapter(),
+        meds=SqlMedication(),
+    )
+    return Response(status_code=204)

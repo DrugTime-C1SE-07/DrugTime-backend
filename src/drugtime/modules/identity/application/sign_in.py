@@ -5,58 +5,12 @@ from uuid import UUID
 import jwt
 
 from drugtime.modules.identity.application.ports import AuthProvider, UserRepository
-from drugtime.modules.identity.domain.user import (
-    AppSession,
-    RegistrationProfile,
-    SessionType,
-)
+from drugtime.modules.identity.domain.user import AppSession, SessionType
 from drugtime.shared.config import get_settings
 from drugtime.shared.errors import DomainError, Forbidden, Unauthorized
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _GENDERS = {"nam", "nu", "khac", "male", "female", "other"}
-
-
-def register_user(
-    auth: AuthProvider,
-    users: UserRepository,
-    *,
-    email: str,
-    ho_ten: str,
-    so_dien_thoai: str,
-    ngay_sinh: date,
-    gioi_tinh: str,
-    now: datetime,
-) -> dict:
-    email = _validate_email(email)
-    phone = _normalize_phone(so_dien_thoai)
-    full_name, gender= _validate_registration_profile(
-        ho_ten=ho_ten,
-        ngay_sinh=ngay_sinh,
-        gioi_tinh=gioi_tinh,
-        now=now,
-    )
-
-    session = auth.create_user_without_password(email=email, phone=phone)
-    user_id = _user_id_from_session(session)
-    profile = RegistrationProfile(
-        id=user_id,
-        email=email,
-        phone_number=phone,
-        full_name=full_name,
-        date_of_birth=ngay_sinh,
-        gender=gender,
-    )
-    try:
-        users.create_registered_user(profile)
-    except Exception:
-        # If public.users fails, remove the Supabase Auth account to avoid a half-created user.
-        auth.delete_account(user_id)
-        raise
-    return {
-        "user_id": str(user_id),
-        "supabase": session,
-    }
 
 
 def request_mobile_otp(auth: AuthProvider, *, phone: str | None, email: str | None) -> None:
@@ -74,7 +28,10 @@ def verify_mobile_otp(
     now: datetime,
 ) -> dict:
     phone, email = _validate_one_login_identifier(phone=phone, email=email)
-    token = _validate_required_text(token, "token")
+    token = (token or "").strip()
+    if not token:
+        # Mã rỗng sau khi bỏ khoảng trắng: coi như sai mã, không gọi Supabase.
+        raise Unauthorized("Invalid credentials")
     supabase_session = auth.verify_otp(phone=phone, email=email, token=token)
     user_id = _user_id_from_session(supabase_session)
 
@@ -86,10 +43,10 @@ def verify_mobile_otp(
     if user.erased:
         raise Unauthorized("Account cannot be authenticated")
     if user.is_admin:
-        raise Forbidden("Admin accounts must use admin web login")
+        raise Forbidden("admin_must_use_web")
 
     app_session = issue_app_session(user_id, SessionType.MOBILE, now)
-    result = _auth_response(user_id, supabase_session, app_session)
+    result = _auth_response(user_id, app_session)
     result["profile_complete"] = user.profile_complete
     return result
 
@@ -103,7 +60,7 @@ def complete_profile(
     gioi_tinh: str,
     now: datetime,
 ) -> None:
-    full_name, gender = _validate_registration_profile(
+    full_name, gender = _validate_profile(
         ho_ten=ho_ten, ngay_sinh=ngay_sinh, gioi_tinh=gioi_tinh, now=now
     )
     users.update_profile(user_id, full_name=full_name, date_of_birth=ngay_sinh, gender=gender)
@@ -125,9 +82,9 @@ def login_admin(
     if user is None or user.erased:
         raise Unauthorized("Account cannot be authenticated")
     if not user.is_admin:
-        raise Forbidden("Admin access required")
+        raise Forbidden("admin_required")
     app_session = issue_app_session(user_id, SessionType.ADMIN_WEB, now)
-    return _auth_response(user_id, supabase_session, app_session)
+    return _auth_response(user_id, app_session)
 
 
 def refresh_admin_session(users: UserRepository, *, session_token: str, now: datetime) -> dict:
@@ -139,7 +96,7 @@ def refresh_admin_session(users: UserRepository, *, session_token: str, now: dat
     if user is None or user.erased:
         raise Unauthorized("Account cannot be authenticated")
     if not user.is_admin:
-        raise Forbidden("Admin access required")
+        raise Forbidden("admin_required")
     app_session = issue_app_session(user_id, SessionType.ADMIN_WEB, now)
     return {"user_id": str(user_id), "session": _session_to_dict(app_session)}
 
@@ -174,12 +131,9 @@ def decode_app_session(token: str) -> dict:
         raise Unauthorized("Invalid or expired session") from exc
 
 
-def _auth_response(user_id: UUID, supabase_session: dict, app_session: AppSession) -> dict:
-    return {
-        "user_id": str(user_id),
-        "supabase": supabase_session,
-        "session": _session_to_dict(app_session),
-    }
+def _auth_response(user_id: UUID, app_session: AppSession) -> dict:
+    # Không trả token Supabase: client chỉ dùng phiên do backend cấp.
+    return {"user_id": str(user_id), "session": _session_to_dict(app_session)}
 
 
 def _session_to_dict(session: AppSession) -> dict:
@@ -209,24 +163,22 @@ def _user_id_from_session(session: dict) -> UUID:
 
 
 def _validate_email(value: str) -> str:
-    email = _validate_required_text(value, "email").lower()
+    email = _validate_required_text(value, "invalid_email").lower()
     if not _EMAIL_RE.match(email):
-        raise DomainError("Invalid email")
+        raise DomainError("invalid_email")
     return email
 
 
 def _validate_password(value: str) -> None:
-    password = _validate_required_text(value, "password")
+    password = _validate_required_text(value, "password_too_short")
     if len(password) < 8:
-        raise DomainError("Password must be at least 8 characters")
+        raise DomainError("password_too_short")
 
 
-def _validate_required_text(value: str | None, field_name: str) -> str:
-    if value is None:
-        raise DomainError(f"{field_name} is required")
-    cleaned = value.strip()
+def _validate_required_text(value: str | None, error_code: str) -> str:
+    cleaned = (value or "").strip()
     if not cleaned:
-        raise DomainError(f"{field_name} is required")
+        raise DomainError(error_code)
     return cleaned
 
 
@@ -236,39 +188,39 @@ def _validate_one_login_identifier(
     has_phone = phone is not None and phone.strip() != ""
     has_email = email is not None and email.strip() != ""
     if has_phone == has_email:
-        raise DomainError("Use exactly one of phone or email")
+        raise DomainError("login_identifier_required")
     if has_phone:
         return _normalize_phone(phone), None
     return None, _validate_email(email or "")
 
 
 def _normalize_phone(value: str | None) -> str:
-    phone = _validate_required_text(value, "so_dien_thoai")
+    phone = _validate_required_text(value, "invalid_phone")
     phone = phone.replace(" ", "").replace("-", "")
     if phone.startswith("0") and phone[1:].isdigit():
         phone = "+84" + phone[1:]
     if not phone.startswith("+") or not phone[1:].isdigit():
-        raise DomainError("Phone number must be E.164")
+        raise DomainError("invalid_phone")
     if len(phone) < 9 or len(phone) > 16:
-        raise DomainError("Phone number must be E.164")
+        raise DomainError("invalid_phone")
     return phone
 
 
 def _validate_gender(value: str) -> str:
-    gender = _validate_required_text(value, "gioi_tinh").lower()
+    gender = _validate_required_text(value, "invalid_gender").lower()
     if gender not in _GENDERS:
-        raise DomainError("Invalid gioi_tinh")
+        raise DomainError("invalid_gender")
     return gender
 
 
-def _validate_registration_profile(
+def _validate_profile(
     *,
     ho_ten: str,
     ngay_sinh: date,
     gioi_tinh: str,
     now: datetime,
 ) -> tuple[str, str]:
-    full_name = _validate_required_text(ho_ten, "ho_ten")
+    full_name = _validate_required_text(ho_ten, "invalid_full_name")
     gender = _validate_gender(gioi_tinh)
     _validate_birth_date(ngay_sinh, now)
     return full_name, gender
@@ -276,4 +228,4 @@ def _validate_registration_profile(
 
 def _validate_birth_date(value: date, now: datetime) -> None:
     if value > now.date():
-        raise DomainError("ngay_sinh cannot be in the future")
+        raise DomainError("invalid_date_of_birth")
