@@ -1,10 +1,19 @@
-from redis import Redis
-from rq import Queue
+"""Celery producer for catalog background tasks."""
 
-from drugtime.shared.config import get_settings
+from drugtime.shared.celery import celery_app
 
-SYNC_JOB = "drugtime.runtime.job_runner.run_catalog_sync"  # chuỗi: không import runtime
+SYNC_TASK = "catalog.sync"
 
 
-def enqueue_sync(source: str | None = None) -> None:
-    Queue("default", connection=Redis.from_url(get_settings().redis_url)).enqueue(SYNC_JOB, source)
+def enqueue_sync(
+    source: str | None = None,
+    *,
+    triggered_by: str = "admin_thu_cong",
+) -> str:
+    """Enqueue without importing the worker composition root."""
+    result = celery_app.send_task(
+        SYNC_TASK,
+        args=[source],
+        kwargs={"triggered_by": triggered_by},
+    )
+    return result.id

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Start command của Render Background Worker (CD10).
-# Chạy hai tiến trình: rqscheduler (chuyển job đến hạn vào hàng đợi) và RQ worker
-# (kèm vòng lặp ensure_schedules + heartbeat). Thoát ngay khi một tiến trình dừng
-# để Render khởi động lại cả service.
+# Start command của Render Background Worker.
 set -euo pipefail
 
-rqscheduler --url "${REDIS_URL}" --interval 60 &
-python -m drugtime.worker &
+: "${CELERY_BROKER_URL:?CELERY_BROKER_URL must be set}"
 
-wait -n
-exit 1
+export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}src"
+
+exec celery --app drugtime.worker:celery_app worker --beat \
+  --without-gossip --without-mingle \
+  --loglevel="${CELERY_LOG_LEVEL:-INFO}"
