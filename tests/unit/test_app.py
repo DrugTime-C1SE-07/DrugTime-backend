@@ -24,14 +24,16 @@ def test_liveness_and_routes_mounted():
 def test_doses_batch_openapi_uses_contract_shape():
     # AC10/AC11: Contract runtime dùng schedule_id integer và response 200 body {items, summary}.
     client = TestClient(create_app())
-    operation = client.get("/openapi.json").json()["paths"]["/doses/batch"]["post"]
+    openapi = client.get("/openapi.json").json()
+    paths = openapi["paths"]
+    operation = paths["/doses/batch"]["post"]
 
     assert "204" not in operation["responses"]
     assert "200" in operation["responses"]
     schema = operation["requestBody"]["content"]["application/json"]["schema"]
     assert schema["items"]["$ref"].endswith("DoseConfirmationIn")
 
-    components = client.get("/openapi.json").json()["components"]["schemas"]
+    components = openapi["components"]["schemas"]
     request_item = components["DoseConfirmationIn"]
     assert request_item["properties"]["schedule_id"]["type"] == "integer"
 
