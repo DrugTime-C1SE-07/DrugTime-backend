@@ -54,8 +54,7 @@ forbidden_modules =
     sqlalchemy
     psycopg
     redis
-    rq
-    rq_scheduler
+    celery
     httpx
     jwt
     pydantic_settings

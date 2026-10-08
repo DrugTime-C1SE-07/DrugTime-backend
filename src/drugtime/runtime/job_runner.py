@@ -5,6 +5,7 @@ và danh sách UserDataEraser (đúng thứ tự FK, schema v9) vào consent.
 """
 
 import logging
+import socket
 from uuid import UUID
 
 from drugtime import notification_gateway
@@ -45,8 +46,8 @@ def tick() -> None:
             log.exception("tick step %s failed", name)
 
 
-def run_catalog_sync(source: str | None = None) -> None:
-    catalog.run_sync(unit_of_work, source)
+def record_worker_heartbeat(instance_id: str | None = None) -> None:
+    health.record_heartbeat(instance_id or socket.gethostname())
 
 
 def run_erasure(request_id: str) -> None:
