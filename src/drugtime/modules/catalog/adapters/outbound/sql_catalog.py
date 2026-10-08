@@ -1,10 +1,15 @@
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from drugtime.modules.catalog.domain.medication import CatalogMedication
+from drugtime.shared.errors import DomainError
 from drugtime.shared.uow import UnitOfWork
+
+_TABLE = "medications"
 
 
 class SqlCatalog:
+    # --- Dành cho tìm kiếm Mobile K04 & module khác ---
     def get_medication(
         self, uow: UnitOfWork, medication_id: int, *, include_deleted: bool = False
     ) -> CatalogMedication | None:
@@ -33,8 +38,6 @@ class SqlCatalog:
         """`escaped`: chuỗi tìm đã escape `\\ % _` (xem search_medications). Cả hai phía so
         trên catalog_search_key (bỏ dấu, chữ thường), đúng biểu thức của index trigram."""
         c = uow.connection
-        # Tính khóa trước rồi bind vào truy vấn chính: planner thấy mẫu LIKE cụ thể nên dùng
-        # được index (mẫu lấy từ subquery thì không).
         key = c.execute(
             text("SELECT public.catalog_search_key(:q)"), {"q": escaped}
         ).scalar_one()
@@ -65,3 +68,76 @@ class SqlCatalog:
             )
             for r in rows
         ]
+
+    # --- Dành cho Admin CRUD PB04 ---
+    def create(self, uow: UnitOfWork, data: dict) -> dict:
+        try:
+            row = uow.connection.execute(
+                text(f"""
+                    INSERT INTO {_TABLE}
+                      (name, raw_active_ingredient, strength_text, dosage_form,
+                       manufacturer_name, manufacturer_country, packaging_spec, source, source_ref)
+                    VALUES
+                      (:name, :raw_active_ingredient, :strength_text, :dosage_form,
+                       :manufacturer_name, :manufacturer_country, :packaging_spec, :source, :source_ref)
+                    RETURNING id, name, raw_active_ingredient, strength_text, dosage_form,
+                              manufacturer_name, manufacturer_country, packaging_spec, source, source_ref, deleted_at
+                """),
+                data,
+            ).mappings().one()
+        except IntegrityError as exc:
+            # UNIQUE(source, source_ref) hoặc CHECK pair
+            raise DomainError("Duplicate source/source_ref or constraint violation") from exc
+        return dict(row)
+
+    def get_active(self, uow: UnitOfWork, med_id: int) -> dict | None:
+        row = uow.connection.execute(
+            text(f"SELECT * FROM {_TABLE} WHERE id = :id AND deleted_at IS NULL"),
+            {"id": med_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def list_active(
+        self, uow: UnitOfWork, q: str | None, skip: int, limit: int
+    ) -> tuple[list[dict], int]:
+        where = "WHERE deleted_at IS NULL"
+        params: dict = {}
+        if q:
+            where += " AND name ILIKE :q"
+            params["q"] = f"%{q}%"
+        total = uow.connection.execute(
+            text(f"SELECT count(*) FROM {_TABLE} {where}"), params
+        ).scalar_one()
+        rows = uow.connection.execute(
+            text(f"SELECT * FROM {_TABLE} {where} ORDER BY id OFFSET :skip LIMIT :limit"),
+            {**params, "skip": skip, "limit": limit},
+        ).mappings().all()
+        return [dict(r) for r in rows], int(total)
+
+    def update(self, uow: UnitOfWork, med_id: int, data: dict) -> dict | None:
+        if not data:
+            return self.get_active(uow, med_id)
+        sets = ", ".join(f"{k} = :{k}" for k in data)
+        try:
+            row = uow.connection.execute(
+                text(f"""
+                    UPDATE {_TABLE} SET {sets}
+                    WHERE id = :id AND deleted_at IS NULL
+                    RETURNING *
+                """),
+                {"id": med_id, **data},
+            ).mappings().first()
+        except IntegrityError as exc:
+            raise DomainError("Duplicate source/source_ref or constraint violation") from exc
+        return dict(row) if row else None
+
+    def soft_delete(self, uow: UnitOfWork, med_id: int) -> bool:
+        row = uow.connection.execute(
+            text(f"""
+                UPDATE {_TABLE} SET deleted_at = now()
+                WHERE id = :id AND deleted_at IS NULL
+                RETURNING id
+            """),
+            {"id": med_id},
+        ).first()
+        return row is not None

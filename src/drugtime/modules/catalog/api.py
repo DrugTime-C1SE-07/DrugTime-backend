@@ -2,10 +2,18 @@
 
 from drugtime.modules.catalog.adapters.inbound.http import router
 from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
-from drugtime.modules.catalog.domain.medication import CatalogMedication
+from drugtime.modules.catalog.domain.medication import CatalogMedication, Medication
 from drugtime.shared.uow import UnitOfWork
 
-__all__ = ["CatalogMedication", "get_medication", "router", "run_sync", "sync_if_due"]
+__all__ = [
+    "CatalogMedication",
+    "Medication",
+    "get_active",
+    "get_medication",
+    "router",
+    "run_sync",
+    "sync_if_due",
+]
 
 
 def get_medication(
@@ -13,6 +21,11 @@ def get_medication(
 ) -> CatalogMedication | None:
     """Thuốc trong danh mục; None nếu không có hoặc đã xóa mềm (trừ khi include_deleted)."""
     return SqlCatalog().get_medication(uow, medication_id, include_deleted=include_deleted)
+
+
+def get_active(uow: UnitOfWork, medication_id: int) -> dict | None:
+    """Bản ghi thuốc đang active trong danh mục (phục vụ validate)."""
+    return SqlCatalog().get_active(uow, medication_id)
 
 
 def sync_if_due(uow_factory) -> None:
