@@ -1,14 +1,18 @@
+from collections.abc import Sequence
 from datetime import datetime, time
 from uuid import UUID
 
 from sqlalchemy import text
 
 from drugtime.modules.medication.domain.schedule import DoseOccurrence
+from drugtime.modules.medication.domain.schedule_changes import ClosedSchedule, NewSchedule
 from drugtime.modules.medication.domain.user_medication import (
     DosingMode,
     IntakeTiming,
     MedicationState,
     NewMedication,
+    PatientScheduleRecord,
+    PendingClosed,
     ScheduleView,
     UserMedicationRecord,
 )
@@ -190,19 +194,36 @@ class SqlMedication:
         ).one()
         # Câu lệnh riêng, chạy sau khi đã có khóa: clock_timestamp() là giờ thật lúc này.
         at = c.execute(text("SELECT clock_timestamp()")).scalar_one()
-        days = c.execute(
+        # Đọc lịch sau khi có khóa: request ghi khác trên thuốc này đã commit xong (task 2.04).
+        rows = c.execute(
             text(
-                "SELECT days_of_week FROM medication_schedules "
-                "WHERE user_medication_id = :id AND ended_at IS NULL "
-                "ORDER BY intake_time, id LIMIT 1"
+                "SELECT id, intake_time, days_of_week, reminder_enabled, effective_from, ended_at "
+                "FROM medication_schedules WHERE user_medication_id = :id "
+                "AND (ended_at IS NULL OR ended_at > :at) ORDER BY intake_time, id"
             ),
-            {"id": user_medication_id},
-        ).first()
+            {"id": user_medication_id, "at": at},
+        ).all()
+        open_schedules = tuple(
+            ScheduleView(
+                id=s.id,
+                intake_time=s.intake_time,
+                days_of_week=tuple(sorted(s.days_of_week)),
+                reminder_enabled=s.reminder_enabled,
+                effective_from=s.effective_from,
+            )
+            for s in rows
+            if s.ended_at is None
+        )
         state = MedicationState(
             dosing_mode=_MODE_FROM_DB[row.dosing_mode],
             stopped=row.ended_at is not None,
-            open_days_of_week=None if days is None else tuple(sorted(days.days_of_week)),
+            open_days_of_week=open_schedules[0].days_of_week if open_schedules else None,
             deleted=row.deleted_at is not None,
+            open_schedules=open_schedules,
+            pending_closed=tuple(
+                PendingClosed(s.intake_time, s.ended_at) for s in rows if s.ended_at is not None
+            ),
+            ended_at=row.ended_at,
         )
         return state, at
 
@@ -216,14 +237,109 @@ class SqlMedication:
             text("UPDATE user_medications SET " + ", ".join(sets) + " WHERE id = :id"), params
         )
 
-    def close_open_schedules(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> None:
+    def closed_by_stop(
+        self, uow: UnitOfWork, user_medication_id: int, stopped_at: datetime
+    ) -> tuple[ClosedSchedule, ...]:
+        """Lịch đóng bởi lần ngừng tại stopped_at (ứng viên mở lại khi dùng lại thuốc)."""
+        rows = uow.connection.execute(
+            text(
+                "SELECT id, intake_time, days_of_week, reminder_enabled, effective_from, ended_at "
+                "FROM medication_schedules "
+                "WHERE user_medication_id = :id AND closed_by_stop_at = :stopped "
+                "ORDER BY id"
+            ),
+            {"id": user_medication_id, "stopped": stopped_at},
+        )
+        return tuple(
+            ClosedSchedule(
+                id=r.id,
+                intake_time=r.intake_time,
+                days_of_week=tuple(sorted(r.days_of_week)),
+                reminder_enabled=r.reminder_enabled,
+                effective_from=r.effective_from,
+                ended_at=r.ended_at,
+            )
+            for r in rows
+        )
+
+    def resume(self, uow: UnitOfWork, user_medication_id: int) -> None:
+        uow.connection.execute(
+            text("UPDATE user_medications SET ended_at = NULL WHERE id = :id"),
+            {"id": user_medication_id},
+        )
+
+    def close_schedule(
+        self,
+        uow: UnitOfWork,
+        schedule_id: int,
+        ended_at: datetime,
+        stopped_at: datetime | None = None,
+    ) -> None:
         uow.connection.execute(
             text(
-                "UPDATE medication_schedules SET ended_at = :at "
-                "WHERE user_medication_id = :id AND ended_at IS NULL"
+                "UPDATE medication_schedules SET ended_at = :e, closed_by_stop_at = :stop "
+                "WHERE id = :s AND ended_at IS NULL"
             ),
-            {"id": user_medication_id, "at": at},
+            {"s": schedule_id, "e": ended_at, "stop": stopped_at},
         )
+
+    def add_schedules(
+        self, uow: UnitOfWork, user_medication_id: int, schedules: Sequence[NewSchedule]
+    ) -> None:
+        """Lịch mới với effective_from, reminder_enabled do domain tính (task 2.04)."""
+        if not schedules:
+            return
+        uow.connection.execute(
+            text(
+                "INSERT INTO medication_schedules "
+                "(user_medication_id, intake_time, days_of_week, reminder_enabled, effective_from) "
+                "VALUES (:id, :t, CAST(:days AS smallint[]), :r, :at)"
+            ),
+            [
+                {
+                    "id": user_medication_id,
+                    "t": s.intake_time,
+                    "days": list(s.days_of_week),
+                    "r": s.reminder_enabled,
+                    "at": s.effective_from,
+                }
+                for s in schedules
+            ],
+        )
+
+    def patient_schedules(
+        self, uow: UnitOfWork, patient_id: UUID, after_id: int, limit: int
+    ) -> list[PatientScheduleRecord]:
+        """Lịch đang mở hoặc đóng trong 30 ngày của thuốc chưa xoá, id tăng dần (QD-18)."""
+        rows = uow.connection.execute(
+            text(
+                "SELECT ms.id, ms.user_medication_id, um.medication_id, um.quantity_per_dose, "
+                "um.doses_per_day, um.intake_timing, ms.intake_time, ms.days_of_week, "
+                "ms.reminder_enabled, ms.effective_from, ms.ended_at "
+                "FROM medication_schedules ms "
+                "JOIN user_medications um ON um.id = ms.user_medication_id "
+                "WHERE um.user_id = :p AND um.deleted_at IS NULL "
+                "AND (ms.ended_at IS NULL OR ms.ended_at > now() - interval '30 days') "
+                "AND ms.id > :after ORDER BY ms.id LIMIT :n"
+            ),
+            {"p": patient_id, "after": after_id, "n": limit},
+        )
+        return [
+            PatientScheduleRecord(
+                id=r.id,
+                user_medication_id=r.user_medication_id,
+                medication_id=r.medication_id,
+                quantity_per_dose=r.quantity_per_dose,
+                doses_per_day=r.doses_per_day,
+                intake_timing=None if r.intake_timing is None else _TIMING_FROM_DB[r.intake_timing],
+                intake_time=r.intake_time,
+                days_of_week=tuple(sorted(r.days_of_week)),
+                reminder_enabled=r.reminder_enabled,
+                effective_from=r.effective_from,
+                ended_at=r.ended_at,
+            )
+            for r in rows
+        ]
 
     def stop(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> None:
         uow.connection.execute(
@@ -239,29 +355,6 @@ class SqlMedication:
             ),
             {"id": user_medication_id, "at": at},
         )
-
-    def reactivate(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> int:
-        c = uow.connection
-        # Lịch đóng lúc ngừng có ended_at đúng bằng ended_at của thuốc (stop và
-        # close_open_schedules dùng cùng mốc `at`). Lịch đóng ở lần đổi giờ trước đó thì không.
-        reopened = c.execute(
-            text(
-                "INSERT INTO medication_schedules "
-                "(user_medication_id, intake_time, days_of_week, reminder_enabled, effective_from) "
-                "SELECT ms.user_medication_id, ms.intake_time, ms.days_of_week, "
-                "ms.reminder_enabled, :at "
-                "FROM medication_schedules ms JOIN user_medications um "
-                "ON um.id = ms.user_medication_id "
-                "WHERE um.id = :id AND ms.ended_at = um.ended_at "
-                "ORDER BY ms.intake_time, ms.id"
-            ),
-            {"id": user_medication_id, "at": at},
-        ).rowcount
-        c.execute(
-            text("UPDATE user_medications SET ended_at = NULL WHERE id = :id"),
-            {"id": user_medication_id},
-        )
-        return reopened
 
     def read(self, uow: UnitOfWork, user_medication_id: int) -> UserMedicationRecord:
         c = uow.connection

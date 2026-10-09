@@ -111,3 +111,29 @@ def test_upsert_confirmation_persists_missed_confirmation_without_taken_at():
     assert result.adherence_counted is False
     assert connection.calls[1][1]["status"] == "bo_lo"
     assert connection.calls[1][1]["taken_at"] is None
+
+
+class RowsConnection:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+
+    def execute(self, statement, params=None):
+        self.calls.append((str(statement), params or {}))
+        return iter(self.rows)
+
+
+def test_latest_at_or_after_groups_by_schedule():
+    at = datetime(2026, 10, 9, 0, 50, tzinfo=UTC)
+    latest = datetime(2026, 10, 9, 1, 0, tzinfo=UTC)
+    conn = RowsConnection([SimpleNamespace(medication_schedule_id=7, latest=latest)])
+    assert SqlDoseLogs().latest_at_or_after(FakeUow(conn), [7, 8], at) == {7: latest}
+    sql, params = conn.calls[0]
+    assert "scheduled_at >= :at" in sql and "GROUP BY medication_schedule_id" in sql
+    assert params == {"ids": [7, 8], "at": at}
+
+
+def test_latest_at_or_after_empty_ids_no_query():
+    conn = RowsConnection([])
+    assert SqlDoseLogs().latest_at_or_after(FakeUow(conn), [], datetime.now(UTC)) == {}
+    assert conn.calls == []

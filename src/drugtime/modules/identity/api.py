@@ -18,7 +18,13 @@ __all__ = [
     "eraser",
     "require_admin",
     "router",
+    "user_exists",
 ]
+
+
+def user_exists(uow: UnitOfWork, user_id: UUID) -> bool:
+    """Có dòng users với id này (kể cả tài khoản đã xoá dữ liệu)."""
+    return SqlUsers(uow).get(user_id) is not None
 
 
 def android_tokens(uow: UnitOfWork, user_ids: list[UUID]) -> list[tuple[UUID, str]]:

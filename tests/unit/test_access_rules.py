@@ -31,9 +31,35 @@ def test_family_needs_link_sharing_and_consents():
         assert not d.allowed and d.log_role is ActorRole.NO_ACCESS
 
 
-def test_admin_is_logged():
+def test_admin_is_denied_and_logged__QD32():
     d = decide(facts(active_sharing_link=False, caller_is_admin=True))
-    assert d.allowed and d.log_role is ActorRole.ADMIN
+    assert not d.allowed and d.log_role is ActorRole.ADMIN and d.reason == "khong_co_quyen"
+
+
+def test_admin_denied_every_scope_and_action__QD32():
+    # decide không phụ thuộc scope; mọi tổ hợp consent mà không có liên kết đều bị từ chối.
+    for purpose, family, action in product((False, True), (False, True), Action):
+        d = decide(
+            facts(
+                caller_is_admin=True,
+                active_sharing_link=False,
+                purpose_consent=purpose,
+                family_sharing_consent=family,
+            ),
+            action,
+        )
+        assert (d.allowed, d.log_role, d.reason) == (False, ActorRole.ADMIN, "khong_co_quyen")
+
+
+def test_admin_who_is_valid_family_reads_as_family():
+    d = decide(facts(caller_is_admin=True))
+    assert d.allowed and d.log_role is ActorRole.FAMILY
+
+
+def test_unknown_patient_denied_without_log():
+    for admin, action in product((False, True), Action):
+        d = decide(facts(patient_exists=False, caller_is_admin=admin), action)
+        assert (d.allowed, d.log_role, d.reason) == (False, None, "khong_co_quyen")
 
 
 def _old_decide(f):
@@ -47,7 +73,16 @@ def _old_decide(f):
     return (False, ActorRole.NO_ACCESS, "khong_co_quyen")
 
 
-def test_read_decisions_unchanged():
+def _expected_read(f):
+    """_old_decide với một thay đổi duy nhất của task 2.04: admin không phải người thân hợp lệ
+    bị từ chối (QD-32). Mọi trường hợp khác giữ nguyên."""
+    allowed, role, reason = _old_decide(f)
+    if role is ActorRole.ADMIN:
+        return (False, ActorRole.ADMIN, "khong_co_quyen")
+    return (allowed, role, reason)
+
+
+def test_read_decisions_unchanged_except_admin():
     for bits in product((False, True), repeat=5):
         is_self, admin, purpose, link, family = bits
         f = facts(
@@ -58,7 +93,7 @@ def test_read_decisions_unchanged():
             family_sharing_consent=family,
         )
         d = decide(f, Action.READ)
-        assert (d.allowed, d.log_role, d.reason) == _old_decide(f), bits
+        assert (d.allowed, d.log_role, d.reason) == _expected_read(f), bits
         assert decide(f) == d
 
 

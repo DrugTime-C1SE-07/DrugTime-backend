@@ -64,6 +64,24 @@ class MedicationChanges:
     intake_timing: IntakeTiming | None = None
     stock_quantity: int | None = None
     stopped: bool = False
+    days_of_week: tuple[int, ...] | None = None
+
+
+@dataclass(frozen=True)
+class ScheduleView:
+    id: int
+    intake_time: time
+    days_of_week: tuple[int, ...]
+    reminder_enabled: bool
+    effective_from: datetime
+
+
+@dataclass(frozen=True)
+class PendingClosed:
+    """Lịch đã đóng nhưng ended_at còn ở tương lai (vừa đóng sau một liều xác nhận sớm)."""
+
+    intake_time: time
+    ended_at: datetime
 
 
 # Trạng thái thuốc
@@ -75,6 +93,9 @@ class MedicationState:
     stopped: bool
     open_days_of_week: tuple[int, ...] | None  # của lịch đang mở; None nếu không có lịch mở
     deleted: bool = False  # đã xoá mềm; đọc dưới khóa để thấy lần xoá vừa commit
+    open_schedules: tuple[ScheduleView, ...] = ()  # lịch ended_at IS NULL, sắp theo giờ
+    pending_closed: tuple[PendingClosed, ...] = ()  # lịch đã đóng có ended_at > mốc khóa
+    ended_at: datetime | None = None  # mốc ngừng thuốc; None nếu đang dùng
 
 
 @dataclass(frozen=True)
@@ -83,6 +104,7 @@ class UpdatePlan:
     close_open_schedules: bool = False
     new_intake_times: tuple[time, ...] = ()
     new_days_of_week: tuple[int, ...] = ALL_WEEK
+    new_reminders: tuple[bool, ...] = ()  # song song new_intake_times; rỗng = mọi giờ bật nhắc
     stop: bool = False
     reactivate: bool = False  # dùng lại thuốc đã ngừng: mở lại lịch của lần ngừng gần nhất
 
@@ -110,15 +132,6 @@ class MedicationInfo:
 
 
 @dataclass(frozen=True)
-class ScheduleView:
-    id: int
-    intake_time: time
-    days_of_week: tuple[int, ...]
-    reminder_enabled: bool
-    effective_from: datetime
-
-
-@dataclass(frozen=True)
 class UserMedicationRecord:
     id: int
     user_id: UUID
@@ -131,6 +144,29 @@ class UserMedicationRecord:
     has_interaction_data: bool
     ended_at: datetime | None
     schedules: tuple[ScheduleView, ...]  # lịch đang mở, sắp theo intake_time
+
+
+@dataclass(frozen=True)
+class PatientScheduleRecord:
+    """Một phiên bản lịch kèm giá trị hiện tại của thuốc, cho GET /patients/{id}/schedules."""
+
+    id: int
+    user_medication_id: int
+    medication_id: int
+    quantity_per_dose: Decimal
+    doses_per_day: int
+    intake_timing: IntakeTiming | None
+    intake_time: time
+    days_of_week: tuple[int, ...]
+    reminder_enabled: bool
+    effective_from: datetime
+    ended_at: datetime | None
+
+
+@dataclass(frozen=True)
+class PatientScheduleView:
+    record: PatientScheduleRecord
+    medication: MedicationInfo
 
 
 @dataclass(frozen=True)
@@ -183,7 +219,7 @@ def plan_update(state: MedicationState, changes: MedicationChanges) -> UpdatePla
     switching = target is not state.dosing_mode
     if target is DosingMode.SCHEDULED and "max_doses_per_day" in sent:
         raise _violation()
-    if target is DosingMode.AS_NEEDED and "intake_times" in sent:
+    if target is DosingMode.AS_NEEDED and ("intake_times" in sent or "days_of_week" in sent):
         raise _violation()
 
     fields: dict[str, Any] = {}
@@ -196,16 +232,30 @@ def plan_update(state: MedicationState, changes: MedicationChanges) -> UpdatePla
     if target is DosingMode.SCHEDULED:
         if switching and "intake_times" not in sent:
             raise _violation()
-        if "intake_times" not in sent:
+        sent_days = tuple(sorted(changes.days_of_week or ())) if "days_of_week" in sent else None
+        # Giờ đã có giữ trạng thái nhắc; giờ mới bật nhắc (task 2.04).
+        reminder_of = {s.intake_time: s.reminder_enabled for s in state.open_schedules}
+        if "intake_times" in sent:
+            times = tuple(sorted(changes.intake_times or ()))
+            if sent_days is not None:
+                days = sent_days
+            else:
+                days = ALL_WEEK if switching else (state.open_days_of_week or ALL_WEEK)
+            fields["doses_per_day"] = len(times)
+        elif sent_days is not None and sent_days != state.open_days_of_week:
+            # Chỉ đổi ngày: tạo lại cùng giờ, cùng trạng thái nhắc; doses_per_day không đổi.
+            times = tuple(sorted(s.intake_time for s in state.open_schedules))
+            days = sent_days
+            if not times:
+                return UpdatePlan(fields=fields)
+        else:
             return UpdatePlan(fields=fields)
-        times = tuple(sorted(changes.intake_times or ()))
-        days = ALL_WEEK if switching else (state.open_days_of_week or ALL_WEEK)
-        fields["doses_per_day"] = len(times)
         return UpdatePlan(
             fields=fields,
             close_open_schedules=True,
             new_intake_times=times,
             new_days_of_week=days,
+            new_reminders=tuple(reminder_of.get(t, True) for t in times),
         )
     # target là AS_NEEDED
     if switching and "max_doses_per_day" not in sent:
