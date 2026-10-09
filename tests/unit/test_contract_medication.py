@@ -17,6 +17,10 @@ OPERATIONS = [
     ("get", "/medications/{id}"),
     ("patch", "/medications/{id}"),
     ("delete", "/medications/{id}"),
+    ("post", "/medications/{id}/schedules"),
+    ("patch", "/medications/{id}/schedules/{schedule_id}"),
+    ("delete", "/medications/{id}/schedules/{schedule_id}"),
+    ("get", "/patients/{patient_id}/schedules"),
     ("get", "/catalog/medications"),
 ]
 
@@ -104,4 +108,10 @@ BOUNDS = ("minLength", "maxLength", "pattern", "minimum", "maximum", "default")
 def test_catalog_search_query_params_match_contract(specs):
     contract, app = specs
     path = "/catalog/medications"
+    assert _query_params(contract["paths"][path]["get"]) == _query_params(app["paths"][path]["get"])
+
+
+def test_patient_schedules_query_params_match_contract(specs):
+    contract, app = specs
+    path = "/patients/{patient_id}/schedules"
     assert _query_params(contract["paths"][path]["get"]) == _query_params(app["paths"][path]["get"])

@@ -196,7 +196,8 @@ def test_reactivate_scheduled_without_matching_schedules_422_writes_nothing(
     db.execute(
         text(
             "UPDATE medication_schedules SET ended_at = ended_at - interval '1 day', "
-            "effective_from = effective_from - interval '2 day' WHERE user_medication_id = :i"
+            "effective_from = effective_from - interval '2 day', closed_by_stop_at = NULL "
+            "WHERE user_medication_id = :i"
         ),
         {"i": med["id"]},
     )

@@ -86,10 +86,11 @@ def test_linked_family_reads_allowed_logged_but_cannot_write__AC15(client, db, m
     ]
 
 
-def test_admin_reads_but_cannot_write__AC15(client, db, make, auth, setup):
+def test_admin_cannot_read_or_write__AC15_QD32(client, db, make, auth, setup):
+    """2.01 cho admin đọc; task 2.04 áp QD-32: admin không đọc dữ liệu y tế (403 + denied)."""
     patient, med = setup
     admin = make.user(admin=True)
-    assert client.get(f"/medications/{med['id']}", headers=auth(admin)).status_code == 200
+    assert client.get(f"/medications/{med['id']}", headers=auth(admin)).status_code == 403
     before = _snapshot(db, med["id"])
     r = client.patch(
         f"/medications/{med['id']}", json={"quantity_per_dose": 3}, headers=auth(admin)
@@ -97,7 +98,7 @@ def test_admin_reads_but_cannot_write__AC15(client, db, make, auth, setup):
     assert r.status_code == 403
     assert _snapshot(db, med["id"]) == before
     assert make.access_logs(patient) == [
-        _log(admin, "admin", "allowed"),
+        _log(admin, "admin", "denied", "khong_co_quyen"),
         _log(admin, "admin", "denied", "khong_co_quyen"),
     ]
 
