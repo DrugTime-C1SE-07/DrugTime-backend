@@ -83,6 +83,23 @@ def test_transport_error_is_wrapped_for_celery_retry(monkeypatch):
         catalog_tasks.sync_catalog.run("dav_drugbank")
 
     assert isinstance(retried[0][0], catalog_tasks.TransientCatalogSyncError)
+    assert "dav.invalid" not in str(retried[0][0])
+
+
+def test_permanent_http_error_is_not_wrapped_for_retry(monkeypatch):
+    request = httpx.Request("POST", "https://dav.invalid/private")
+    response = httpx.Response(400, request=request)
+    error = httpx.HTTPStatusError("bad request", request=request, response=response)
+
+    def fail_sync(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(catalog_tasks, "run_sync", fail_sync)
+
+    with pytest.raises(httpx.HTTPStatusError) as caught:
+        catalog_tasks.sync_catalog.run("dav_drugbank")
+
+    assert caught.value is error
 
 
 def test_tick_continues_after_each_step_failure(monkeypatch):

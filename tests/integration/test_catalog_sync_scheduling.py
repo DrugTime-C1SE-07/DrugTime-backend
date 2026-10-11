@@ -4,7 +4,9 @@ import json
 from contextlib import contextmanager
 from uuid import uuid4
 
-from sqlalchemy import text
+import pytest
+from sqlalchemy import create_engine, text
+from tests.integration.conftest import ADMIN_URL
 
 from drugtime.modules.catalog.repository import CatalogSyncRepository
 from drugtime.modules.catalog.service import run_sync
@@ -17,6 +19,14 @@ SOURCE = "dav_drugbank"
 def _uow(admin_engine):
     with admin_engine.begin() as connection:
         yield SqlUnitOfWork(connection)
+
+
+@pytest.fixture
+def transactional_engine(admin_engine):
+    """Production UoW requires a real transaction for nested savepoints."""
+    engine = create_engine(ADMIN_URL)
+    yield engine
+    engine.dispose()
 
 
 def _finish_running_run(admin_engine, run_id: int) -> None:
@@ -32,14 +42,14 @@ def _finish_running_run(admin_engine, run_id: int) -> None:
         )
 
 
-def test_only_one_running_catalog_sync_per_source__AC4(admin_engine):
+def test_only_one_running_catalog_sync_per_source__AC4(admin_engine, transactional_engine):
     repository = CatalogSyncRepository()
     first_run_id = None
 
     try:
-        with _uow(admin_engine) as first_uow:
+        with _uow(transactional_engine) as first_uow:
             first_run_id = repository.start_run(first_uow, SOURCE, "scheduler")
-        with _uow(admin_engine) as second_uow:
+        with _uow(transactional_engine) as second_uow:
             second_run_id = repository.start_run(second_uow, SOURCE, "scheduler")
 
         assert first_run_id is not None
@@ -58,7 +68,7 @@ def test_only_one_running_catalog_sync_per_source__AC4(admin_engine):
             _finish_running_run(admin_engine, first_run_id)
 
 
-def test_catalog_redelivery_is_idempotent__AC5(admin_engine):
+def test_catalog_redelivery_is_idempotent__AC5(admin_engine, transactional_engine):
     source_ref = f"test-{uuid4().hex}"
     payload = json.dumps(
         {
@@ -89,7 +99,7 @@ def test_catalog_redelivery_is_idempotent__AC5(admin_engine):
 
     from drugtime.modules.catalog.parsers.dav_drugbank import parse
 
-    uow_factory = lambda: _uow(admin_engine)  # noqa: E731
+    uow_factory = lambda: _uow(transactional_engine)  # noqa: E731
     fetch = lambda: [payload]  # noqa: E731
 
     run_sync(uow_factory, source=SOURCE, fetch=fetch, parse=parse)
