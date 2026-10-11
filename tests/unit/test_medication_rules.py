@@ -1,4 +1,4 @@
-from datetime import time
+from datetime import UTC, datetime, time
 from decimal import Decimal
 from uuid import uuid4
 
@@ -11,6 +11,7 @@ from drugtime.modules.medication.domain.user_medication import (
     MedicationChanges,
     MedicationState,
     NewMedication,
+    ScheduleView,
     plan_update,
     validate_new,
 )
@@ -165,3 +166,74 @@ def test_plan_update_stop_does_not_reactivate():
 def test_plan_update_stopped_medication_rejects_changes():
     with rule_error("medication_stopped"):
         plan_update(state(stopped=True), changes(quantity_per_dose=Decimal("2")))
+
+
+# --- task 2.04: days_of_week và giữ trạng thái nhắc -----------------------------------------
+
+_PAST = datetime(2026, 10, 1, tzinfo=UTC)
+
+
+def state_with(*specs, days=(1, 3, 5)):
+    """specs: (giờ, nhắc) của các lịch đang mở."""
+    schedules = tuple(
+        ScheduleView(i, time(h), days, rem, _PAST) for i, (h, rem) in enumerate(specs, 1)
+    )
+    return MedicationState(S, False, days, open_schedules=schedules)
+
+
+def test_plan_update_days_only_recreates_with_same_times_and_reminders():
+    p = plan_update(state_with((8, True), (20, False)), changes(days_of_week=(5, 1)))
+    assert p.close_open_schedules
+    assert p.new_intake_times == (time(8), time(20))
+    assert p.new_days_of_week == (1, 5)
+    assert p.new_reminders == (True, False)
+    assert "doses_per_day" not in p.fields
+
+
+def test_plan_update_same_days_is_noop():
+    assert plan_update(state_with((8, True)), changes(days_of_week=(5, 3, 1))).is_noop
+
+
+def test_plan_update_days_with_other_field_keeps_schedules_when_same_days():
+    p = plan_update(state_with((8, True)), changes(days_of_week=(1, 3, 5), quantity_per_dose=2))
+    assert p.fields == {"quantity_per_dose": 2} and not p.close_open_schedules
+
+
+@pytest.mark.parametrize(
+    "st, ch",
+    [
+        (state(A), changes(days_of_week=(1,))),
+        (state(S), changes(dosing_mode=A, max_doses_per_day=2, days_of_week=(1,))),
+        (state(S), changes(stopped=True, days_of_week=(1,))),
+    ],
+)
+def test_plan_update_days_with_as_needed_or_stop_violation(st, ch):
+    with rule_error():
+        plan_update(st, ch)
+
+
+def test_plan_update_times_keep_reminder_of_existing_times__AC10():
+    p = plan_update(
+        state_with((8, True), (20, False)), changes(intake_times=(time(22), time(20), time(8)))
+    )
+    assert p.new_intake_times == (time(8), time(20), time(22))
+    assert p.new_reminders == (True, False, True)
+    assert p.new_days_of_week == (1, 3, 5)
+    assert p.fields["doses_per_day"] == 3
+
+
+def test_plan_update_times_with_days_uses_sent_days():
+    p = plan_update(state_with((8, True)), changes(intake_times=(time(9),), days_of_week=(7, 6)))
+    assert p.new_intake_times == (time(9),) and p.new_days_of_week == (6, 7)
+
+
+def test_switch_to_scheduled_with_days():
+    p = plan_update(state(A), changes(dosing_mode=S, intake_times=(time(9),), days_of_week=(2, 4)))
+    assert p.new_days_of_week == (2, 4) and p.new_reminders == (True,)
+    p = plan_update(state(A), changes(dosing_mode=S, intake_times=(time(9),)))
+    assert p.new_days_of_week == ALL_WEEK
+
+
+def test_switch_to_scheduled_with_only_days_violation():
+    with rule_error():
+        plan_update(state(A), changes(dosing_mode=S, days_of_week=(1,)))

@@ -87,6 +87,23 @@ class SqlDoseLogs:
         ).first()
         return None if row is None else row.id
 
+    def latest_at_or_after(
+        self, uow: UnitOfWork, schedule_ids: list[int], at: datetime
+    ) -> dict[int, datetime]:
+        """Giờ dự kiến muộn nhất của liều đã ghi với giờ dự kiến >= at, theo lịch (cho medication
+        tính mốc hiệu lực khi sửa lịch, task 2.04)."""
+        if not schedule_ids:
+            return {}
+        rows = uow.connection.execute(
+            text(
+                "SELECT medication_schedule_id, max(scheduled_at) AS latest FROM dose_logs "
+                "WHERE medication_schedule_id = ANY(:ids) AND scheduled_at >= :at "
+                "GROUP BY medication_schedule_id"
+            ),
+            {"ids": list(schedule_ids), "at": at},
+        )
+        return {r.medication_schedule_id: r.latest for r in rows}
+
     def erase_for_schedules(self, uow: UnitOfWork, schedule_ids: list[int]) -> None:
         if schedule_ids:
             uow.connection.execute(

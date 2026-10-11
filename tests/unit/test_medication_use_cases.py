@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -9,6 +9,7 @@ from drugtime.modules.medication.application.delete_medication import delete_med
 from drugtime.modules.medication.application.get_medication import get_medication
 from drugtime.modules.medication.application.list_medications import list_medications
 from drugtime.modules.medication.application.update_medication import update_medication
+from drugtime.modules.medication.domain.schedule_changes import ClosedSchedule, NewSchedule
 from drugtime.modules.medication.domain.user_medication import (
     DosingMode,
     MedicationChanges,
@@ -23,6 +24,19 @@ from drugtime.shared.errors import DomainError, Forbidden, NotFound
 PATIENT, OTHER = uuid4(), uuid4()
 INFO = MedicationInfo(1, "Amlodipin 5mg", "5 mg", "Viên nén", True)
 LOCKED_AT = datetime(2026, 10, 1, 2, 0, tzinfo=UTC)
+PAST = LOCKED_AT - timedelta(days=3)
+STOPPED_AT = LOCKED_AT - timedelta(hours=1)
+
+
+class Recorded:
+    """Port RecordedDoses giả: liều đã ghi với giờ dự kiến >= at, theo id lịch."""
+
+    def __init__(self, calls, latest=None):
+        self.calls, self.latest = calls, latest or {}
+
+    def latest_at_or_after(self, uow, schedule_ids, at):
+        self.calls.append(("latest_at_or_after", tuple(schedule_ids), at))
+        return {i: t for i, t in self.latest.items() if i in schedule_ids}
 
 
 class Calls(list):
@@ -70,6 +84,7 @@ class Meds:
         self.calls, self.existing, self.owner = calls, existing, owner
         self.insert_result, self.stopped, self.deleted = insert_result, stopped, deleted
         self.mode, self.ids, self.reopened = mode, list(ids), reopened
+        self.marked = {}  # id lịch -> stopped_at đã ghi khi đóng (dấu đóng do ngừng)
 
     def ids_of(self, uow, user_id):
         self.calls.append(("ids_of", user_id))
@@ -78,9 +93,16 @@ class Meds:
     def mark_deleted(self, uow, i, at):
         self.calls.append(("mark_deleted", i, at))
 
-    def reactivate(self, uow, i, at):
-        self.calls.append(("reactivate", i, at))
-        return self.reopened
+    def closed_by_stop(self, uow, i, stopped_at):
+        """`reopened` lịch mang dấu của lần ngừng tại stopped_at, giờ 08:00, 20:00…"""
+        self.calls.append(("closed_by_stop", i, stopped_at))
+        return tuple(
+            ClosedSchedule(10 + k, time(8 + 12 * k), (1, 2), True, PAST, stopped_at)
+            for k in range(self.reopened)
+        )
+
+    def resume(self, uow, i):
+        self.calls.append(("resume", i))
 
     def owner_of(self, uow, i):
         self.calls.append(("owner_of", i))
@@ -104,14 +126,35 @@ class Meds:
 
     def lock(self, uow, i):
         self.calls.append(("lock", i))
-        state = MedicationState(self.mode, self.stopped, (1, 2), deleted=self.deleted)
+        open_schedules = (
+            (ScheduleView(1, time(8), (1, 2), False, PAST),)
+            if self.mode is DosingMode.SCHEDULED and not self.stopped
+            else ()
+        )
+        state = MedicationState(
+            self.mode,
+            self.stopped,
+            (1, 2) if open_schedules else None,
+            deleted=self.deleted,
+            open_schedules=open_schedules,
+            ended_at=STOPPED_AT if self.stopped else None,
+        )
         return state, LOCKED_AT
+
+    def close_schedule(self, uow, schedule_id, ended_at, stopped_at=None):
+        self.calls.append(("close_schedule", schedule_id, ended_at))
+        if stopped_at is not None:
+            self.marked[schedule_id] = stopped_at
+
+    def add_schedules(self, uow, i, schedules):
+        self.calls.append(("add_schedules", i, tuple(schedules)))
+
+    def patient_schedules(self, uow, patient_id, after_id, limit):
+        self.calls.append(("patient_schedules", patient_id, after_id, limit))
+        return []
 
     def update_fields(self, uow, i, fields):
         self.calls.append(("update_fields", i, fields))
-
-    def close_open_schedules(self, uow, i, at):
-        self.calls.append(("close_open_schedules", i, at))
 
     def stop(self, uow, i, at):
         self.calls.append(("stop", i, at))
@@ -138,10 +181,11 @@ WRITES = {
     "insert",
     "insert_schedules",
     "update_fields",
-    "close_open_schedules",
+    "close_schedule",
+    "add_schedules",
     "stop",
     "mark_deleted",
-    "reactivate",
+    "resume",
 }
 
 
@@ -178,6 +222,7 @@ def update(calls, changes, caller=PATIENT, **ports):
         access=ports.get("access", Guard(calls)),
         catalog=ports.get("catalog", FakeCatalog(calls)),
         meds=ports.get("meds", Meds(calls)),
+        recorded=ports.get("recorded", Recorded(calls)),
     )
 
 
@@ -307,24 +352,56 @@ def test_update_denied_writes_nothing():
 
 def test_update_times_closes_then_inserts_with_kept_days():
     calls = Calls()
-    meds = Meds(calls)
-    update(
-        calls, MedicationChanges(frozenset({"intake_times"}), intake_times=(time(7),)), meds=meds
-    )
+    update(calls, MedicationChanges(frozenset({"intake_times"}), intake_times=(time(7),)))
     names = calls.names()
     assert names[:3] == ["owner_of", "authorize_write", "lock"]
-    assert names.index("close_open_schedules") < names.index("insert_schedules")
-    assert ("insert_schedules", 7, (time(7),), (1, 2)) in calls
+    assert (
+        names.index("latest_at_or_after")
+        < names.index("close_schedule")
+        < names.index("add_schedules")
+    )
     assert ("update_fields", 7, {"doses_per_day": 1}) in calls
     # Lỗi B1: lịch cũ đóng và lịch mới mở đúng tại mốc lấy sau khi khóa, không phải now().
-    assert ("close_open_schedules", 7, LOCKED_AT) in calls
-    assert meds.effective_from == LOCKED_AT
+    assert ("close_schedule", 1, LOCKED_AT) in calls
+    assert ("add_schedules", 7, (NewSchedule(time(7), (1, 2), True, LOCKED_AT),)) in calls
+
+
+def test_update_times_keep_reminder_of_existing_time__AC10():
+    calls = Calls()
+    update(
+        calls,
+        MedicationChanges(frozenset({"intake_times"}), intake_times=(time(8), time(9))),
+    )
+    added = next(c for c in calls if c[0] == "add_schedules")[2]
+    assert [(s.intake_time, s.reminder_enabled) for s in added] == [
+        (time(8), False),
+        (time(9), True),
+    ]
+
+
+def test_update_times_after_early_dose_shifts_boundaries__AC20():
+    calls = Calls()
+    early = LOCKED_AT + timedelta(minutes=10)
+    update(
+        calls,
+        MedicationChanges(frozenset({"days_of_week"}), days_of_week=(3,)),
+        recorded=Recorded(calls, {1: early}),
+    )
+    end = early + timedelta(seconds=1)
+    assert ("close_schedule", 1, end) in calls
+    assert ("add_schedules", 7, (NewSchedule(time(8), (3,), False, end),)) in calls
+
+
+def test_update_without_schedule_change_does_not_read_doses():
+    calls = Calls()
+    update(calls, MedicationChanges(frozenset({"quantity_per_dose"}), quantity_per_dose=Decimal(2)))
+    assert "latest_at_or_after" not in calls.names()
 
 
 def test_update_stop_and_repeat_stop():
     calls = Calls()
     update(calls, MedicationChanges(frozenset({"stopped"}), stopped=True))
-    assert ("close_open_schedules", 7, LOCKED_AT) in calls and ("stop", 7, LOCKED_AT) in calls
+    assert ("close_schedule", 1, LOCKED_AT) in calls and ("stop", 7, LOCKED_AT) in calls
     calls = Calls()
     update(
         calls,
@@ -407,6 +484,7 @@ def delete(calls, caller=PATIENT, **ports):
         user_medication_id=7,
         access=ports.get("access", Guard(calls)),
         meds=ports.get("meds", Meds(calls)),
+        recorded=ports.get("recorded", Recorded(calls)),
     )
 
 
@@ -432,10 +510,19 @@ def test_delete_closes_stops_marks_with_same_at():
         ("owner_of", 7),
         ("authorize_write", PATIENT, PATIENT),
         ("lock", 7),
-        ("close_open_schedules", 7, LOCKED_AT),
+        ("latest_at_or_after", (1,), LOCKED_AT),
+        ("close_schedule", 1, LOCKED_AT),
         ("stop", 7, LOCKED_AT),
         ("mark_deleted", 7, LOCKED_AT),
     ]
+
+
+def test_delete_after_early_dose_closes_after_dose__AC24():
+    calls = Calls()
+    early = LOCKED_AT + timedelta(minutes=10)
+    delete(calls, recorded=Recorded(calls, {1: early}))
+    assert ("close_schedule", 1, early + timedelta(seconds=1)) in calls
+    assert ("stop", 7, LOCKED_AT) in calls and ("mark_deleted", 7, LOCKED_AT) in calls
 
 
 def test_delete_race_deleted_after_lock_404():
@@ -464,8 +551,43 @@ def test_update_deleted_after_lock_404():
 def test_reactivate_scheduled_reopens_at_lock_time():
     calls = Calls()
     update(calls, UNSTOP, meds=Meds(calls, stopped=True))
-    assert ("reactivate", 7, LOCKED_AT) in calls
-    assert WRITES & set(calls.names()) == {"reactivate"}
+    assert ("closed_by_stop", 7, STOPPED_AT) in calls
+    assert "latest_at_or_after" not in calls.names()
+    added = next(c for c in calls if c[0] == "add_schedules")
+    assert added[2] == (
+        NewSchedule(time(8), (1, 2), True, LOCKED_AT),
+        NewSchedule(time(20), (1, 2), True, LOCKED_AT),
+    )
+    assert WRITES & set(calls.names()) == {"add_schedules", "update_fields", "resume"}
+    assert calls.names().index("add_schedules") < calls.names().index("resume")
+
+
+def test_stop_after_early_dose_closes_after_dose__AC24():
+    calls = Calls()
+    early = LOCKED_AT + timedelta(minutes=10)
+    update(
+        calls,
+        MedicationChanges(frozenset({"stopped"}), stopped=True),
+        recorded=Recorded(calls, {1: early}),
+    )
+    assert ("close_schedule", 1, early + timedelta(seconds=1)) in calls
+    assert ("stop", 7, LOCKED_AT) in calls
+
+
+def test_switch_to_as_needed_after_early_dose_closes_after_dose__AC24():
+    calls = Calls()
+    early = LOCKED_AT + timedelta(minutes=10)
+    update(
+        calls,
+        MedicationChanges(
+            frozenset({"dosing_mode", "max_doses_per_day"}),
+            dosing_mode=DosingMode.AS_NEEDED,
+            max_doses_per_day=2,
+        ),
+        recorded=Recorded(calls, {1: early}),
+    )
+    assert ("close_schedule", 1, early + timedelta(seconds=1)) in calls
+    assert "add_schedules" not in calls.names()
 
 
 def test_reactivate_scheduled_zero_schedules_violation():
@@ -477,7 +599,106 @@ def test_reactivate_scheduled_zero_schedules_violation():
 def test_reactivate_as_needed_ok_without_schedules():
     calls = Calls()
     update(calls, UNSTOP, meds=Meds(calls, stopped=True, mode=DosingMode.AS_NEEDED, reopened=0))
-    assert ("reactivate", 7, LOCKED_AT) in calls
+    assert ("resume", 7) in calls
+    assert "add_schedules" not in calls.names()
+
+
+def test_reactivate_as_needed_never_reopens_schedules__R2():
+    """Lịch theo giờ cũ vừa đóng sau liều sớm không được mở lại cho thuốc khi cần."""
+    calls = Calls()
+    update(calls, UNSTOP, meds=Meds(calls, stopped=True, mode=DosingMode.AS_NEEDED, reopened=2))
+    assert WRITES & set(calls.names()) == {"resume"}
+    assert "closed_by_stop" not in calls.names()
+
+
+class FutureMeds(Meds):
+    """Thuốc có thêm lịch 22:00 bắt đầu ở tương lai (sau một lần thay lịch sau liều sớm)."""
+
+    def lock(self, uow, i):
+        state, at = super().lock(uow, i)
+        future = ScheduleView(2, time(22), (1, 2), True, LOCKED_AT + timedelta(minutes=20))
+        return (
+            MedicationState(
+                state.dosing_mode,
+                state.stopped,
+                state.open_days_of_week,
+                deleted=state.deleted,
+                open_schedules=(*state.open_schedules, future),
+                ended_at=state.ended_at,
+            ),
+            at,
+        )
+
+
+STOP = MedicationChanges(frozenset({"stopped"}), stopped=True)
+
+
+def test_stop_marks_every_open_schedule_including_future__AC28():
+    calls = Calls()
+    meds = FutureMeds(calls)
+    update(calls, STOP, meds=meds)
+    assert meds.marked == {1: LOCKED_AT, 2: LOCKED_AT}
+    assert ("close_schedule", 2, LOCKED_AT + timedelta(minutes=20)) in calls
+    assert ("stop", 7, LOCKED_AT) in calls
+
+
+def test_switch_to_as_needed_does_not_mark():
+    calls = Calls()
+    meds = FutureMeds(calls)
+    update(
+        calls,
+        MedicationChanges(
+            frozenset({"dosing_mode", "max_doses_per_day"}),
+            dosing_mode=DosingMode.AS_NEEDED,
+            max_doses_per_day=2,
+        ),
+        meds=meds,
+    )
+    assert "close_schedule" in calls.names() and meds.marked == {}
+
+
+def test_replace_times_does_not_mark():
+    calls = Calls()
+    meds = Meds(calls)
+    update(
+        calls,
+        MedicationChanges(frozenset({"intake_times"}), intake_times=(time(7), time(22))),
+        meds=meds,
+    )
+    assert "close_schedule" in calls.names() and meds.marked == {}
+
+
+def test_delete_marks_schedules():
+    calls = Calls()
+    meds = FutureMeds(calls)
+    delete(calls, meds=meds)
+    assert meds.marked == {1: LOCKED_AT, 2: LOCKED_AT}
+
+
+def test_reactivate_opens_marked_and_sets_doses_per_day__AC27_M3():
+    calls = Calls()
+    update(calls, UNSTOP, meds=Meds(calls, stopped=True))
+    added = next(c for c in calls if c[0] == "add_schedules")
+    assert [s.intake_time for s in added[2]] == [time(8), time(20)]
+    assert ("update_fields", 7, {"doses_per_day": 2}) in calls
+    assert calls.names().index("update_fields") < calls.names().index("resume")
+
+
+class DuplicateMarkedMeds(Meds):
+    def closed_by_stop(self, uow, i, stopped_at):
+        self.calls.append(("closed_by_stop", i, stopped_at))
+        return (
+            ClosedSchedule(10, time(8), (1, 2), True, PAST, stopped_at),
+            ClosedSchedule(11, time(8), (1, 2), False, PAST, stopped_at),
+        )
+
+
+def test_reactivate_counts_one_schedule_per_time__M3():
+    calls = Calls()
+    update(calls, UNSTOP, meds=DuplicateMarkedMeds(calls, stopped=True))
+    added = next(c for c in calls if c[0] == "add_schedules")
+    assert [(s.intake_time, s.reminder_enabled) for s in added[2]] == [(time(8), False)]
+    assert ("update_fields", 7, {"doses_per_day": 1}) in calls
 
 
 def test_unstop_active_is_noop():

@@ -68,3 +68,19 @@ def test_denied_write_appends_denied_and_raises():
         _call(Facts(), log, Action.WRITE)
     assert log.allowed == []
     assert log.denied == [(C, ActorRole.FAMILY, P, Scope.MEDICATIONS, "khong_co_quyen")]
+
+
+def test_unknown_patient_raises_forbidden_without_log():
+    for admin in (False, True):
+        log = Log()
+        with pytest.raises(Forbidden, match="khong_co_quyen"):
+            _call(Facts(patient_exists=False, caller_is_admin=admin), log)
+        assert log.allowed == [] and log.denied == []
+
+
+def test_admin_read_denied_logged__QD32():
+    log = Log()
+    with pytest.raises(Forbidden, match="khong_co_quyen"):
+        _call(Facts(caller_is_admin=True, active_sharing_link=False), log)
+    assert log.allowed == []
+    assert log.denied == [(C, ActorRole.ADMIN, P, Scope.MEDICATIONS, "khong_co_quyen")]

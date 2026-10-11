@@ -2,8 +2,13 @@
 
 from datetime import datetime
 from typing import Any
+"""Schemas của catalog module:
+1. Response của /catalog/medications (Mobile K04, khớp api_contract/openapi.json).
+2. Request/Response của /admin/medications (Admin CRUD PB04).
+"""
 
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from drugtime.modules.catalog.domain.medication import CatalogMedication
 from drugtime.modules.catalog.domain.sync_run import (
@@ -13,6 +18,9 @@ from drugtime.modules.catalog.domain.sync_run import (
     CatalogSyncStatus,
     CatalogSyncTrigger,
 )
+
+
+# --- Mobile Catalog Search (K04) ---
 
 
 class CatalogMedicationSummary(BaseModel):
@@ -74,3 +82,57 @@ class CatalogSyncRunList(BaseModel):
             limit=page.limit,
             offset=page.offset,
         )
+# --- Admin Catalog CRUD (PB04) ---
+
+
+class MedicationBase(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    raw_active_ingredient: str | None = Field(default=None, max_length=500)
+    strength_text: str | None = Field(default=None, max_length=100)
+    dosage_form: str | None = Field(default=None, max_length=100)
+    manufacturer_name: str | None = Field(default=None, max_length=255)
+    manufacturer_country: str | None = Field(default=None, max_length=100)
+    packaging_spec: str | None = Field(default=None, max_length=255)
+    source: str | None = Field(default=None, pattern="^(dav_drugbank|qd_5948|duoc_thu_qg)$")
+    source_ref: str | None = Field(default=None, max_length=255)
+
+    @model_validator(mode="after")
+    def _source_pair(self) -> "MedicationBase":
+        """source và source_ref phải cùng có giá trị hoặc cùng NULL (CHECK (source IS NULL)=(source_ref IS NULL))."""
+        if (self.source is None) != (self.source_ref is None):
+            raise ValueError("source and source_ref must both be null or both set")
+        return self
+
+
+class MedicationCreate(MedicationBase):
+    pass
+
+
+class MedicationUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    raw_active_ingredient: str | None = Field(default=None, max_length=500)
+    strength_text: str | None = None
+    dosage_form: str | None = None
+    manufacturer_name: str | None = None
+    manufacturer_country: str | None = None
+    packaging_spec: str | None = None
+    source: str | None = Field(default=None, pattern="^(dav_drugbank|qd_5948|duoc_thu_qg)$")
+    source_ref: str | None = None
+
+    @model_validator(mode="after")
+    def _source_pair(self) -> "MedicationUpdate":
+        if self.source is not None or self.source_ref is not None:
+            if (self.source is None) != (self.source_ref is None):
+                raise ValueError("source and source_ref must both be null or both set")
+        return self
+
+
+class MedicationResponse(MedicationBase):
+    id: int
+    deleted_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MedicationListResponse(BaseModel):
+    total: int
+    items: list[MedicationResponse]
