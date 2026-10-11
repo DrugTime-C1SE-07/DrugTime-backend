@@ -46,7 +46,7 @@ def sync_catalog(
         )
     except httpx.HTTPStatusError as exc:
         if _is_transient_http_error(exc):
-            raise TransientCatalogSyncError(str(exc)) from exc
+            raise TransientCatalogSyncError("catalog source is temporarily unavailable") from exc
         raise
     except (httpx.TransportError, OperationalError) as exc:
-        raise TransientCatalogSyncError(str(exc)) from exc
+        raise TransientCatalogSyncError("catalog dependency is temporarily unavailable") from exc
