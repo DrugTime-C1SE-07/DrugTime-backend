@@ -8,43 +8,165 @@
   "paths": {
     "/auth/v1/otp": {
       "post": {
-        "tags": ["Supabase Auth (Mobile OTP)"],
+        "tags": [
+          "Supabase Auth (Mobile OTP)"
+        ],
         "summary": "Gửi mã OTP đến số điện thoại hoặc email",
         "description": "Endpoint của Supabase Auth, không thuộc API Gateway DrugTime. App gọi Supabase Auth SDK (signInWithOtp) với phone hoặc email; không gửi cả hai. Supabase gửi OTP qua SMS/email theo phương thức đã chọn. Giao diện có thể bật gửi lại sau 45 giây; giới hạn thực tế do Supabase Auth cấu hình. Sau khi xác thực thành công, gọi POST /api/v1/auth/sync-profile với access token.",
         "operationId": "supabase_send_otp_auth_v1_otp_post",
-        "servers": [{"url": "https://{supabaseProject}.supabase.co", "variables": {"supabaseProject": {"default": "<project-ref>", "description": "Supabase project reference"}}}],
-        "parameters": [{"name": "apikey", "in": "header", "required": true, "description": "Supabase anon/publishable key", "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/SupabasePhoneOtpRequest"}, {"$ref": "#/components/schemas/SupabaseEmailOtpRequest"}]}, "examples": {"phone": {"value": {"phone": "+84912345678", "create_user": true}}, "email": {"value": {"email": "ten@example.com", "create_user": true}}}}}},
-        "responses": {"200": {"description": "OTP request accepted; Supabase sends the code using its configured provider.", "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true}}}}, "400": {"description": "Invalid destination or provider configuration"}, "429": {"description": "Rate limit reached; wait before requesting another OTP"}}
+        "servers": [
+          {
+            "url": "https://{supabaseProject}.supabase.co",
+            "variables": {
+              "supabaseProject": {
+                "default": "<project-ref>",
+                "description": "Supabase project reference"
+              }
+            }
+          }
+        ],
+        "parameters": [
+          {
+            "name": "apikey",
+            "in": "header",
+            "required": true,
+            "description": "Supabase anon/publishable key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SupabasePhoneOtpRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SupabaseEmailOtpRequest"
+                  }
+                ]
+              },
+              "examples": {
+                "phone": {
+                  "value": {
+                    "phone": "+84912345678",
+                    "create_user": true
+                  }
+                },
+                "email": {
+                  "value": {
+                    "email": "ten@example.com",
+                    "create_user": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP request accepted; Supabase sends the code using its configured provider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid destination or provider configuration"
+          },
+          "429": {
+            "description": "Rate limit reached; wait before requesting another OTP"
+          }
+        }
       }
     },
     "/auth/v1/verify": {
       "post": {
-        "tags": ["Supabase Auth (Mobile OTP)"],
+        "tags": [
+          "Supabase Auth (Mobile OTP)"
+        ],
         "summary": "Xác thực OTP 6 chữ số",
         "description": "Endpoint của Supabase Auth. App gọi Auth SDK (verifyOtp) với cùng phone/email, token là OTP và type tương ứng. Thành công trả session/access token để gọi API DrugTime; nếu mã sai hoặc hết hạn, người dùng quay lại nhập địa chỉ để gửi mã mới.",
         "operationId": "supabase_verify_otp_auth_v1_verify_post",
-        "servers": [{"url": "https://{supabaseProject}.supabase.co", "variables": {"supabaseProject": {"default": "<project-ref>", "description": "Supabase project reference"}}}],
-        "parameters": [{"name": "apikey", "in": "header", "required": true, "description": "Supabase anon/publishable key", "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"oneOf": [{"$ref": "#/components/schemas/SupabasePhoneOtpVerifyRequest"}, {"$ref": "#/components/schemas/SupabaseEmailOtpVerifyRequest"}]}, "examples": {"phone": {"value": {"phone": "+84912345678", "token": "123456", "type": "sms"}}, "email": {"value": {"email": "ten@example.com", "token": "123456", "type": "email"}}}}}},
-        "responses": {"200": {"description": "OTP verified; returns Supabase session tokens.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SupabaseAuthSession"}}}}, "400": {"description": "Invalid or expired OTP"}, "429": {"description": "Rate limit reached"}}
-      }
-    },
-    "/api/v1/health": {
-      "get": {
-        "tags": [
-          "Hạ tầng"
-        ],
-        "summary": "Health Check",
-        "operationId": "health_check_api_v1_health_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
+        "servers": [
+          {
+            "url": "https://{supabaseProject}.supabase.co",
+            "variables": {
+              "supabaseProject": {
+                "default": "<project-ref>",
+                "description": "Supabase project reference"
               }
             }
+          }
+        ],
+        "parameters": [
+          {
+            "name": "apikey",
+            "in": "header",
+            "required": true,
+            "description": "Supabase anon/publishable key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/SupabasePhoneOtpVerifyRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SupabaseEmailOtpVerifyRequest"
+                  }
+                ]
+              },
+              "examples": {
+                "phone": {
+                  "value": {
+                    "phone": "+84912345678",
+                    "token": "123456",
+                    "type": "sms"
+                  }
+                },
+                "email": {
+                  "value": {
+                    "email": "ten@example.com",
+                    "token": "123456",
+                    "type": "email"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP verified; returns Supabase session tokens.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupabaseAuthSession"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired OTP"
+          },
+          "429": {
+            "description": "Rate limit reached"
           }
         }
       }
@@ -74,7 +196,7 @@
           "1. Auth & User Profile"
         ],
         "summary": "Đồng bộ hồ sơ người dùng từ Supabase Auth",
-        "description": "Gọi lần đầu sau khi đăng nhập hoặc đăng ký thành công trên Supabase Auth để tạo/cập nhật bảng users.",
+        "description": "Gọi lần đầu sau khi xác thực OTP thành công trên Supabase Auth để tạo/cập nhật bảng users.",
         "operationId": "sync_profile_api_v1_auth_sync_profile_post",
         "parameters": [
           {
@@ -133,8 +255,8 @@
         "tags": [
           "1. Auth & User Profile"
         ],
-        "summary": "Lấy thông tin tài khoản và cài đặt giao diện hiện tại",
-        "description": "Trả về thông tin người dùng đang đăng nhập cùng cài đặt Simple Mode (che_do_nguoi_cao_tuoi).",
+        "summary": "Lấy thông tin tài khoản hiện tại",
+        "description": "Trả về thông tin hồ sơ của tài khoản đang đăng nhập (Schema v9: users).",
         "operationId": "get_my_profile_api_v1_users_me_get",
         "parameters": [
           {
@@ -181,8 +303,8 @@
         "tags": [
           "1. Auth & User Profile"
         ],
-        "summary": "Cập nhật hồ sơ & bật/tắt Simple Mode",
-        "description": "Cho phép chỉnh sửa họ tên, số điện thoại, hoặc bật/tắt chế độ Simple Mode cho người cao tuổi.",
+        "summary": "Cập nhật hồ sơ cá nhân",
+        "description": "Cho phép chỉnh sửa họ tên, số điện thoại E.164, email, ngày sinh, hoặc giới tính.",
         "operationId": "update_my_profile_api_v1_users_me_patch",
         "parameters": [
           {
@@ -416,7 +538,7 @@
           "1. Auth & User Profile"
         ],
         "summary": "Đăng ký FCM Device Token nhận cảnh báo liều",
-        "description": "Lưu FCM token của thiết bị để nhận push notification nhắc nhở hoặc cảnh báo người thân bỏ lỡ liều.",
+        "description": "Lưu FCM token của thiết bị để nhận push notification (Worker bỏ qua token iOS trong Phase 1 do thiếu APNs).",
         "operationId": "register_device_token_api_v1_users_me_device_tokens_post",
         "parameters": [
           {
@@ -535,7 +657,7 @@
           "2. Consent & Privacy"
         ],
         "summary": "Lấy trạng thái các mục đích đồng thuận của người dùng",
-        "description": "Tuân thủ NĐ 356/2025: Trả về trạng thái của 3 mục đích tách rời: health_data, family_sharing, ai_meal.",
+        "description": "Tuân thủ NĐ 356/2025 & QA.01: Trả về trạng thái của 3 mục đích tách rời: health_data, family_sharing, ai_meal.",
         "operationId": "get_my_consents_api_v1_consents_me_get",
         "parameters": [
           {
@@ -584,8 +706,8 @@
         "tags": [
           "2. Consent & Privacy"
         ],
-        "summary": "Cấp mới hoặc thu hồi đồng thuận xử lý dữ liệu",
-        "description": "Lưu theo cơ chế Append-only để giữ nguyên vết lịch sử phục vụ DPIA và kiểm toán tuân thủ.",
+        "summary": "Cấp mới hoặc thu hồi đồng thuận xử lý dữ liệu (QA.01)",
+        "description": "Lưu theo cơ chế Append-only. Rút consent có hiệu lực ngay ở request kế tiếp mà không qua hàng đợi xóa dữ liệu.",
         "operationId": "submit_consent_api_v1_consents_post",
         "parameters": [
           {
@@ -644,8 +766,8 @@
         "tags": [
           "2. Consent & Privacy"
         ],
-        "summary": "Gửi yêu cầu xóa toàn bộ dữ liệu hoặc rút consent (FR09)",
-        "description": "Gửi yêu cầu xóa dữ liệu cá nhân theo NĐ 356/2025/NĐ-CP. Yêu cầu sẽ được đưa vào hàng đợi chờ Admin phê duyệt.",
+        "summary": "Gửi yêu cầu xóa toàn bộ dữ liệu cá nhân (QA.01, CD9)",
+        "description": "Gửi yêu cầu xóa dữ liệu cá nhân theo NĐ 356/2025/NĐ-CP. Chỉ dùng cho yêu cầu xóa dữ liệu (cần Admin duyệt).",
         "operationId": "request_data_deletion_api_v1_data_deletion_requests_post",
         "parameters": [
           {
@@ -705,7 +827,7 @@
           "2. Consent & Privacy"
         ],
         "summary": "Xem tiến độ các yêu cầu xóa dữ liệu cá nhân của mình",
-        "description": "Cho phép người dùng kiểm tra trạng thái phê duyệt của các yêu cầu xóa dữ liệu đã gửi.",
+        "description": "Cho phép người dùng kiểm tra trạng thái phê duyệt và thực thi của các yêu cầu xóa dữ liệu đã gửi.",
         "operationId": "get_my_deletion_requests_api_v1_data_deletion_requests_me_get",
         "parameters": [
           {
@@ -892,7 +1014,7 @@
           "3. Medical Conditions"
         ],
         "summary": "Khai báo thêm bệnh lý nền vào hồ sơ",
-        "description": "Yêu cầu quyền GHI (bệnh nhân, hoặc người thân có cho_phep_chinh_sua=True). Tự động kích hoạt kiểm tra tương tác thuốc.",
+        "description": "Yêu cầu quyền GHI (bệnh nhân hoặc người thân có sharing_enabled). Tự động kích hoạt kiểm tra tương tác thuốc.",
         "operationId": "add_patient_condition_api_v1_patients__patient_id__conditions_post",
         "parameters": [
           {
@@ -1061,7 +1183,7 @@
           "4. Prescriptions & Medications"
         ],
         "summary": "Tìm kiếm thuốc trong danh mục quốc gia",
-        "description": "Tìm kiếm nhanh thuốc theo tên thương phẩm hoặc hoạt chất (hỗ trợ nhập tay hoặc đối chiếu sau OCR).",
+        "description": "Tìm kiếm nhanh thuốc theo tên thương phẩm hoặc hoạt chất (Schema v9: lọc deleted_at IS NULL).",
         "operationId": "search_medications_api_v1_medications_search_get",
         "parameters": [
           {
@@ -1145,66 +1267,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResponseEnvelope_MedicationDetailResponse_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/medications/unmatched-scans": {
-      "post": {
-        "tags": [
-          "4. Prescriptions & Medications"
-        ],
-        "summary": "Ghi nhận chuỗi quét OCR blister không khớp catalog (R-01)",
-        "description": "Lưu vết chuỗi ký tự nhận diện từ ML Kit nhưng không tìm thấy trong danh mục để Admin xem xét.",
-        "operationId": "report_unmatched_scan_api_v1_medications_unmatched_scans_post",
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UnmatchedScanCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseEnvelope_UnmatchedScanResponse_"
                 }
               }
             }
@@ -1326,7 +1388,7 @@
             }
           },
           {
-            "name": "trang_thai",
+            "name": "status",
             "in": "query",
             "required": false,
             "schema": {
@@ -1339,7 +1401,7 @@
                 }
               ],
               "description": "Lọc theo dang_dung hoặc da_ket_thuc",
-              "title": "Trang Thai"
+              "title": "Status"
             },
             "description": "Lọc theo dang_dung hoặc da_ket_thuc"
           },
@@ -1404,7 +1466,7 @@
           "4. Prescriptions & Medications"
         ],
         "summary": "Tạo đơn thuốc mới kèm danh sách thuốc con",
-        "description": "Yêu cầu quyền GHI. Tự động kích hoạt phân tích an toàn thuốc sau khi thêm.",
+        "description": "Yêu cầu quyền GHI. Thuốc con bắt buộc chọn từ danh mục (không nhập tự do theo Schema v5-v9). Tự động kích hoạt phân tích an toàn thuốc sau khi thêm.",
         "operationId": "create_prescription_api_v1_patients__patient_id__prescriptions_post",
         "parameters": [
           {
@@ -1716,7 +1778,7 @@
           "4. Prescriptions & Medications"
         ],
         "summary": "Thêm thuốc lẻ vào đơn thuốc hiện có",
-        "description": "Yêu cầu quyền GHI. Tự động kích hoạt phân tích an toàn thuốc.",
+        "description": "Yêu cầu quyền GHI. Thuốc bắt buộc có trong catalog. Tự động kích hoạt phân tích an toàn thuốc.",
         "operationId": "add_medication_to_prescription_api_v1_prescriptions__id__medications_post",
         "parameters": [
           {
@@ -1959,7 +2021,7 @@
           "5. Schedules & Dose Logs"
         ],
         "summary": "Lấy danh sách lịch uống thuốc của bệnh nhân",
-        "description": "Mobile dùng danh sách này để tạo Local Notifications trên thiết bị (hoạt động offline hoàn toàn).",
+        "description": "Mobile dùng danh sách này để tạo Local Notifications trên thiết bị (Schema v9: effective_from).",
         "operationId": "get_patient_schedules_api_v1_patients__patient_id__schedules_get",
         "parameters": [
           {
@@ -2033,8 +2095,8 @@
         "tags": [
           "5. Schedules & Dose Logs"
         ],
-        "summary": "Tạo lịch giờ uống thuốc",
-        "description": "Hỗ trợ lịch cố định (co_dinh) hoặc khi cần (khi_can - PRN). Yêu cầu quyền GHI.",
+        "summary": "Tạo lịch giờ uống thuốc (CD6: effective_from = now())",
+        "description": "Hỗ trợ lịch giờ uống. Gán effective_from = now() để Worker không quét nhầm thành bỏ lỡ.",
         "operationId": "create_medication_schedule_api_v1_user_medications__id__schedules_post",
         "parameters": [
           {
@@ -2118,8 +2180,8 @@
         "tags": [
           "5. Schedules & Dose Logs"
         ],
-        "summary": "Cập nhật giờ uống hoặc bật/tắt nhắc nhở",
-        "description": "Sửa giờ uống hoặc bật/tắt công tắc nhắc nhở.",
+        "summary": "Cập nhật giờ uống hoặc bật/tắt nhắc nhở (CD6: reset effective_from = now())",
+        "description": "Sửa giờ uống hoặc bật/tắt nhắc nhở. Tự động cập nhật effective_from = now().",
         "operationId": "update_schedule_api_v1_schedules__id__patch",
         "parameters": [
           {
@@ -2277,7 +2339,7 @@
           "5. Schedules & Dose Logs"
         ],
         "summary": "Đồng bộ liều uống từ client offline (Idempotent per client_uuid)",
-        "description": "Chống trùng lặp tuyệt đối bằng client_uuid (QA.08). Trả về chi tiết trạng thái từng item (synced, duplicate, error).",
+        "description": "Chống trùng lặp tuyệt đối bằng client_uuid (QA.08, CD3). Trả về chi tiết trạng thái từng item (synced, duplicate, error).",
         "operationId": "batch_sync_dose_logs_api_v1_dose_logs_batch_sync_post",
         "parameters": [
           {
@@ -2559,7 +2621,7 @@
           "6. Drug Safety & Interactions"
         ],
         "summary": "Kích hoạt phân tích tương tác trên toàn bộ phác đồ thuốc hiện tại",
-        "description": "Chạy bộ máy kiểm tra xác định (Rule-based, Bảng A-F, không LLM). Trả về snapshot kết quả.",
+        "description": "Chạy bộ máy kiểm tra xác định (Rule-based, Bảng A-F, không LLM theo FR04/CD7). Trả về snapshot kết quả.",
         "operationId": "analyze_patient_regimen_api_v1_patients__patient_id__regimens_analyze_post",
         "parameters": [
           {
@@ -2769,7 +2831,7 @@
           "6. Drug Safety & Interactions"
         ],
         "summary": "Đánh dấu bệnh nhân đã đọc/xử lý khuyến nghị an toàn",
-        "description": "Ghi nhận phản hồi của người dùng đối với cảnh báo tương tác.",
+        "description": "Ghi nhận phản hồi của người dùng đối với cảnh báo tương tác (Schema v9: is_viewed, is_handled).",
         "operationId": "acknowledge_recommendation_api_v1_recommendations__id__acknowledge_patch",
         "parameters": [
           {
@@ -2948,7 +3010,7 @@
           "7. Caregiver & Family Linking"
         ],
         "summary": "Bệnh nhân xem danh sách người thân đang liên kết",
-        "description": "Hiển thị danh sách người thân, kèm các công tắc quyền xem và quyền sửa.",
+        "description": "Hiển thị danh sách người thân kèm công tắc cho phép chia sẻ dữ liệu (sharing_enabled).",
         "operationId": "get_my_caregivers_api_v1_caregivers_my_caregivers_get",
         "parameters": [
           {
@@ -2998,7 +3060,7 @@
           "7. Caregiver & Family Linking"
         ],
         "summary": "Cập nhật quyền hoặc thu hồi liên kết (Hỗ trợ Admin Emergency Override)",
-        "description": "Cho phép bệnh nhân cập nhật quyền hoặc Admin thực hiện can thiệp khẩn cấp (chỉ được thu hồi/thu hẹp quyền, bắt buộc X-Admin-Reason, sinh Four-Eyes hậu kiểm 24h).",
+        "description": "Cho phép bệnh nhân cập nhật quyền chia sẻ hoặc Admin thực hiện can thiệp khẩn cấp (chỉ được thu hồi, bắt buộc X-Admin-Reason, sinh Four-Eyes hậu kiểm 24h).",
         "operationId": "update_caregiver_link_api_v1_caregivers__link_id__patch",
         "parameters": [
           {
@@ -3133,7 +3195,7 @@
           "7. Caregiver & Family Linking"
         ],
         "summary": "Lấy thông báo của tài khoản (nhắc thuốc, cảnh báo người thân)",
-        "description": "Lấy danh sách thông báo gửi đến người dùng.",
+        "description": "Lấy danh sách thông báo gửi đến người dùng (Schema v9: dedupe_key, created_at).",
         "operationId": "get_notifications_api_v1_notifications_get",
         "parameters": [
           {
@@ -3509,7 +3571,7 @@
           "9. Admin Operations"
         ],
         "summary": "Danh sách danh mục thuốc thương mại (Admin, Phân trang)",
-        "description": "Tra cứu và quản lý toàn bộ danh mục thuốc của hệ thống.",
+        "description": "Tra cứu và quản lý toàn bộ danh mục thuốc của hệ thống (Schema v9: medications).",
         "operationId": "admin_list_medications_api_v1_admin_medications_get",
         "parameters": [
           {
@@ -3529,6 +3591,18 @@
               "title": "Q"
             },
             "description": "Tìm theo tên thuốc hoặc hoạt chất"
+          },
+          {
+            "name": "include_deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Bao gồm cả các thuốc đã xóa mềm",
+              "default": false,
+              "title": "Include Deleted"
+            },
+            "description": "Bao gồm cả các thuốc đã xóa mềm"
           },
           {
             "name": "page",
@@ -3598,7 +3672,7 @@
           "9. Admin Operations"
         ],
         "summary": "Thêm thuốc mới vào catalog",
-        "description": "Tạo mới bản ghi thuốc thương phẩm trong catalog quốc gia.",
+        "description": "Tạo mới bản ghi thuốc thương phẩm trong catalog quốc gia (Schema v9: medications).",
         "operationId": "admin_create_medication_api_v1_admin_medications_post",
         "parameters": [
           {
@@ -3724,8 +3798,8 @@
         "tags": [
           "9. Admin Operations"
         ],
-        "summary": "Xóa thuốc khỏi catalog",
-        "description": "Xóa thuốc khỏi danh mục thương phẩm.",
+        "summary": "Xóa mềm thuốc khỏi catalog (Schema v9: soft delete)",
+        "description": "Đánh dấu deleted_at = now() để giữ tính toàn vẹn tham chiếu lịch sử đơn thuốc.",
         "operationId": "admin_delete_medication_api_v1_admin_medications__id__delete",
         "parameters": [
           {
@@ -4427,7 +4501,7 @@
         "tags": [
           "9. Admin Operations"
         ],
-        "summary": "Xóa cặp tương tác thuốc",
+        "summary": "Xóa cặp tương tác thuốc (soft-delete)",
         "operationId": "admin_delete_interaction_api_v1_admin_interactions__id__delete",
         "parameters": [
           {
@@ -4661,7 +4735,7 @@
         "tags": [
           "9. Admin Operations"
         ],
-        "summary": "Xóa tương tác thuốc - thực phẩm",
+        "summary": "Xóa tương tác thuốc - thực phẩm (soft-delete)",
         "operationId": "admin_delete_drug_food_api_v1_admin_drug_foods__id__delete",
         "parameters": [
           {
@@ -4720,9 +4794,20 @@
           "9. Admin Operations"
         ],
         "summary": "Kích hoạt job ETL đồng bộ dữ liệu Cục Quản lý Dược",
-        "description": "Kích hoạt tiến trình đồng bộ nền từ nguồn Dược thư Quốc gia Việt Nam (QĐ 5948/QĐ-BYT).",
+        "description": "Kích hoạt tiến trình đồng bộ nền từ nguồn dav_drugbank, qd_5948, hoặc duoc_thu_qg (PB06, Schema v9).",
         "operationId": "trigger_catalog_sync_api_v1_admin_catalog_sync_post",
         "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(dav_drugbank|qd_5948|duoc_thu_qg)$",
+              "default": "qd_5948",
+              "title": "Source"
+            }
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -4769,8 +4854,8 @@
         "tags": [
           "9. Admin Operations"
         ],
-        "summary": "Xem trạng thái tiến trình sync catalog nền",
-        "description": "Kiểm tra tiến độ số lượng thuốc và hoạt chất đã cập nhật từ nguồn chính thống.",
+        "summary": "Xem trạng thái lượt đồng bộ catalog gần nhất (catalog_sync_runs)",
+        "description": "Kiểm tra tiến độ số lượng thuốc và hoạt chất từ bảng catalog_sync_runs.",
         "operationId": "get_catalog_sync_status_api_v1_admin_catalog_sync_status_get",
         "parameters": [
           {
@@ -4814,164 +4899,6 @@
         }
       }
     },
-    "/api/v1/admin/unmatched-scans": {
-      "get": {
-        "tags": [
-          "9. Admin Operations"
-        ],
-        "summary": "Danh sách chuỗi OCR chưa khớp catalog (Phân trang)",
-        "description": "Xem các chuỗi ký tự nhận diện từ vỉ thuốc mà người dùng quét nhưng chưa có trong catalog.",
-        "operationId": "list_unmatched_scans_api_v1_admin_unmatched_scans_get",
-        "parameters": [
-          {
-            "name": "admin_da_xem_xet",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Admin Da Xem Xet"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "default": 1,
-              "title": "Page"
-            }
-          },
-          {
-            "name": "page_size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Page Size"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseEnvelope_PaginatedData_Dict_str__Any___"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/admin/unmatched-scans/{id}/resolve": {
-      "patch": {
-        "tags": [
-          "9. Admin Operations"
-        ],
-        "summary": "Đánh dấu đã xem xét chuỗi OCR chưa khớp",
-        "description": "Đánh dấu đã ánh xạ hoặc thêm thuốc mới vào danh mục.",
-        "operationId": "resolve_unmatched_scan_api_v1_admin_unmatched_scans__id__resolve_patch",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Id"
-            }
-          },
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ResolveUnmatchedScanRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResponseEnvelope_MessageResponse_"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/admin/rule-change-logs": {
       "get": {
         "tags": [
@@ -4994,10 +4921,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Tên bảng dữ liệu luật (drug_interactions, drug_foods...)",
+              "description": "Tên bảng dữ liệu luật (active_ingredient_interactions, drug_food_interactions...)",
               "title": "Table Name"
             },
-            "description": "Tên bảng dữ liệu luật (drug_interactions, drug_foods...)"
+            "description": "Tên bảng dữ liệu luật (active_ingredient_interactions, drug_food_interactions...)"
           },
           {
             "name": "changed_by",
@@ -5119,7 +5046,7 @@
           "9. Admin Operations"
         ],
         "summary": "Tra cứu nhật ký truy cập dữ liệu nhạy cảm (Phân trang - NFR06, QA.09)",
-        "description": "Tra cứu vết kiểm toán append-only mọi truy cập vào dữ liệu bệnh nhân của Admin và Người thân, lọc can thiệp khẩn cấp.",
+        "description": "Tra cứu vết kiểm toán append-only mọi truy cập vào dữ liệu bệnh nhân của Admin và Người thân (Schema v9: không có self).",
         "operationId": "search_audit_logs_api_v1_admin_audit_logs_get",
         "parameters": [
           {
@@ -5141,6 +5068,24 @@
             "description": "Lọc theo bệnh nhân"
           },
           {
+            "name": "actor_user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Lọc theo người truy cập (Index QA.09 Schema v9)",
+              "title": "Actor User Id"
+            },
+            "description": "Lọc theo người truy cập (Index QA.09 Schema v9)"
+          },
+          {
             "name": "actor_role",
             "in": "query",
             "required": false,
@@ -5153,10 +5098,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Lọc theo role: self, family, admin",
+              "description": "Lọc theo role: family, admin, khong_co_quyen",
               "title": "Actor Role"
             },
-            "description": "Lọc theo role: self, family, admin"
+            "description": "Lọc theo role: family, admin, khong_co_quyen"
           },
           {
             "name": "from_date",
@@ -5364,12 +5309,12 @@
         "tags": [
           "9. Admin Operations"
         ],
-        "summary": "Danh sách yêu cầu xóa dữ liệu cá nhân chờ duyệt (NĐ 356)",
-        "description": "Xem các yêu cầu xóa dữ liệu hoặc rút consent của người dùng.",
+        "summary": "Danh sách yêu cầu xóa dữ liệu cá nhân chờ duyệt (NĐ 356, QA.01)",
+        "description": "Xem các yêu cầu xóa dữ liệu của người dùng.",
         "operationId": "list_data_deletion_requests_api_v1_admin_data_deletion_requests_get",
         "parameters": [
           {
-            "name": "trang_thai",
+            "name": "status",
             "in": "query",
             "required": false,
             "schema": {
@@ -5381,10 +5326,10 @@
                   "type": "null"
                 }
               ],
-              "description": "cho_duyet, da_duyet, tu_choi",
-              "title": "Trang Thai"
+              "description": "cho_duyet, da_duyet, tu_choi, hoan_tat",
+              "title": "Status"
             },
-            "description": "cho_duyet, da_duyet, tu_choi"
+            "description": "cho_duyet, da_duyet, tu_choi, hoan_tat"
           },
           {
             "name": "page",
@@ -5455,8 +5400,8 @@
         "tags": [
           "9. Admin Operations"
         ],
-        "summary": "Xử lý duyệt hoặc từ chối yêu cầu xóa dữ liệu",
-        "description": "Admin phê duyệt hoặc từ chối kèm lý do.",
+        "summary": "Xử lý duyệt hoặc từ chối yêu cầu xóa dữ liệu (CD9)",
+        "description": "Admin phê duyệt (da_duyet) hoặc từ chối (tu_choi kèm lý do bắt buộc). Khi duyệt, tiến trình worker thực thi xóa và biến user thành tombstone.",
         "operationId": "process_data_deletion_request_api_v1_admin_data_deletion_requests__id__process_post",
         "parameters": [
           {
@@ -5626,25 +5571,290 @@
           }
         }
       }
+    },
+    "/api/v1/disease-groups": {
+      "get": {
+        "tags": [
+          "Nhóm bệnh (Disease Groups)"
+        ],
+        "summary": "Tra cứu danh mục nhóm bệnh (Bảng lookup Schema v9)",
+        "description": "Trả về các nhóm bệnh đang hoạt động (is_active=True) phục vụ hiển thị và cấu hình.",
+        "operationId": "list_active_disease_groups_api_v1_disease_groups_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Từ khóa tìm kiếm",
+              "title": "Q"
+            },
+            "description": "Từ khóa tìm kiếm"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseEnvelope_List_DiseaseGroupResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/disease-groups": {
+      "get": {
+        "tags": [
+          "Nhóm bệnh (Disease Groups)"
+        ],
+        "summary": "Quản trị danh mục nhóm bệnh (Admin, Phân trang)",
+        "description": "Tra cứu toàn bộ nhóm bệnh kể cả các nhóm đã vô hiệu hóa (is_active=False).",
+        "operationId": "admin_list_disease_groups_api_v1_admin_disease_groups_get",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "title": "Page"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseEnvelope_PaginatedData_DiseaseGroupResponse__"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Nhóm bệnh (Disease Groups)"
+        ],
+        "summary": "Thêm mới nhóm bệnh vào danh mục (Admin)",
+        "description": "Tạo một nhóm bệnh mới trong bảng lookup disease_groups (QA.10).",
+        "operationId": "admin_create_disease_group_api_v1_admin_disease_groups_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiseaseGroupCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseEnvelope_DiseaseGroupResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/disease-groups/{id}": {
+      "patch": {
+        "tags": [
+          "Nhóm bệnh (Disease Groups)"
+        ],
+        "summary": "Cập nhật thông tin nhóm bệnh (Admin)",
+        "description": "Chỉnh sửa tên, mã, hoặc bật/tắt trạng thái hoạt động (thay vì xóa cứng khi còn tham chiếu).",
+        "operationId": "admin_update_disease_group_api_v1_admin_disease_groups__id__patch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiseaseGroupUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResponseEnvelope_DiseaseGroupResponse_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
-      "SupabasePhoneOtpRequest": {"type": "object", "required": ["phone"], "additionalProperties": false, "properties": {"phone": {"type": "string", "description": "Số điện thoại dạng E.164, ví dụ +84912345678", "pattern": "^\\+[1-9]\\d{7,14}$"}, "create_user": {"type": "boolean", "default": true, "description": "Cho phép tạo tài khoản nếu số điện thoại chưa đăng ký"}}},
-      "SupabaseEmailOtpRequest": {"type": "object", "required": ["email"], "additionalProperties": false, "properties": {"email": {"type": "string", "format": "email"}, "create_user": {"type": "boolean", "default": true, "description": "Cho phép tạo tài khoản nếu email chưa đăng ký"}}},
-      "SupabasePhoneOtpVerifyRequest": {"type": "object", "required": ["phone", "token", "type"], "additionalProperties": false, "properties": {"phone": {"type": "string", "description": "Số điện thoại dạng E.164", "pattern": "^\\+[1-9]\\d{7,14}$"}, "token": {"type": "string", "pattern": "^\\d{6}$", "description": "Mã OTP 6 chữ số"}, "type": {"type": "string", "enum": ["sms"]}}},
-      "SupabaseEmailOtpVerifyRequest": {"type": "object", "required": ["email", "token", "type"], "additionalProperties": false, "properties": {"email": {"type": "string", "format": "email"}, "token": {"type": "string", "pattern": "^\\d{6}$", "description": "Mã OTP 6 chữ số"}, "type": {"type": "string", "enum": ["email"]}}},
-      "SupabaseAuthSession": {"type": "object", "required": ["access_token", "token_type", "expires_in", "refresh_token", "user"], "additionalProperties": true, "properties": {"access_token": {"type": "string", "description": "Bearer token dùng gọi API DrugTime"}, "token_type": {"type": "string", "example": "bearer"}, "expires_in": {"type": "integer"}, "expires_at": {"type": "integer"}, "refresh_token": {"type": "string"}, "user": {"type": "object", "additionalProperties": true}}},
       "AcknowledgeRecommendationRequest": {
         "properties": {
-          "da_xem": {
+          "is_viewed": {
             "type": "boolean",
-            "title": "Da Xem",
+            "title": "Is Viewed",
+            "description": "Đánh dấu đã xem",
             "default": true
           },
-          "da_xu_ly": {
+          "is_handled": {
             "type": "boolean",
-            "title": "Da Xu Ly",
+            "title": "Is Handled",
+            "description": "Đánh dấu đã xử lý",
             "default": false
           }
         },
@@ -5658,34 +5868,34 @@
             "title": "Id",
             "description": "ID hoạt chất Bảng A"
           },
-          "ten_hoat_chat_chuan": {
+          "standard_name": {
             "type": "string",
-            "title": "Ten Hoat Chat Chuan",
+            "title": "Standard Name",
             "description": "Tên hoạt chất chuẩn hóa quốc tế"
           },
-          "ham_luong_value": {
+          "strength_value": {
             "type": "number",
-            "title": "Ham Luong Value",
+            "title": "Strength Value",
             "description": "Giá trị hàm lượng cấu trúc (vd: 500)"
           },
-          "ham_luong_unit": {
+          "strength_unit": {
             "type": "string",
-            "title": "Ham Luong Unit",
+            "title": "Strength Unit",
             "description": "Đơn vị hàm lượng (vd: mg, mcg)"
           },
-          "don_vi_dinh_luong": {
+          "dosing_unit": {
             "type": "string",
-            "title": "Don Vi Dinh Luong",
+            "title": "Dosing Unit",
             "description": "Đơn vị định lượng (viên, gói, ml)"
           }
         },
         "type": "object",
         "required": [
           "id",
-          "ten_hoat_chat_chuan",
-          "ham_luong_value",
-          "ham_luong_unit",
-          "don_vi_dinh_luong"
+          "standard_name",
+          "strength_value",
+          "strength_unit",
+          "dosing_unit"
         ],
         "title": "ActiveIngredientItem"
       },
@@ -5743,11 +5953,11 @@
       },
       "AdminMedicationCreate": {
         "properties": {
-          "ten_thuoc": {
+          "name": {
             "type": "string",
-            "title": "Ten Thuoc"
+            "title": "Name"
           },
-          "hoat_chat_raw": {
+          "raw_active_ingredient": {
             "anyOf": [
               {
                 "type": "string"
@@ -5756,9 +5966,9 @@
                 "type": "null"
               }
             ],
-            "title": "Hoat Chat Raw"
+            "title": "Raw Active Ingredient"
           },
-          "ham_luong": {
+          "strength_text": {
             "anyOf": [
               {
                 "type": "string"
@@ -5767,9 +5977,9 @@
                 "type": "null"
               }
             ],
-            "title": "Ham Luong"
+            "title": "Strength Text"
           },
-          "dang_bao_che": {
+          "dosage_form": {
             "anyOf": [
               {
                 "type": "string"
@@ -5778,9 +5988,9 @@
                 "type": "null"
               }
             ],
-            "title": "Dang Bao Che"
+            "title": "Dosage Form"
           },
-          "cty_san_xuat_ten": {
+          "manufacturer_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -5789,9 +5999,9 @@
                 "type": "null"
               }
             ],
-            "title": "Cty San Xuat Ten"
+            "title": "Manufacturer Name"
           },
-          "cty_san_xuat_nuoc": {
+          "manufacturer_country": {
             "anyOf": [
               {
                 "type": "string"
@@ -5800,9 +6010,9 @@
                 "type": "null"
               }
             ],
-            "title": "Cty San Xuat Nuoc"
+            "title": "Manufacturer Country"
           },
-          "quy_cach_dong_goi": {
+          "packaging_spec": {
             "anyOf": [
               {
                 "type": "string"
@@ -5811,7 +6021,7 @@
                 "type": "null"
               }
             ],
-            "title": "Quy Cach Dong Goi"
+            "title": "Packaging Spec"
           },
           "active_ingredient_ids": {
             "items": {
@@ -5823,13 +6033,13 @@
         },
         "type": "object",
         "required": [
-          "ten_thuoc"
+          "name"
         ],
         "title": "AdminMedicationCreate"
       },
       "AdminMedicationUpdate": {
         "properties": {
-          "ten_thuoc": {
+          "name": {
             "anyOf": [
               {
                 "type": "string"
@@ -5838,9 +6048,9 @@
                 "type": "null"
               }
             ],
-            "title": "Ten Thuoc"
+            "title": "Name"
           },
-          "hoat_chat_raw": {
+          "raw_active_ingredient": {
             "anyOf": [
               {
                 "type": "string"
@@ -5849,9 +6059,9 @@
                 "type": "null"
               }
             ],
-            "title": "Hoat Chat Raw"
+            "title": "Raw Active Ingredient"
           },
-          "ham_luong": {
+          "strength_text": {
             "anyOf": [
               {
                 "type": "string"
@@ -5860,9 +6070,9 @@
                 "type": "null"
               }
             ],
-            "title": "Ham Luong"
+            "title": "Strength Text"
           },
-          "dang_bao_che": {
+          "dosage_form": {
             "anyOf": [
               {
                 "type": "string"
@@ -5871,7 +6081,40 @@
                 "type": "null"
               }
             ],
-            "title": "Dang Bao Che"
+            "title": "Dosage Form"
+          },
+          "manufacturer_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturer Name"
+          },
+          "manufacturer_country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturer Country"
+          },
+          "packaging_spec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Packaging Spec"
           }
         },
         "type": "object",
@@ -5890,11 +6133,12 @@
           "actor_role": {
             "type": "string",
             "enum": [
-              "self",
               "family",
-              "admin"
+              "admin",
+              "khong_co_quyen"
             ],
-            "title": "Actor Role"
+            "title": "Actor Role",
+            "description": "Role ngữ cảnh: family, admin, khong_co_quyen (không có self theo Schema v9)"
           },
           "patient_user_id": {
             "type": "string",
@@ -5912,15 +6156,15 @@
             ],
             "title": "Data Scope"
           },
-          "ket_qua": {
+          "result": {
             "type": "string",
             "enum": [
               "allowed",
               "denied"
             ],
-            "title": "Ket Qua"
+            "title": "Result"
           },
-          "ly_do_tu_choi": {
+          "rejection_reason": {
             "anyOf": [
               {
                 "type": "string"
@@ -5929,9 +6173,9 @@
                 "type": "null"
               }
             ],
-            "title": "Ly Do Tu Choi"
+            "title": "Rejection Reason"
           },
-          "ly_do_can_thiep": {
+          "override_reason": {
             "anyOf": [
               {
                 "type": "string"
@@ -5940,7 +6184,7 @@
                 "type": "null"
               }
             ],
-            "title": "Ly Do Can Thiep"
+            "title": "Override Reason"
           },
           "action": {
             "anyOf": [
@@ -6031,9 +6275,9 @@
             "type": "array",
             "title": "Compliance Flags"
           },
-          "thoi_gian": {
+          "accessed_at": {
             "type": "string",
-            "title": "Thoi Gian"
+            "title": "Accessed At"
           }
         },
         "type": "object",
@@ -6043,8 +6287,8 @@
           "actor_role",
           "patient_user_id",
           "data_scope",
-          "ket_qua",
-          "thoi_gian"
+          "result",
+          "accessed_at"
         ],
         "title": "AuditLogResponse"
       },
@@ -6203,32 +6447,26 @@
             ],
             "title": "Family Name"
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "pending",
               "active",
               "revoked"
             ],
-            "title": "Trang Thai",
+            "title": "Status",
             "description": "pending, active, hoặc revoked"
           },
-          "cho_phep_chia_se": {
+          "sharing_enabled": {
             "type": "boolean",
-            "title": "Cho Phep Chia Se",
-            "description": "Quyền ĐỌC (xem danh sách thuốc, lịch sử tuân thủ)"
+            "title": "Sharing Enabled",
+            "description": "Công tắc chia sẻ dữ liệu do bệnh nhân điều khiển"
           },
-          "cho_phep_chinh_sua": {
-            "type": "boolean",
-            "title": "Cho Phep Chinh Sua",
-            "description": "Quyền GHI (sửa lịch, thêm thuốc hộ người cao tuổi)",
-            "default": false
-          },
-          "thoi_gian_lien_ket": {
+          "linked_at": {
             "type": "string",
-            "title": "Thoi Gian Lien Ket"
+            "title": "Linked At"
           },
-          "thoi_gian_thu_hoi": {
+          "revoked_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -6237,7 +6475,7 @@
                 "type": "null"
               }
             ],
-            "title": "Thoi Gian Thu Hoi"
+            "title": "Revoked At"
           }
         },
         "type": "object",
@@ -6245,15 +6483,15 @@
           "id",
           "patient_user_id",
           "family_user_id",
-          "trang_thai",
-          "cho_phep_chia_se",
-          "thoi_gian_lien_ket"
+          "status",
+          "sharing_enabled",
+          "linked_at"
         ],
         "title": "CaregiverLinkResponse"
       },
       "CaregiverLinkUpdateRequest": {
         "properties": {
-          "cho_phep_chia_se": {
+          "sharing_enabled": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -6262,22 +6500,10 @@
                 "type": "null"
               }
             ],
-            "title": "Cho Phep Chia Se",
+            "title": "Sharing Enabled",
             "description": "Bật/tắt quyền xem dữ liệu"
           },
-          "cho_phep_chinh_sua": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cho Phep Chinh Sua",
-            "description": "Bật/tắt quyền thao tác ghi hộ"
-          },
-          "trang_thai": {
+          "status": {
             "anyOf": [
               {
                 "type": "string",
@@ -6290,8 +6516,20 @@
                 "type": "null"
               }
             ],
-            "title": "Trang Thai",
+            "title": "Status",
             "description": "Thu hồi liên kết (revoked)"
+          },
+          "can_edit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Edit",
+            "description": "Quyền chỉnh sửa (chỉ bệnh nhân được cấp)"
           }
         },
         "type": "object",
@@ -6304,27 +6542,27 @@
             "title": "Id",
             "description": "ID điều kiện y khoa chuẩn hóa (Bảng B)"
           },
-          "ten": {
+          "name": {
             "type": "string",
-            "title": "Ten",
+            "title": "Name",
             "description": "Tên bệnh lý hoặc điều kiện sinh lý"
           },
-          "ban_chat_y_khoa": {
+          "medical_nature": {
             "type": "string",
             "enum": [
               "benh_ly",
               "sinh_ly_binh_thuong"
             ],
-            "title": "Ban Chat Y Khoa",
+            "title": "Medical Nature",
             "description": "benh_ly hoặc sinh_ly_binh_thuong"
           },
-          "vai_tro_du_lieu": {
+          "data_role": {
             "type": "string",
             "enum": [
               "sinh_hoat_chat_dieu_tri",
               "dieu_chinh_thuoc_khac"
             ],
-            "title": "Vai Tro Du Lieu",
+            "title": "Data Role",
             "description": "sinh_hoat_chat_dieu_tri hoặc dieu_chinh_thuoc_khac"
           },
           "icd10_code": {
@@ -6343,9 +6581,9 @@
         "type": "object",
         "required": [
           "id",
-          "ten",
-          "ban_chat_y_khoa",
-          "vai_tro_du_lieu"
+          "name",
+          "medical_nature",
+          "data_role"
         ],
         "title": "ConditionCatalogResponse"
       },
@@ -6361,24 +6599,24 @@
             "title": "User Id",
             "description": "ID người dùng chủ thể dữ liệu"
           },
-          "loai_dong_y": {
+          "consent_type": {
             "type": "string",
             "enum": [
               "health_data",
               "family_sharing",
               "ai_meal"
             ],
-            "title": "Loai Dong Y"
+            "title": "Consent Type"
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "dong_y",
               "thu_hoi"
             ],
-            "title": "Trang Thai"
+            "title": "Status"
           },
-          "thoi_gian_dong_y": {
+          "consented_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -6387,9 +6625,9 @@
                 "type": "null"
               }
             ],
-            "title": "Thoi Gian Dong Y"
+            "title": "Consented At"
           },
-          "thoi_gian_thu_hoi": {
+          "revoked_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -6398,45 +6636,45 @@
                 "type": "null"
               }
             ],
-            "title": "Thoi Gian Thu Hoi"
+            "title": "Revoked At"
           },
-          "phien_ban_van_ban": {
+          "document_version": {
             "type": "string",
-            "title": "Phien Ban Van Ban"
+            "title": "Document Version"
           }
         },
         "type": "object",
         "required": [
           "id",
           "user_id",
-          "loai_dong_y",
-          "trang_thai",
-          "phien_ban_van_ban"
+          "consent_type",
+          "status",
+          "document_version"
         ],
         "title": "ConsentRecordResponse"
       },
       "ConsentStatusResponse": {
         "properties": {
-          "loai_dong_y": {
+          "consent_type": {
             "type": "string",
             "enum": [
               "health_data",
               "family_sharing",
               "ai_meal"
             ],
-            "title": "Loai Dong Y",
-            "description": "Mục đích xử lý dữ liệu"
+            "title": "Consent Type",
+            "description": "Mục đích xử lý dữ liệu: health_data, family_sharing, ai_meal"
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "dong_y",
               "thu_hoi"
             ],
-            "title": "Trang Thai",
+            "title": "Status",
             "description": "Trạng thái hiện tại: dong_y hoặc thu_hoi"
           },
-          "thoi_gian_dong_y": {
+          "consented_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -6445,10 +6683,10 @@
                 "type": "null"
               }
             ],
-            "title": "Thoi Gian Dong Y",
+            "title": "Consented At",
             "description": "Thời điểm chấp thuận gần nhất"
           },
-          "thoi_gian_thu_hoi": {
+          "revoked_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -6457,52 +6695,26 @@
                 "type": "null"
               }
             ],
-            "title": "Thoi Gian Thu Hoi",
+            "title": "Revoked At",
             "description": "Thời điểm thu hồi (nếu có)"
           },
-          "phien_ban_van_ban": {
+          "document_version": {
             "type": "string",
-            "title": "Phien Ban Van Ban",
+            "title": "Document Version",
             "description": "Phiên bản văn bản đồng thuận",
             "default": "v1.0"
           }
         },
         "type": "object",
         "required": [
-          "loai_dong_y",
-          "trang_thai"
+          "consent_type",
+          "status"
         ],
         "title": "ConsentStatusResponse"
       },
       "DataDeletionRequestCreate": {
         "properties": {
-          "loai": {
-            "type": "string",
-            "enum": [
-              "xoa_du_lieu",
-              "rut_consent"
-            ],
-            "title": "Loai",
-            "description": "Loại yêu cầu: xóa toàn bộ dữ liệu hoặc rút consent"
-          },
-          "loai_dong_y": {
-            "anyOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "health_data",
-                  "family_sharing",
-                  "ai_meal"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Loai Dong Y",
-            "description": "Mục đích rút consent (khi loai = 'rut_consent')"
-          },
-          "ly_do": {
+          "reason": {
             "anyOf": [
               {
                 "type": "string"
@@ -6511,14 +6723,11 @@
                 "type": "null"
               }
             ],
-            "title": "Ly Do",
-            "description": "Lý do yêu cầu xóa dữ liệu"
+            "title": "Reason",
+            "description": "Lý do yêu cầu xóa dữ liệu cá nhân"
           }
         },
         "type": "object",
-        "required": [
-          "loai"
-        ],
         "title": "DataDeletionRequestCreate"
       },
       "DataDeletionRequestResponse": {
@@ -6533,26 +6742,7 @@
             "title": "User Id",
             "description": "Chủ tài khoản"
           },
-          "loai": {
-            "type": "string",
-            "enum": [
-              "xoa_du_lieu",
-              "rut_consent"
-            ],
-            "title": "Loai"
-          },
-          "loai_dong_y": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Loai Dong Y"
-          },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "cho_duyet",
@@ -6560,13 +6750,15 @@
               "tu_choi",
               "hoan_tat"
             ],
-            "title": "Trang Thai"
+            "title": "Status",
+            "description": "Trạng thái: cho_duyet, da_duyet, tu_choi, hoan_tat"
           },
-          "thoi_gian_yeu_cau": {
+          "requested_at": {
             "type": "string",
-            "title": "Thoi Gian Yeu Cau"
+            "title": "Requested At",
+            "description": "Thời điểm yêu cầu"
           },
-          "thoi_gian_xu_ly": {
+          "handled_by_admin_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -6575,9 +6767,10 @@
                 "type": "null"
               }
             ],
-            "title": "Thoi Gian Xu Ly"
+            "title": "Handled By Admin Id",
+            "description": "ID Admin thụ lý"
           },
-          "ly_do_tu_choi": {
+          "handled_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -6586,16 +6779,52 @@
                 "type": "null"
               }
             ],
-            "title": "Ly Do Tu Choi"
+            "title": "Handled At",
+            "description": "Thời điểm phê duyệt/từ chối"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason",
+            "description": "Lý do từ chối (nếu có)"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At",
+            "description": "Thời điểm Worker hoàn tất thực thi xóa dữ liệu [MỚI in v9]"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error",
+            "description": "Lỗi gần nhất trong quá trình thực thi xóa [MỚI in v9]"
           }
         },
         "type": "object",
         "required": [
           "id",
           "user_id",
-          "loai",
-          "trang_thai",
-          "thoi_gian_yeu_cau"
+          "status",
+          "requested_at"
         ],
         "title": "DataDeletionRequestResponse"
       },
@@ -6792,24 +7021,67 @@
         ],
         "title": "DeviceTokenRequest"
       },
-      "DoseLogItem": {
+      "DiseaseGroupCreate": {
         "properties": {
-          "client_uuid": {
+          "code": {
             "type": "string",
-            "title": "Client Uuid",
-            "description": "UUID sinh tại mobile để chống ghi trùng khi sync offline"
+            "title": "Code",
+            "description": "Mã ổn định duy nhất (vd: tang_huyet_ap, tieu_duong)"
           },
-          "medication_schedule_id": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Tên nhóm bệnh hiển thị"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "description": "Trạng thái kích hoạt",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name"
+        ],
+        "title": "DiseaseGroupCreate"
+      },
+      "DiseaseGroupResponse": {
+        "properties": {
+          "id": {
             "type": "integer",
-            "title": "Medication Schedule Id",
-            "description": "ID lịch uống tương ứng"
+            "title": "Id",
+            "description": "ID nhóm bệnh lookup"
           },
-          "thoi_gian_du_kien": {
+          "code": {
             "type": "string",
-            "title": "Thoi Gian Du Kien",
-            "description": "Thời gian dự kiến uống ISO 8601"
+            "title": "Code",
+            "description": "Mã nhóm bệnh ổn định (vd: tang_huyet_ap, tieu_duong)"
           },
-          "thoi_gian_thuc_uong": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Tên nhóm bệnh hiển thị"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "description": "Trạng thái kích hoạt",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "code",
+          "name"
+        ],
+        "title": "DiseaseGroupResponse"
+      },
+      "DiseaseGroupUpdate": {
+        "properties": {
+          "code": {
             "anyOf": [
               {
                 "type": "string"
@@ -6818,26 +7090,89 @@
                 "type": "null"
               }
             ],
-            "title": "Thoi Gian Thuc Uong",
-            "description": "Thời gian thực tế bấm uống ISO 8601"
+            "title": "Code",
+            "description": "Mã nhóm bệnh"
           },
-          "trang_thai": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "Tên hiển thị"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active",
+            "description": "Bật/tắt trạng thái"
+          }
+        },
+        "type": "object",
+        "title": "DiseaseGroupUpdate"
+      },
+      "DoseLogItem": {
+        "properties": {
+          "client_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Uuid",
+            "description": "UUID sinh tại mobile để chống ghi trùng khi sync offline (nullable theo v9)"
+          },
+          "medication_schedule_id": {
+            "type": "integer",
+            "title": "Medication Schedule Id",
+            "description": "ID lịch uống tương ứng"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "title": "Scheduled At",
+            "description": "Thời gian dự kiến uống ISO 8601"
+          },
+          "taken_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taken At",
+            "description": "Thời gian thực tế bấm uống (nullable, NULL với Bỏ lỡ)"
+          },
+          "status": {
             "type": "string",
             "enum": [
               "Đã uống",
               "Bỏ lỡ",
               "Uống trễ"
             ],
-            "title": "Trang Thai",
+            "title": "Status",
             "description": "'Đã uống', 'Bỏ lỡ', hoặc 'Uống trễ'"
           }
         },
         "type": "object",
         "required": [
-          "client_uuid",
           "medication_schedule_id",
-          "thoi_gian_du_kien",
-          "trang_thai"
+          "scheduled_at",
+          "status"
         ],
         "title": "DoseLogItem"
       },
@@ -6851,7 +7186,7 @@
             "type": "integer",
             "title": "Medication Schedule Id"
           },
-          "ten_thuoc": {
+          "medication_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -6860,13 +7195,13 @@
                 "type": "null"
               }
             ],
-            "title": "Ten Thuoc"
+            "title": "Medication Name"
           },
-          "thoi_gian_du_kien": {
+          "scheduled_at": {
             "type": "string",
-            "title": "Thoi Gian Du Kien"
+            "title": "Scheduled At"
           },
-          "thoi_gian_thuc_uong": {
+          "taken_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -6875,22 +7210,18 @@
                 "type": "null"
               }
             ],
-            "title": "Thoi Gian Thuc Uong"
+            "title": "Taken At"
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "Đã uống",
               "Bỏ lỡ",
               "Uống trễ"
             ],
-            "title": "Trang Thai"
+            "title": "Status"
           },
           "client_uuid": {
-            "type": "string",
-            "title": "Client Uuid"
-          },
-          "dong_bo_luc": {
             "anyOf": [
               {
                 "type": "string"
@@ -6899,23 +7230,40 @@
                 "type": "null"
               }
             ],
-            "title": "Dong Bo Luc"
+            "title": "Client Uuid"
+          },
+          "synced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Synced At"
           }
         },
         "type": "object",
         "required": [
           "id",
           "medication_schedule_id",
-          "thoi_gian_du_kien",
-          "trang_thai",
-          "client_uuid"
+          "scheduled_at",
+          "status"
         ],
         "title": "DoseLogResponse"
       },
       "DoseSyncResultItem": {
         "properties": {
           "client_uuid": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Client Uuid"
           },
           "status": {
@@ -6955,36 +7303,35 @@
         },
         "type": "object",
         "required": [
-          "client_uuid",
           "status"
         ],
         "title": "DoseSyncResultItem"
       },
       "DpiaRecordCreate": {
         "properties": {
-          "ten_luong_du_lieu": {
+          "data_flow_name": {
             "type": "string",
-            "title": "Ten Luong Du Lieu"
+            "title": "Data Flow Name"
           },
-          "co_chuyen_du_lieu_xuyen_bien_gioi": {
+          "has_cross_border_transfer": {
             "type": "boolean",
-            "title": "Co Chuyen Du Lieu Xuyen Bien Gioi",
+            "title": "Has Cross Border Transfer",
             "default": false
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "ban_nhap",
               "dang_xem_xet",
               "da_phe_duyet"
             ],
-            "title": "Trang Thai",
+            "title": "Status",
             "default": "ban_nhap"
           }
         },
         "type": "object",
         "required": [
-          "ten_luong_du_lieu"
+          "data_flow_name"
         ],
         "title": "DpiaRecordCreate"
       },
@@ -6994,24 +7341,24 @@
             "type": "integer",
             "title": "Id"
           },
-          "ten_luong_du_lieu": {
+          "data_flow_name": {
             "type": "string",
-            "title": "Ten Luong Du Lieu"
+            "title": "Data Flow Name"
           },
-          "co_chuyen_du_lieu_xuyen_bien_gioi": {
+          "has_cross_border_transfer": {
             "type": "boolean",
-            "title": "Co Chuyen Du Lieu Xuyen Bien Gioi"
+            "title": "Has Cross Border Transfer"
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "ban_nhap",
               "dang_xem_xet",
               "da_phe_duyet"
             ],
-            "title": "Trang Thai"
+            "title": "Status"
           },
-          "nguoi_phe_duyet_id": {
+          "approved_by_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -7020,9 +7367,9 @@
                 "type": "null"
               }
             ],
-            "title": "Nguoi Phe Duyet Id"
+            "title": "Approved By Id"
           },
-          "ngay_phe_duyet": {
+          "approval_date": {
             "anyOf": [
               {
                 "type": "string"
@@ -7031,15 +7378,15 @@
                 "type": "null"
               }
             ],
-            "title": "Ngay Phe Duyet"
+            "title": "Approval Date"
           }
         },
         "type": "object",
         "required": [
           "id",
-          "ten_luong_du_lieu",
-          "co_chuyen_du_lieu_xuyen_bien_gioi",
-          "trang_thai"
+          "data_flow_name",
+          "has_cross_border_transfer",
+          "status"
         ],
         "title": "DpiaRecordResponse"
       },
@@ -7058,14 +7405,14 @@
       },
       "LinkCodeResponse": {
         "properties": {
-          "ma": {
+          "code": {
             "type": "string",
-            "title": "Ma",
+            "title": "Code",
             "description": "Mã 6 ký tự hoặc URL sinh QR code"
           },
-          "het_han_luc": {
+          "expires_at": {
             "type": "string",
-            "title": "Het Han Luc",
+            "title": "Expires At",
             "description": "Thời gian hết hạn ISO 8601 (15 phút)"
           },
           "patient_name": {
@@ -7076,8 +7423,8 @@
         },
         "type": "object",
         "required": [
-          "ma",
-          "het_han_luc",
+          "code",
+          "expires_at",
           "patient_name"
         ],
         "title": "LinkCodeResponse"
@@ -7096,7 +7443,7 @@
             "description": "Bữa ăn cần gợi ý",
             "default": "lunch"
           },
-          "ghi_chu_them": {
+          "notes": {
             "anyOf": [
               {
                 "type": "string"
@@ -7105,7 +7452,7 @@
                 "type": "null"
               }
             ],
-            "title": "Ghi Chu Them",
+            "title": "Notes",
             "description": "Ghi chú thêm về khẩu vị hoặc dị ứng"
           }
         },
@@ -7204,52 +7551,52 @@
             "type": "string",
             "title": "User Id"
           },
-          "bua_an": {
+          "meal_type": {
             "type": "string",
-            "title": "Bua An",
-            "description": "Bữa sáng / trưa / tối"
+            "title": "Meal Type",
+            "description": "Bữa ăn: Breakfast / Lunch / Dinner"
           },
-          "noi_dung_goi_y": {
+          "suggestion_content": {
             "type": "string",
-            "title": "Noi Dung Goi Y",
+            "title": "Suggestion Content",
             "description": "Nội dung giải thích và phân tích dinh dưỡng"
           },
-          "dua_tren_dieu_kien": {
+          "based_on_conditions": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Dua Tren Dieu Kien",
-            "description": "Bệnh nền đã xét khi gợi ý (tiểu đường, dạ dày...)"
+            "title": "Based On Conditions",
+            "description": "Bệnh nền đã xét khi gợi ý"
           },
-          "mon_an_khuyen_nghi": {
+          "recommended_dishes": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Mon An Khuyen Nghi",
+            "title": "Recommended Dishes",
             "description": "Danh sách món ăn phù hợp"
           },
-          "thuc_pham_tranh": {
+          "foods_to_avoid": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Thuc Pham Tranh",
+            "title": "Foods To Avoid",
             "description": "Thực phẩm cần tránh do tương tác thuốc"
           },
-          "ngay_tao": {
+          "created_at": {
             "type": "string",
-            "title": "Ngay Tao"
+            "title": "Created At"
           }
         },
         "type": "object",
         "required": [
           "id",
           "user_id",
-          "bua_an",
-          "noi_dung_goi_y",
-          "ngay_tao"
+          "meal_type",
+          "suggestion_content",
+          "created_at"
         ],
         "title": "MealSuggestionResponse"
       },
@@ -7260,12 +7607,12 @@
             "title": "Id",
             "description": "ID thuốc trong catalog"
           },
-          "ten_thuoc": {
+          "name": {
             "type": "string",
-            "title": "Ten Thuoc",
+            "title": "Name",
             "description": "Tên thương mại của thuốc"
           },
-          "hoat_chat_raw": {
+          "raw_active_ingredient": {
             "anyOf": [
               {
                 "type": "string"
@@ -7274,10 +7621,10 @@
                 "type": "null"
               }
             ],
-            "title": "Hoat Chat Raw",
+            "title": "Raw Active Ingredient",
             "description": "Chuỗi hoạt chất thô"
           },
-          "ham_luong": {
+          "strength_text": {
             "anyOf": [
               {
                 "type": "string"
@@ -7286,10 +7633,10 @@
                 "type": "null"
               }
             ],
-            "title": "Ham Luong",
+            "title": "Strength Text",
             "description": "Hàm lượng hiển thị"
           },
-          "dang_bao_che": {
+          "dosage_form": {
             "anyOf": [
               {
                 "type": "string"
@@ -7298,10 +7645,10 @@
                 "type": "null"
               }
             ],
-            "title": "Dang Bao Che",
+            "title": "Dosage Form",
             "description": "Dạng bào chế (viên nén, siro,...)"
           },
-          "cty_san_xuat_ten": {
+          "manufacturer_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -7310,9 +7657,9 @@
                 "type": "null"
               }
             ],
-            "title": "Cty San Xuat Ten"
+            "title": "Manufacturer Name"
           },
-          "cty_san_xuat_nuoc": {
+          "manufacturer_country": {
             "anyOf": [
               {
                 "type": "string"
@@ -7321,9 +7668,9 @@
                 "type": "null"
               }
             ],
-            "title": "Cty San Xuat Nuoc"
+            "title": "Manufacturer Country"
           },
-          "quy_cach_dong_goi": {
+          "packaging_spec": {
             "anyOf": [
               {
                 "type": "string"
@@ -7332,13 +7679,25 @@
                 "type": "null"
               }
             ],
-            "title": "Quy Cach Dong Goi"
+            "title": "Packaging Spec"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At",
+            "description": "Thời điểm xóa mềm (NULL = đang lưu hành)"
           }
         },
         "type": "object",
         "required": [
           "id",
-          "ten_thuoc"
+          "name"
         ],
         "title": "MedicationCatalogResponse"
       },
@@ -7349,12 +7708,12 @@
             "title": "Id",
             "description": "ID thuốc trong catalog"
           },
-          "ten_thuoc": {
+          "name": {
             "type": "string",
-            "title": "Ten Thuoc",
+            "title": "Name",
             "description": "Tên thương mại của thuốc"
           },
-          "hoat_chat_raw": {
+          "raw_active_ingredient": {
             "anyOf": [
               {
                 "type": "string"
@@ -7363,10 +7722,10 @@
                 "type": "null"
               }
             ],
-            "title": "Hoat Chat Raw",
+            "title": "Raw Active Ingredient",
             "description": "Chuỗi hoạt chất thô"
           },
-          "ham_luong": {
+          "strength_text": {
             "anyOf": [
               {
                 "type": "string"
@@ -7375,10 +7734,10 @@
                 "type": "null"
               }
             ],
-            "title": "Ham Luong",
+            "title": "Strength Text",
             "description": "Hàm lượng hiển thị"
           },
-          "dang_bao_che": {
+          "dosage_form": {
             "anyOf": [
               {
                 "type": "string"
@@ -7387,10 +7746,10 @@
                 "type": "null"
               }
             ],
-            "title": "Dang Bao Che",
+            "title": "Dosage Form",
             "description": "Dạng bào chế (viên nén, siro,...)"
           },
-          "cty_san_xuat_ten": {
+          "manufacturer_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -7399,9 +7758,9 @@
                 "type": "null"
               }
             ],
-            "title": "Cty San Xuat Ten"
+            "title": "Manufacturer Name"
           },
-          "cty_san_xuat_nuoc": {
+          "manufacturer_country": {
             "anyOf": [
               {
                 "type": "string"
@@ -7410,9 +7769,9 @@
                 "type": "null"
               }
             ],
-            "title": "Cty San Xuat Nuoc"
+            "title": "Manufacturer Country"
           },
-          "quy_cach_dong_goi": {
+          "packaging_spec": {
             "anyOf": [
               {
                 "type": "string"
@@ -7421,7 +7780,19 @@
                 "type": "null"
               }
             ],
-            "title": "Quy Cach Dong Goi"
+            "title": "Packaging Spec"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At",
+            "description": "Thời điểm xóa mềm (NULL = đang lưu hành)"
           },
           "active_ingredients": {
             "items": {
@@ -7435,7 +7806,7 @@
         "type": "object",
         "required": [
           "id",
-          "ten_thuoc"
+          "name"
         ],
         "title": "MedicationDetailResponse"
       },
@@ -7460,22 +7831,18 @@
             "title": "Patient Id",
             "description": "ID bệnh nhân đang theo dõi"
           },
-          "ho_ten": {
+          "full_name": {
             "type": "string",
-            "title": "Ho Ten",
+            "title": "Full Name",
             "description": "Họ tên bệnh nhân"
           },
           "link_id": {
             "type": "integer",
             "title": "Link Id"
           },
-          "cho_phep_chia_se": {
+          "sharing_enabled": {
             "type": "boolean",
-            "title": "Cho Phep Chia Se"
-          },
-          "cho_phep_chinh_sua": {
-            "type": "boolean",
-            "title": "Cho Phep Chinh Sua"
+            "title": "Sharing Enabled"
           },
           "today_adherence_percent": {
             "type": "number",
@@ -7491,10 +7858,9 @@
         "type": "object",
         "required": [
           "patient_id",
-          "ho_ten",
+          "full_name",
           "link_id",
-          "cho_phep_chia_se",
-          "cho_phep_chinh_sua",
+          "sharing_enabled",
           "today_adherence_percent",
           "today_missed_count"
         ],
@@ -7510,11 +7876,12 @@
             "type": "string",
             "title": "User Id"
           },
-          "ve_patient_user_id": {
+          "about_patient_user_id": {
             "type": "string",
-            "title": "Ve Patient User Id"
+            "title": "About Patient User Id",
+            "description": "Thông báo nói về bệnh nhân nào"
           },
-          "loai": {
+          "type": {
             "type": "string",
             "enum": [
               "nhac_uong_thuoc",
@@ -7522,30 +7889,44 @@
               "canh_bao_admin_override",
               "canh_bao_compliance"
             ],
-            "title": "Loai"
+            "title": "Type"
           },
-          "noi_dung": {
+          "content": {
             "type": "string",
-            "title": "Noi Dung"
+            "title": "Content",
+            "description": "Nội dung chi tiết (chỉ đọc qua API, không đưa vào push)"
           },
-          "da_doc": {
+          "is_read": {
             "type": "boolean",
-            "title": "Da Doc"
+            "title": "Is Read"
           },
-          "thoi_gian": {
+          "dedupe_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dedupe Key",
+            "description": "Khóa chống trùng cảnh báo [MỚI in v9]"
+          },
+          "created_at": {
             "type": "string",
-            "title": "Thoi Gian"
+            "title": "Created At",
+            "description": "Thời điểm tạo thông báo [MỚI in v9]"
           }
         },
         "type": "object",
         "required": [
           "id",
           "user_id",
-          "ve_patient_user_id",
-          "loai",
-          "noi_dung",
-          "da_doc",
-          "thoi_gian"
+          "about_patient_user_id",
+          "type",
+          "content",
+          "is_read",
+          "created_at"
         ],
         "title": "NotificationResponse"
       },
@@ -7621,12 +8002,11 @@
         ],
         "title": "PaginatedData[DataDeletionRequestResponse]"
       },
-      "PaginatedData_Dict_str__Any__": {
+      "PaginatedData_DiseaseGroupResponse_": {
         "properties": {
           "items": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/DiseaseGroupResponse"
             },
             "type": "array",
             "title": "Items",
@@ -7641,7 +8021,7 @@
         "required": [
           "pagination"
         ],
-        "title": "PaginatedData[Dict[str, Any]]"
+        "title": "PaginatedData[DiseaseGroupResponse]"
       },
       "PaginatedData_DoseLogResponse_": {
         "properties": {
@@ -7764,18 +8144,18 @@
       },
       "PrescriptionCreate": {
         "properties": {
-          "nguon_nhap": {
+          "entry_source": {
             "type": "string",
             "enum": [
               "ocr_scan",
               "thu_cong",
               "mac_dinh"
             ],
-            "title": "Nguon Nhap",
+            "title": "Entry Source",
             "description": "ocr_scan hoặc thu_cong",
             "default": "thu_cong"
           },
-          "ngay_ke_don": {
+          "prescribed_date": {
             "anyOf": [
               {
                 "type": "string"
@@ -7784,10 +8164,10 @@
                 "type": "null"
               }
             ],
-            "title": "Ngay Ke Don",
+            "title": "Prescribed Date",
             "description": "Ngày kê đơn YYYY-MM-DD"
           },
-          "noi_ke_don": {
+          "prescribing_facility": {
             "anyOf": [
               {
                 "type": "string"
@@ -7796,7 +8176,7 @@
                 "type": "null"
               }
             ],
-            "title": "Noi Ke Don",
+            "title": "Prescribing Facility",
             "description": "Nơi kê đơn (Bệnh viện, phòng khám)"
           },
           "medications": {
@@ -7822,16 +8202,16 @@
             "type": "string",
             "title": "User Id"
           },
-          "nguon_nhap": {
+          "entry_source": {
             "type": "string",
             "enum": [
               "ocr_scan",
               "thu_cong",
               "mac_dinh"
             ],
-            "title": "Nguon Nhap"
+            "title": "Entry Source"
           },
-          "ngay_ke_don": {
+          "prescribed_date": {
             "anyOf": [
               {
                 "type": "string"
@@ -7840,9 +8220,9 @@
                 "type": "null"
               }
             ],
-            "title": "Ngay Ke Don"
+            "title": "Prescribed Date"
           },
-          "noi_ke_don": {
+          "prescribing_facility": {
             "anyOf": [
               {
                 "type": "string"
@@ -7851,16 +8231,16 @@
                 "type": "null"
               }
             ],
-            "title": "Noi Ke Don"
+            "title": "Prescribing Facility"
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "dang_dung",
               "da_ket_thuc",
               "archived"
             ],
-            "title": "Trang Thai"
+            "title": "Status"
           },
           "medications": {
             "items": {
@@ -7874,14 +8254,14 @@
         "required": [
           "id",
           "user_id",
-          "nguon_nhap",
-          "trang_thai"
+          "entry_source",
+          "status"
         ],
         "title": "PrescriptionResponse"
       },
       "PrescriptionUpdateMetadata": {
         "properties": {
-          "ngay_ke_don": {
+          "prescribed_date": {
             "anyOf": [
               {
                 "type": "string"
@@ -7890,10 +8270,9 @@
                 "type": "null"
               }
             ],
-            "title": "Ngay Ke Don",
-            "description": "Cập nhật ngày kê đơn"
+            "title": "Prescribed Date"
           },
-          "noi_ke_don": {
+          "prescribing_facility": {
             "anyOf": [
               {
                 "type": "string"
@@ -7902,8 +8281,7 @@
                 "type": "null"
               }
             ],
-            "title": "Noi Ke Don",
-            "description": "Cập nhật nơi kê đơn"
+            "title": "Prescribing Facility"
           }
         },
         "type": "object",
@@ -7911,20 +8289,20 @@
       },
       "PrescriptionUpdateStatus": {
         "properties": {
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "dang_dung",
               "da_ket_thuc",
               "archived"
             ],
-            "title": "Trang Thai",
+            "title": "Status",
             "description": "dang_dung, da_ket_thuc, hoặc archived"
           }
         },
         "type": "object",
         "required": [
-          "trang_thai"
+          "status"
         ],
         "title": "PrescriptionUpdateStatus"
       },
@@ -7939,7 +8317,7 @@
             "title": "Action",
             "description": "approve để phê duyệt xóa hoặc reject để từ chối"
           },
-          "ly_do": {
+          "rejection_reason": {
             "anyOf": [
               {
                 "type": "string"
@@ -7948,7 +8326,7 @@
                 "type": "null"
               }
             ],
-            "title": "Ly Do",
+            "title": "Rejection Reason",
             "description": "Lý do từ chối hoặc ghi chú xử lý"
           }
         },
@@ -8013,50 +8391,55 @@
       },
       "QuickCheckWarningItem": {
         "properties": {
-          "loai": {
+          "warning_type": {
             "type": "string",
-            "title": "Loai"
+            "title": "Warning Type",
+            "description": "Loại cảnh báo"
           },
-          "cap_doi": {
+          "pair": {
             "type": "string",
-            "title": "Cap Doi"
+            "title": "Pair",
+            "description": "Cặp tương tác"
           },
-          "muc_do": {
+          "severity_level": {
             "type": "integer",
-            "title": "Muc Do"
+            "title": "Severity Level",
+            "description": "Mức độ nghiêm trọng (1-4)"
           },
-          "mo_ta": {
+          "description": {
             "type": "string",
-            "title": "Mo Ta"
+            "title": "Description",
+            "description": "Mô tả chi tiết"
           },
-          "loai_xu_ly": {
+          "handling_type": {
             "type": "string",
-            "title": "Loai Xu Ly"
+            "title": "Handling Type",
+            "description": "Hướng xử lý"
           }
         },
         "type": "object",
         "required": [
-          "loai",
-          "cap_doi",
-          "muc_do",
-          "mo_ta",
-          "loai_xu_ly"
+          "warning_type",
+          "pair",
+          "severity_level",
+          "description",
+          "handling_type"
         ],
         "title": "QuickCheckWarningItem"
       },
       "RedeemLinkCodeRequest": {
         "properties": {
-          "ma": {
+          "code": {
             "type": "string",
             "maxLength": 10,
             "minLength": 4,
-            "title": "Ma",
+            "title": "Code",
             "description": "Mã liên kết do bệnh nhân cung cấp"
           }
         },
         "type": "object",
         "required": [
-          "ma"
+          "code"
         ],
         "title": "RedeemLinkCodeRequest"
       },
@@ -8071,12 +8454,12 @@
             "type": "integer",
             "title": "Snapshot Id"
           },
-          "loai_canh_bao": {
+          "warning_type": {
             "type": "string",
-            "title": "Loai Canh Bao",
-            "description": "Tương tác thuốc-thuốc / thuốc-thức ăn / thuốc-bệnh nền"
+            "title": "Warning Type",
+            "description": "Loại cảnh báo (thuốc-thuốc / thuốc-thức ăn / thuốc-bệnh nền)"
           },
-          "nguon_bang": {
+          "source_table": {
             "type": "string",
             "enum": [
               "interactions",
@@ -8084,22 +8467,34 @@
               "precautions",
               "drug_classes"
             ],
-            "title": "Nguon Bang",
-            "description": "Bảng dữ liệu nguồn (interactions, drug_food, precautions)"
+            "title": "Source Table",
+            "description": "Bảng dữ liệu nguồn (interactions, drug_food, precautions, drug_classes)"
           },
-          "muc_do": {
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id",
+            "description": "ID bản ghi trong bảng nguồn"
+          },
+          "severity_level": {
             "type": "integer",
             "maximum": 4.0,
             "minimum": 1.0,
-            "title": "Muc Do",
+            "title": "Severity Level",
             "description": "Mức độ nghiêm trọng từ 1 (nhẹ) đến 4 (chống chỉ định tuyệt đối)"
           },
-          "mo_ta": {
+          "description": {
             "type": "string",
-            "title": "Mo Ta",
+            "title": "Description",
             "description": "Mô tả cơ chế và biểu hiện lâm sàng"
           },
-          "loai_xu_ly": {
+          "handling_type": {
             "type": "string",
             "enum": [
               "tranh_phoi_hop",
@@ -8107,10 +8502,10 @@
               "cach_gio",
               "giam_lieu"
             ],
-            "title": "Loai Xu Ly",
+            "title": "Handling Type",
             "description": "Hướng xử lý: tranh_phoi_hop, can_theo_doi, cach_gio, giam_lieu"
           },
-          "khoang_cach_gio": {
+          "min_interval_hours": {
             "anyOf": [
               {
                 "type": "number"
@@ -8119,8 +8514,8 @@
                 "type": "null"
               }
             ],
-            "title": "Khoang Cach Gio",
-            "description": "Khoảng cách tối thiểu giữa 2 lần uống (nếu loai_xu_ly = cach_gio)"
+            "title": "Min Interval Hours",
+            "description": "Khoảng cách tối thiểu giữa 2 lần uống (nếu handling_type = cach_gio)"
           },
           "disclaimer": {
             "type": "string",
@@ -8135,17 +8530,23 @@
             "type": "array",
             "title": "Related Medication Ids",
             "description": "Danh sách các user_medication_id liên quan"
+          },
+          "is_shown_to_user": {
+            "type": "boolean",
+            "title": "Is Shown To User",
+            "description": "Cờ hiển thị cho người dùng",
+            "default": true
           }
         },
         "type": "object",
         "required": [
           "id",
           "snapshot_id",
-          "loai_canh_bao",
-          "nguon_bang",
-          "muc_do",
-          "mo_ta",
-          "loai_xu_ly"
+          "warning_type",
+          "source_table",
+          "severity_level",
+          "description",
+          "handling_type"
         ],
         "title": "RegimenFindingResponse"
       },
@@ -8160,9 +8561,10 @@
             "type": "string",
             "title": "User Id"
           },
-          "thoi_gian_phan_tich": {
+          "analyzed_at": {
             "type": "string",
-            "title": "Thoi Gian Phan Tich"
+            "title": "Analyzed At",
+            "description": "Thời điểm phân tích"
           },
           "finding_count": {
             "type": "integer",
@@ -8180,44 +8582,10 @@
         "required": [
           "id",
           "user_id",
-          "thoi_gian_phan_tich",
+          "analyzed_at",
           "finding_count"
         ],
         "title": "RegimenSnapshotResponse"
-      },
-      "ResolveUnmatchedScanRequest": {
-        "properties": {
-          "admin_da_xem_xet": {
-            "type": "boolean",
-            "title": "Admin Da Xem Xet",
-            "default": true
-          },
-          "mapped_medication_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mapped Medication Id",
-            "description": "Ánh xạ sang thuốc có sẵn trong catalog (nếu có)"
-          },
-          "ghi_chu": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ghi Chu"
-          }
-        },
-        "type": "object",
-        "title": "ResolveUnmatchedScanRequest"
       },
       "ResponseEnvelope_AdherenceSummaryResponse_": {
         "properties": {
@@ -8534,6 +8902,41 @@
         "type": "object",
         "title": "ResponseEnvelope[DataExportResponse]"
       },
+      "ResponseEnvelope_DiseaseGroupResponse_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Trạng thái thực thi của request",
+            "default": true
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiseaseGroupResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Dữ liệu phản hồi"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Thông điệp thành công (nếu có)"
+          }
+        },
+        "type": "object",
+        "title": "ResponseEnvelope[DiseaseGroupResponse]"
+      },
       "ResponseEnvelope_DpiaRecordResponse_": {
         "properties": {
           "success": {
@@ -8799,6 +9202,45 @@
         },
         "type": "object",
         "title": "ResponseEnvelope[List[Dict[str, Any]]]"
+      },
+      "ResponseEnvelope_List_DiseaseGroupResponse__": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "description": "Trạng thái thực thi của request",
+            "default": true
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DiseaseGroupResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data",
+            "description": "Dữ liệu phản hồi"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Thông điệp thành công (nếu có)"
+          }
+        },
+        "type": "object",
+        "title": "ResponseEnvelope[List[DiseaseGroupResponse]]"
       },
       "ResponseEnvelope_List_DpiaRecordResponse__": {
         "properties": {
@@ -9392,7 +9834,7 @@
         "type": "object",
         "title": "ResponseEnvelope[PaginatedData[DataDeletionRequestResponse]]"
       },
-      "ResponseEnvelope_PaginatedData_Dict_str__Any___": {
+      "ResponseEnvelope_PaginatedData_DiseaseGroupResponse__": {
         "properties": {
           "success": {
             "type": "boolean",
@@ -9403,7 +9845,7 @@
           "data": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/PaginatedData_Dict_str__Any__"
+                "$ref": "#/components/schemas/PaginatedData_DiseaseGroupResponse_"
               },
               {
                 "type": "null"
@@ -9425,7 +9867,7 @@
           }
         },
         "type": "object",
-        "title": "ResponseEnvelope[PaginatedData[Dict[str, Any]]]"
+        "title": "ResponseEnvelope[PaginatedData[DiseaseGroupResponse]]"
       },
       "ResponseEnvelope_PaginatedData_DoseLogResponse__": {
         "properties": {
@@ -9777,41 +10219,6 @@
         "type": "object",
         "title": "ResponseEnvelope[SyncTriggerResponse]"
       },
-      "ResponseEnvelope_UnmatchedScanResponse_": {
-        "properties": {
-          "success": {
-            "type": "boolean",
-            "title": "Success",
-            "description": "Trạng thái thực thi của request",
-            "default": true
-          },
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/UnmatchedScanResponse"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Dữ liệu phản hồi"
-          },
-          "message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Message",
-            "description": "Thông điệp thành công (nếu có)"
-          }
-        },
-        "type": "object",
-        "title": "ResponseEnvelope[UnmatchedScanResponse]"
-      },
       "ResponseEnvelope_UserConditionResponse_": {
         "properties": {
           "success": {
@@ -9997,47 +10404,47 @@
       },
       "ScheduleCreate": {
         "properties": {
-          "loai_lich": {
+          "intake_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Time",
+            "description": "Giờ uống định dạng HH:MM (Asia/Ho_Chi_Minh)",
+            "default": "08:00"
+          },
+          "days_of_week": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Of Week",
+            "description": "Danh sách các thứ trong tuần",
+            "default": "2,3,4,5,6,7,CN"
+          },
+          "reminder_enabled": {
+            "type": "boolean",
+            "title": "Reminder Enabled",
+            "description": "Bật/tắt nhắc nhở cho khung giờ này",
+            "default": true
+          },
+          "schedule_type": {
             "type": "string",
             "enum": [
               "co_dinh",
               "khi_can"
             ],
-            "title": "Loai Lich",
-            "description": "co_dinh (giờ cố định) hoặc khi_can (PRN - khi cần)",
+            "title": "Schedule Type",
+            "description": "co_dinh hoặc khi_can",
             "default": "co_dinh"
-          },
-          "gio_uong": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Gio Uong",
-            "description": "Giờ uống định dạng HH:MM (bắt buộc khi co_dinh)",
-            "default": "08:00"
-          },
-          "ngay_trong_tuan": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ngay Trong Tuan",
-            "description": "Danh sách các thứ trong tuần",
-            "default": "2,3,4,5,6,7,CN"
-          },
-          "bat_tat_nhac": {
-            "type": "boolean",
-            "title": "Bat Tat Nhac",
-            "description": "Bật hoặc tắt nhắc nhở cho khung giờ này",
-            "default": true
           }
         },
         "type": "object",
@@ -10055,7 +10462,7 @@
             "title": "User Medication Id",
             "description": "ID thuốc người dùng"
           },
-          "ten_thuoc": {
+          "medication_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -10064,20 +10471,20 @@
                 "type": "null"
               }
             ],
-            "title": "Ten Thuoc",
+            "title": "Medication Name",
             "description": "Tên thuốc để hiển thị trên UI"
           },
-          "loai_lich": {
+          "schedule_type": {
             "type": "string",
             "enum": [
               "co_dinh",
               "khi_can"
             ],
-            "title": "Loai Lich",
+            "title": "Schedule Type",
             "description": "Loại lịch uống: co_dinh hoặc khi_can",
             "default": "co_dinh"
           },
-          "gio_uong": {
+          "intake_time": {
             "anyOf": [
               {
                 "type": "string"
@@ -10086,9 +10493,9 @@
                 "type": "null"
               }
             ],
-            "title": "Gio Uong"
+            "title": "Intake Time"
           },
-          "ngay_trong_tuan": {
+          "days_of_week": {
             "anyOf": [
               {
                 "type": "string"
@@ -10097,20 +10504,25 @@
                 "type": "null"
               }
             ],
-            "title": "Ngay Trong Tuan"
+            "title": "Days Of Week"
           },
-          "bat_tat_nhac": {
+          "reminder_enabled": {
             "type": "boolean",
-            "title": "Bat Tat Nhac",
+            "title": "Reminder Enabled",
             "default": true
           },
-          "trang_thai": {
+          "effective_from": {
+            "type": "string",
+            "title": "Effective From",
+            "description": "Thời điểm lịch có hiệu lực [MỚI in v9]"
+          },
+          "status": {
             "type": "string",
             "enum": [
               "active",
               "archived"
             ],
-            "title": "Trang Thai",
+            "title": "Status",
             "description": "active hoặc archived",
             "default": "active"
           }
@@ -10118,13 +10530,14 @@
         "type": "object",
         "required": [
           "id",
-          "user_medication_id"
+          "user_medication_id",
+          "effective_from"
         ],
         "title": "ScheduleResponse"
       },
       "ScheduleUpdate": {
         "properties": {
-          "gio_uong": {
+          "intake_time": {
             "anyOf": [
               {
                 "type": "string"
@@ -10133,10 +10546,10 @@
                 "type": "null"
               }
             ],
-            "title": "Gio Uong",
+            "title": "Intake Time",
             "description": "Sửa giờ uống HH:MM"
           },
-          "ngay_trong_tuan": {
+          "days_of_week": {
             "anyOf": [
               {
                 "type": "string"
@@ -10145,10 +10558,10 @@
                 "type": "null"
               }
             ],
-            "title": "Ngay Trong Tuan",
+            "title": "Days Of Week",
             "description": "Sửa các ngày uống"
           },
-          "bat_tat_nhac": {
+          "reminder_enabled": {
             "anyOf": [
               {
                 "type": "boolean"
@@ -10157,7 +10570,7 @@
                 "type": "null"
               }
             ],
-            "title": "Bat Tat Nhac",
+            "title": "Reminder Enabled",
             "description": "Bật/tắt nhắc nhở"
           }
         },
@@ -10166,47 +10579,54 @@
       },
       "SubmitConsentRequest": {
         "properties": {
-          "loai_dong_y": {
+          "consent_type": {
             "type": "string",
             "enum": [
               "health_data",
               "family_sharing",
               "ai_meal"
             ],
-            "title": "Loai Dong Y",
-            "description": "Mục đích đồng thuận: health_data, family_sharing, ai_meal"
+            "title": "Consent Type",
+            "description": "Mục đích: health_data, family_sharing, ai_meal"
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "dong_y",
               "thu_hoi"
             ],
-            "title": "Trang Thai",
+            "title": "Status",
             "description": "dong_y hoặc thu_hoi"
           },
-          "phien_ban_van_ban": {
+          "document_version": {
             "type": "string",
-            "title": "Phien Ban Van Ban",
+            "title": "Document Version",
             "description": "Phiên bản điều khoản đồng thuận",
             "default": "v1.0"
           }
         },
         "type": "object",
         "required": [
-          "loai_dong_y",
-          "trang_thai"
+          "consent_type",
+          "status"
         ],
         "title": "SubmitConsentRequest"
       },
       "SyncProfileRequest": {
         "properties": {
-          "ho_ten": {
-            "type": "string",
-            "title": "Ho Ten",
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name",
             "description": "Họ và tên người dùng"
           },
-          "so_dien_thoai": {
+          "phone_number": {
             "anyOf": [
               {
                 "type": "string"
@@ -10215,10 +10635,10 @@
                 "type": "null"
               }
             ],
-            "title": "So Dien Thoai",
-            "description": "Số điện thoại"
+            "title": "Phone Number",
+            "description": "Số điện thoại định dạng E.164"
           },
-          "ngay_sinh": {
+          "email": {
             "anyOf": [
               {
                 "type": "string"
@@ -10227,10 +10647,22 @@
                 "type": "null"
               }
             ],
-            "title": "Ngay Sinh",
+            "title": "Email",
+            "description": "Email người dùng"
+          },
+          "date_of_birth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Of Birth",
             "description": "Ngày sinh YYYY-MM-DD"
           },
-          "gioi_tinh": {
+          "gender": {
             "anyOf": [
               {
                 "type": "string"
@@ -10239,44 +10671,33 @@
                 "type": "null"
               }
             ],
-            "title": "Gioi Tinh",
+            "title": "Gender",
             "description": "Giới tính (nam/nu/khac)"
           }
         },
         "type": "object",
-        "required": [
-          "ho_ten"
-        ],
         "title": "SyncProfileRequest"
       },
       "SyncStatusResponse": {
         "properties": {
-          "job_id": {
-            "type": "string",
-            "title": "Job Id"
+          "id": {
+            "type": "integer",
+            "title": "Id"
           },
-          "status": {
+          "source": {
             "type": "string",
             "enum": [
-              "running",
-              "completed",
-              "failed"
+              "dav_drugbank",
+              "qd_5948",
+              "duoc_thu_qg"
             ],
-            "title": "Status"
+            "title": "Source"
           },
-          "records_processed": {
-            "type": "integer",
-            "title": "Records Processed"
-          },
-          "records_updated": {
-            "type": "integer",
-            "title": "Records Updated"
-          },
-          "last_synced_at": {
+          "started_at": {
             "type": "string",
-            "title": "Last Synced At"
+            "title": "Started At"
           },
-          "error": {
+          "finished_at": {
             "anyOf": [
               {
                 "type": "string"
@@ -10285,16 +10706,59 @@
                 "type": "null"
               }
             ],
-            "title": "Error"
+            "title": "Finished At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "dang_chay",
+              "thanh_cong",
+              "that_bai"
+            ],
+            "title": "Status"
+          },
+          "records_inserted": {
+            "type": "integer",
+            "title": "Records Inserted",
+            "default": 0
+          },
+          "records_updated": {
+            "type": "integer",
+            "title": "Records Updated",
+            "default": 0
+          },
+          "records_failed": {
+            "type": "integer",
+            "title": "Records Failed",
+            "default": 0
+          },
+          "error_details": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Details"
+          },
+          "triggered_by": {
+            "type": "string",
+            "enum": [
+              "scheduler",
+              "admin_thu_cong"
+            ],
+            "title": "Triggered By",
+            "default": "admin_thu_cong"
           }
         },
         "type": "object",
         "required": [
-          "job_id",
-          "status",
-          "records_processed",
-          "records_updated",
-          "last_synced_at"
+          "id",
+          "source",
+          "started_at",
+          "status"
         ],
         "title": "SyncStatusResponse"
       },
@@ -10307,20 +10771,26 @@
           "status": {
             "type": "string",
             "enum": [
-              "queued",
-              "running"
+              "dang_chay",
+              "thanh_cong",
+              "that_bai"
             ],
             "title": "Status"
           },
           "source": {
             "type": "string",
+            "enum": [
+              "dav_drugbank",
+              "qd_5948",
+              "duoc_thu_qg"
+            ],
             "title": "Source",
-            "default": "Cục Quản lý Dược Việt Nam (QĐ 5948/QĐ-BYT)"
+            "default": "qd_5948"
           },
           "message": {
             "type": "string",
             "title": "Message",
-            "default": "Tiến trình đồng bộ danh mục dược phẩm nền đã được kích hoạt"
+            "default": "Tiến trình đồng bộ danh mục dược phẩm đã được kích hoạt"
           }
         },
         "type": "object",
@@ -10330,56 +10800,9 @@
         ],
         "title": "SyncTriggerResponse"
       },
-      "UnmatchedScanCreate": {
-        "properties": {
-          "chuoi_nhan_dien": {
-            "type": "string",
-            "title": "Chuoi Nhan Dien",
-            "description": "Chuỗi OCR blister không khớp catalog"
-          }
-        },
-        "type": "object",
-        "required": [
-          "chuoi_nhan_dien"
-        ],
-        "title": "UnmatchedScanCreate"
-      },
-      "UnmatchedScanResponse": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "user_id": {
-            "type": "string",
-            "title": "User Id"
-          },
-          "chuoi_nhan_dien": {
-            "type": "string",
-            "title": "Chuoi Nhan Dien"
-          },
-          "thoi_gian": {
-            "type": "string",
-            "title": "Thoi Gian"
-          },
-          "admin_da_xem_xet": {
-            "type": "boolean",
-            "title": "Admin Da Xem Xet",
-            "default": false
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "user_id",
-          "chuoi_nhan_dien",
-          "thoi_gian"
-        ],
-        "title": "UnmatchedScanResponse"
-      },
       "UpdateProfileRequest": {
         "properties": {
-          "ho_ten": {
+          "full_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -10388,10 +10811,10 @@
                 "type": "null"
               }
             ],
-            "title": "Ho Ten",
+            "title": "Full Name",
             "description": "Họ và tên người dùng"
           },
-          "so_dien_thoai": {
+          "phone_number": {
             "anyOf": [
               {
                 "type": "string"
@@ -10400,20 +10823,44 @@
                 "type": "null"
               }
             ],
-            "title": "So Dien Thoai",
-            "description": "Số điện thoại"
+            "title": "Phone Number",
+            "description": "Số điện thoại định dạng E.164"
           },
-          "che_do_nguoi_cao_tuoi": {
+          "email": {
             "anyOf": [
               {
-                "type": "boolean"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Che Do Nguoi Cao Tuoi",
-            "description": "Bật/tắt giao diện Simple Mode (dễ đọc, tương phản cao)"
+            "title": "Email",
+            "description": "Email người dùng"
+          },
+          "date_of_birth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Of Birth",
+            "description": "Ngày sinh YYYY-MM-DD"
+          },
+          "gender": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gender",
+            "description": "Giới tính"
           }
         },
         "type": "object",
@@ -10438,7 +10885,7 @@
             "title": "Subtype",
             "description": "Phân type (chỉ áp dụng cho Tiểu đường, ví dụ: Type 1, Type 2)"
           },
-          "phan_do": {
+          "stage": {
             "anyOf": [
               {
                 "type": "string"
@@ -10447,7 +10894,7 @@
                 "type": "null"
               }
             ],
-            "title": "Phan Do",
+            "title": "Stage",
             "description": "Phân độ (chỉ áp dụng cho Suy thận mạn, ví dụ: Giai đoạn 3a)"
           }
         },
@@ -10474,9 +10921,9 @@
             "title": "Condition Id",
             "description": "ID điều kiện catalog"
           },
-          "condition_name": {
+          "name": {
             "type": "string",
-            "title": "Condition Name",
+            "title": "Name",
             "description": "Tên bệnh nền"
           },
           "subtype": {
@@ -10490,7 +10937,7 @@
             ],
             "title": "Subtype"
           },
-          "phan_do": {
+          "stage": {
             "anyOf": [
               {
                 "type": "string"
@@ -10499,16 +10946,16 @@
                 "type": "null"
               }
             ],
-            "title": "Phan Do"
+            "title": "Stage"
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "active",
               "archived"
             ],
-            "title": "Trang Thai",
-            "description": "Trạng thái: active hoặc archived (soft-delete)",
+            "title": "Status",
+            "description": "active hoặc archived",
             "default": "active"
           }
         },
@@ -10517,61 +10964,42 @@
           "id",
           "user_id",
           "condition_id",
-          "condition_name"
+          "name"
         ],
         "title": "UserConditionResponse"
       },
       "UserMedicationCreate": {
         "properties": {
           "medication_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
             "title": "Medication Id",
-            "description": "ID thuốc trong catalog (nếu khớp)"
+            "description": "ID thuốc trong catalog (bắt buộc, không nhập tự do theo Schema v9)"
           },
-          "ten_thuoc_tu_nhap": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ten Thuoc Tu Nhap",
-            "description": "Tên tự nhập nếu không có trong catalog"
-          },
-          "cach_nhap": {
+          "entry_method": {
             "type": "string",
             "enum": [
               "ocr_scan",
               "thu_cong",
               "mac_dinh"
             ],
-            "title": "Cach Nhap",
+            "title": "Entry Method",
             "description": "ocr_scan hoặc thu_cong",
             "default": "thu_cong"
           },
-          "so_luong_moi_lan": {
+          "quantity_per_dose": {
             "type": "number",
             "exclusiveMinimum": 0.0,
-            "title": "So Luong Moi Lan",
+            "title": "Quantity Per Dose",
             "description": "Số lượng mỗi lần uống (viên/ml)"
           },
-          "so_lan_moi_ngay": {
+          "doses_per_day": {
             "type": "integer",
             "maximum": 24.0,
             "exclusiveMinimum": 0.0,
-            "title": "So Lan Moi Ngay",
+            "title": "Doses Per Day",
             "description": "Tần suất số lần uống mỗi ngày"
           },
-          "don_vi_uong": {
+          "dosing_unit": {
             "anyOf": [
               {
                 "type": "string"
@@ -10580,15 +11008,16 @@
                 "type": "null"
               }
             ],
-            "title": "Don Vi Uong",
+            "title": "Dosing Unit",
             "description": "Đơn vị dùng: viên, gói, ml",
             "default": "viên"
           }
         },
         "type": "object",
         "required": [
-          "so_luong_moi_lan",
-          "so_lan_moi_ngay"
+          "medication_id",
+          "quantity_per_dose",
+          "doses_per_day"
         ],
         "title": "UserMedicationCreate"
       },
@@ -10603,36 +11032,29 @@
             "type": "string",
             "title": "User Id"
           },
-          "don_thuoc_id": {
+          "prescription_id": {
             "type": "integer",
-            "title": "Don Thuoc Id"
+            "title": "Prescription Id"
           },
           "medication_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
             "title": "Medication Id"
           },
-          "ten_thuoc": {
+          "name": {
             "type": "string",
-            "title": "Ten Thuoc",
-            "description": "Tên hiển thị của thuốc"
+            "title": "Name",
+            "description": "Tên thuốc"
           },
-          "cach_nhap": {
+          "entry_method": {
             "type": "string",
             "enum": [
               "ocr_scan",
               "thu_cong",
               "mac_dinh"
             ],
-            "title": "Cach Nhap"
+            "title": "Entry Method"
           },
-          "trang_thai_xac_nhan": {
+          "confirmation_status": {
             "anyOf": [
               {
                 "type": "string"
@@ -10641,34 +11063,34 @@
                 "type": "null"
               }
             ],
-            "title": "Trang Thai Xac Nhan"
+            "title": "Confirmation Status"
           },
-          "so_luong_moi_lan": {
+          "quantity_per_dose": {
             "type": "number",
-            "title": "So Luong Moi Lan"
+            "title": "Quantity Per Dose"
           },
-          "so_lan_moi_ngay": {
+          "doses_per_day": {
             "type": "integer",
-            "title": "So Lan Moi Ngay"
+            "title": "Doses Per Day"
           },
-          "don_vi_uong": {
+          "dosing_unit": {
             "type": "string",
-            "title": "Don Vi Uong",
+            "title": "Dosing Unit",
             "default": "viên"
           },
-          "co_du_lieu_tuong_tac": {
+          "has_interaction_data": {
             "type": "boolean",
-            "title": "Co Du Lieu Tuong Tac",
+            "title": "Has Interaction Data",
             "default": true
           },
-          "trang_thai": {
+          "status": {
             "type": "string",
             "enum": [
               "active",
               "archived"
             ],
-            "title": "Trang Thai",
-            "description": "active hoặc archived (soft-delete)",
+            "title": "Status",
+            "description": "active hoặc archived",
             "default": "active"
           }
         },
@@ -10676,17 +11098,18 @@
         "required": [
           "id",
           "user_id",
-          "don_thuoc_id",
-          "ten_thuoc",
-          "cach_nhap",
-          "so_luong_moi_lan",
-          "so_lan_moi_ngay"
+          "prescription_id",
+          "medication_id",
+          "name",
+          "entry_method",
+          "quantity_per_dose",
+          "doses_per_day"
         ],
         "title": "UserMedicationResponse"
       },
       "UserMedicationUpdate": {
         "properties": {
-          "so_luong_moi_lan": {
+          "quantity_per_dose": {
             "anyOf": [
               {
                 "type": "number",
@@ -10696,9 +11119,9 @@
                 "type": "null"
               }
             ],
-            "title": "So Luong Moi Lan"
+            "title": "Quantity Per Dose"
           },
-          "so_lan_moi_ngay": {
+          "doses_per_day": {
             "anyOf": [
               {
                 "type": "integer",
@@ -10709,9 +11132,9 @@
                 "type": "null"
               }
             ],
-            "title": "So Lan Moi Ngay"
+            "title": "Doses Per Day"
           },
-          "trang_thai_xac_nhan": {
+          "confirmation_status": {
             "anyOf": [
               {
                 "type": "string"
@@ -10720,8 +11143,7 @@
                 "type": "null"
               }
             ],
-            "title": "Trang Thai Xac Nhan",
-            "description": "Trạng thái xác nhận sau OCR scan"
+            "title": "Confirmation Status"
           }
         },
         "type": "object",
@@ -10732,14 +11154,9 @@
           "id": {
             "type": "string",
             "title": "Id",
-            "description": "UUID người dùng"
+            "description": "UUID người dùng (khớp auth.users.id)"
           },
-          "ho_ten": {
-            "type": "string",
-            "title": "Ho Ten",
-            "description": "Họ và tên"
-          },
-          "ngay_sinh": {
+          "full_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -10748,10 +11165,22 @@
                 "type": "null"
               }
             ],
-            "title": "Ngay Sinh",
+            "title": "Full Name",
+            "description": "Họ và tên (nullable trước khi hoàn tất hồ sơ hoặc sau khi xóa dữ liệu)"
+          },
+          "date_of_birth": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Of Birth",
             "description": "Ngày sinh YYYY-MM-DD"
           },
-          "gioi_tinh": {
+          "gender": {
             "anyOf": [
               {
                 "type": "string"
@@ -10760,10 +11189,10 @@
                 "type": "null"
               }
             ],
-            "title": "Gioi Tinh",
+            "title": "Gender",
             "description": "Giới tính"
           },
-          "so_dien_thoai": {
+          "phone_number": {
             "anyOf": [
               {
                 "type": "string"
@@ -10772,24 +11201,42 @@
                 "type": "null"
               }
             ],
-            "title": "So Dien Thoai",
-            "description": "Số điện thoại"
+            "title": "Phone Number",
+            "description": "Số điện thoại E.164"
           },
-          "che_do_nguoi_cao_tuoi": {
-            "type": "boolean",
-            "title": "Che Do Nguoi Cao Tuoi",
-            "description": "Tùy chọn Simple Mode của người dùng thiết bị",
-            "default": false
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email",
+            "description": "Email"
           },
-          "vai_tro_he_thong": {
+          "system_role": {
             "type": "string",
             "enum": [
               "user",
               "admin"
             ],
-            "title": "Vai Tro He Thong",
+            "title": "System Role",
             "description": "Vai trò hệ thống để cấp quyền Admin",
             "default": "user"
+          },
+          "erased_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erased At",
+            "description": "Thời điểm xóa dữ liệu cá nhân (tombstone) [MỚI in v9]"
           },
           "created_at": {
             "type": "string",
@@ -10800,7 +11247,6 @@
         "type": "object",
         "required": [
           "id",
-          "ho_ten",
           "created_at"
         ],
         "title": "UserResponse"
@@ -10844,6 +11290,130 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "SupabasePhoneOtpRequest": {
+        "type": "object",
+        "required": [
+          "phone"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "phone": {
+            "type": "string",
+            "description": "Số điện thoại dạng E.164, ví dụ +84912345678",
+            "pattern": "^\\+[1-9]\\d{7,14}$"
+          },
+          "create_user": {
+            "type": "boolean",
+            "default": true,
+            "description": "Cho phép tạo tài khoản nếu số điện thoại chưa đăng ký"
+          }
+        }
+      },
+      "SupabaseEmailOtpRequest": {
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "create_user": {
+            "type": "boolean",
+            "default": true,
+            "description": "Cho phép tạo tài khoản nếu email chưa đăng ký"
+          }
+        }
+      },
+      "SupabasePhoneOtpVerifyRequest": {
+        "type": "object",
+        "required": [
+          "phone",
+          "token",
+          "type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "phone": {
+            "type": "string",
+            "description": "Số điện thoại dạng E.164",
+            "pattern": "^\\+[1-9]\\d{7,14}$"
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^\\d{6}$",
+            "description": "Mã OTP 6 chữ số"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "sms"
+            ]
+          }
+        }
+      },
+      "SupabaseEmailOtpVerifyRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "token",
+          "type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^\\d{6}$",
+            "description": "Mã OTP 6 chữ số"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "email"
+            ]
+          }
+        }
+      },
+      "SupabaseAuthSession": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "refresh_token",
+          "user"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "Bearer token dùng gọi API DrugTime"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "bearer"
+          },
+          "expires_in": {
+            "type": "integer"
+          },
+          "expires_at": {
+            "type": "integer"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "user": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
       }
     }
   }

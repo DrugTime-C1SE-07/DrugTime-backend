@@ -1,3 +1,4 @@
+"""Router 1: Auth & User Profile (Schema v9: English naming, OTP login profile sync, tombstone)."""
 from typing import Optional
 from fastapi import APIRouter, Depends, status, HTTPException
 from app.schemas.common import ResponseEnvelope, MessageResponse
@@ -7,7 +8,6 @@ from app.schemas.auth import (
 )
 from app.core.security import CurrentUser, get_current_user
 from app.mock_db import db, current_time_iso
-from app.core.access_control import log_access
 
 router = APIRouter(prefix="", tags=["1. Auth & User Profile"])
 
@@ -15,38 +15,46 @@ router = APIRouter(prefix="", tags=["1. Auth & User Profile"])
     "/auth/sync-profile",
     response_model=ResponseEnvelope[UserResponse],
     summary="Đồng bộ hồ sơ người dùng từ Supabase Auth",
-    description="Gọi lần đầu sau khi đăng nhập hoặc đăng ký thành công trên Supabase Auth để tạo/cập nhật bảng users."
+    description="Gọi lần đầu sau khi xác thực OTP thành công trên Supabase Auth để tạo/cập nhật bảng users."
 )
 def sync_profile(req: SyncProfileRequest, caller: CurrentUser = Depends(get_current_user)):
     user = db.users.get(caller.user_id)
     if not user:
         user = {
             "id": caller.user_id,
-            "ho_ten": req.ho_ten,
-            "ngay_sinh": req.ngay_sinh,
-            "gioi_tinh": req.gioi_tinh,
-            "so_dien_thoai": req.so_dien_thoai,
-            "che_do_nguoi_cao_tuoi": False,
-            "vai_tro_he_thong": "user",
+            "full_name": req.full_name,
+            "date_of_birth": req.date_of_birth,
+            "gender": req.gender,
+            "phone_number": req.phone_number,
+            "email": req.email,
+            "system_role": "user",
+            "erased_at": None,
             "created_at": current_time_iso()
         }
         db.users[caller.user_id] = user
     else:
-        user["ho_ten"] = req.ho_ten
-        if req.so_dien_thoai:
-            user["so_dien_thoai"] = req.so_dien_thoai
-        if req.ngay_sinh:
-            user["ngay_sinh"] = req.ngay_sinh
-        if req.gioi_tinh:
-            user["gioi_tinh"] = req.gioi_tinh
+        if req.full_name is not None:
+            user["full_name"] = req.full_name
+            user["ho_ten"] = req.full_name
+        if req.phone_number is not None:
+            user["phone_number"] = req.phone_number
+            user["so_dien_thoai"] = req.phone_number
+        if req.email is not None:
+            user["email"] = req.email
+        if req.date_of_birth is not None:
+            user["date_of_birth"] = req.date_of_birth
+            user["ngay_sinh"] = req.date_of_birth
+        if req.gender is not None:
+            user["gender"] = req.gender
+            user["gioi_tinh"] = req.gender
 
     return ResponseEnvelope(data=UserResponse(**user), message="Đồng bộ hồ sơ người dùng thành công")
 
 @router.get(
     "/users/me",
     response_model=ResponseEnvelope[UserResponse],
-    summary="Lấy thông tin tài khoản và cài đặt giao diện hiện tại",
-    description="Trả về thông tin người dùng đang đăng nhập cùng cài đặt Simple Mode (che_do_nguoi_cao_tuoi)."
+    summary="Lấy thông tin tài khoản hiện tại",
+    description="Trả về thông tin hồ sơ của tài khoản đang đăng nhập (Schema v9: users)."
 )
 def get_my_profile(caller: CurrentUser = Depends(get_current_user)):
     user = db.users.get(caller.user_id)
@@ -57,20 +65,28 @@ def get_my_profile(caller: CurrentUser = Depends(get_current_user)):
 @router.patch(
     "/users/me",
     response_model=ResponseEnvelope[UserResponse],
-    summary="Cập nhật hồ sơ & bật/tắt Simple Mode",
-    description="Cho phép chỉnh sửa họ tên, số điện thoại, hoặc bật/tắt chế độ Simple Mode cho người cao tuổi."
+    summary="Cập nhật hồ sơ cá nhân",
+    description="Cho phép chỉnh sửa họ tên, số điện thoại E.164, email, ngày sinh, hoặc giới tính."
 )
 def update_my_profile(req: UpdateProfileRequest, caller: CurrentUser = Depends(get_current_user)):
     user = db.users.get(caller.user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "USER_NOT_FOUND", "message": "Không tìm thấy hồ sơ người dùng"})
     
-    if req.ho_ten is not None:
-        user["ho_ten"] = req.ho_ten
-    if req.so_dien_thoai is not None:
-        user["so_dien_thoai"] = req.so_dien_thoai
-    if req.che_do_nguoi_cao_tuoi is not None:
-        user["che_do_nguoi_cao_tuoi"] = req.che_do_nguoi_cao_tuoi
+    if req.full_name is not None:
+        user["full_name"] = req.full_name
+        user["ho_ten"] = req.full_name
+    if req.phone_number is not None:
+        user["phone_number"] = req.phone_number
+        user["so_dien_thoai"] = req.phone_number
+    if req.email is not None:
+        user["email"] = req.email
+    if req.date_of_birth is not None:
+        user["date_of_birth"] = req.date_of_birth
+        user["ngay_sinh"] = req.date_of_birth
+    if req.gender is not None:
+        user["gender"] = req.gender
+        user["gioi_tinh"] = req.gender
 
     return ResponseEnvelope(data=UserResponse(**user), message="Cập nhật hồ sơ thành công")
 
@@ -99,7 +115,6 @@ def create_data_export_job(
         "file_size_bytes": 1024 * 145,
         "created_at": current_time_iso()
     }
-    log_access(caller.user_id, "self", caller.user_id, "ho_so_suc_khoe", "allowed")
     return ResponseEnvelope(
         data=DataExportJobResponse(job_id=job_id, status="pending"),
         message="Yêu cầu trích xuất dữ liệu cá nhân đã được tiếp nhận và xử lý bất đồng bộ."
@@ -119,7 +134,6 @@ def get_data_export_job_status(
     if not job or job["user_id"] != caller.user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "JOB_NOT_FOUND", "message": "Không tìm thấy tiến trình xuất dữ liệu"})
     
-    log_access(caller.user_id, "self", caller.user_id, "ho_so_suc_khoe", "allowed")
     return ResponseEnvelope(
         data=DataExportJobStatusResponse(
             job_id=job["job_id"],
@@ -141,9 +155,6 @@ def export_my_data(caller: CurrentUser = Depends(get_current_user)):
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "USER_NOT_FOUND", "message": "Không tìm thấy người dùng"})
     
-    log_access(caller.user_id, "self", caller.user_id, "ho_so_suc_khoe", "allowed")
-    
-    # Filter related records
     conditions = [c for c in db.user_conditions if c["user_id"] == caller.user_id]
     prescriptions = [p for p in db.prescriptions if p["user_id"] == caller.user_id]
     consents = [c for c in db.user_consents if c["user_id"] == caller.user_id]
@@ -164,21 +175,21 @@ def export_my_data(caller: CurrentUser = Depends(get_current_user)):
     status_code=status.HTTP_201_CREATED,
     response_model=ResponseEnvelope[MessageResponse],
     summary="Đăng ký FCM Device Token nhận cảnh báo liều",
-    description="Lưu FCM token của thiết bị để nhận push notification nhắc nhở hoặc cảnh báo người thân bỏ lỡ liều."
+    description="Lưu FCM token của thiết bị để nhận push notification (Worker bỏ qua token iOS trong Phase 1 do thiếu APNs)."
 )
 def register_device_token(req: DeviceTokenRequest, caller: CurrentUser = Depends(get_current_user)):
     existing = next((t for t in db.device_tokens if t["fcm_token"] == req.fcm_token), None)
     if existing:
         existing["user_id"] = caller.user_id
         existing["platform"] = req.platform
-        existing["cap_nhat_luc"] = current_time_iso()
+        existing["updated_at"] = current_time_iso()
     else:
         db.device_tokens.append({
             "id": len(db.device_tokens) + 1,
             "user_id": caller.user_id,
             "fcm_token": req.fcm_token,
             "platform": req.platform,
-            "cap_nhat_luc": current_time_iso()
+            "updated_at": current_time_iso()
         })
     return ResponseEnvelope(data=MessageResponse(message="Đăng ký thiết bị nhận thông báo thành công"))
 

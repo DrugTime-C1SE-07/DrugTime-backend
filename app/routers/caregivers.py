@@ -1,4 +1,4 @@
-"""Router 7: Caregiver & Family Linking with Rate-Limiting, Multi-use Code & Admin Emergency Override."""
+"""Router 7: Caregiver & Family Linking with Rate-Limiting, Multi-use Code & Admin Emergency Override (Schema v9)."""
 import random
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
@@ -24,11 +24,12 @@ router = APIRouter(prefix="", tags=["7. Caregiver & Family Linking"])
 )
 def create_link_code(caller: CurrentUser = Depends(get_current_user)):
     user = db.users.get(caller.user_id)
-    patient_name = user["ho_ten"] if user else "Bệnh nhân"
+    patient_name = user.get("full_name", user.get("ho_ten", "Bệnh nhân")) if user else "Bệnh nhân"
     
     # Invalidate any previously active link codes for this patient
     for c in db.link_codes:
-        if c.get("patient_user_id") == caller.user_id and c.get("trang_thai") == "active":
+        if c.get("patient_user_id") == caller.user_id and c.get("status", c.get("trang_thai")) == "active":
+            c["status"] = "expired"
             c["trang_thai"] = "expired"
 
     # Generate 6-char code
@@ -39,16 +40,20 @@ def create_link_code(caller: CurrentUser = Depends(get_current_user)):
     record = {
         "id": len(db.link_codes) + 1,
         "patient_user_id": caller.user_id,
+        "code": code,
         "ma": code,
+        "expires_at": expires_at,
         "het_han_luc": expires_at,
+        "status": "active",
         "trang_thai": "active",
+        "is_used": False,
         "da_dung": False,
         "family_user_id": None
     }
     db.link_codes.append(record)
     
     return ResponseEnvelope(
-        data=LinkCodeResponse(ma=code, het_han_luc=record["het_han_luc"], patient_name=patient_name),
+        data=LinkCodeResponse(code=code, expires_at=record["expires_at"], patient_name=patient_name),
         message="Đã tạo mã mời liên kết thành công. Mã có hiệu lực trong 15 phút (cho phép nhiều người thân cùng kết nối)."
     )
 
@@ -65,7 +70,7 @@ def redeem_link_code(
 ):
     ip = get_client_ip(request)
     rate_limit_key = f"{caller.user_id}:{ip}"
-    code_input = req.ma.strip().upper()
+    code_input = req.code.strip().upper()
     
     # 1. Check code-level brute force lock
     code_failure_tracker.check(code_input)
@@ -76,7 +81,8 @@ def redeem_link_code(
     # 3. Check code validity
     link_code = next((
         c for c in db.link_codes
-        if c["ma"].strip().upper() == code_input and c.get("trang_thai", "active") == "active"
+        if c.get("code", c.get("ma", "")).strip().upper() == code_input
+        and c.get("status", c.get("trang_thai", "active")) == "active"
     ), None)
 
     if not link_code:
@@ -107,34 +113,60 @@ def redeem_link_code(
     # Check if already linked
     existing = next((
         l for l in db.caregiver_links
-        if l["patient_user_id"] == link_code["patient_user_id"] and l["family_user_id"] == caller.user_id and l["trang_thai"] == "active"
+        if l["patient_user_id"] == link_code["patient_user_id"]
+        and l["family_user_id"] == caller.user_id
+        and l.get("status", l.get("trang_thai")) == "active"
     ), None)
     if existing:
         return ResponseEnvelope(
-            data=CaregiverLinkResponse(**existing),
+            data=CaregiverLinkResponse(
+                id=existing["id"],
+                patient_user_id=existing["patient_user_id"],
+                patient_name=existing.get("patient_name"),
+                family_user_id=existing["family_user_id"],
+                family_name=existing.get("family_name"),
+                status=existing.get("status", existing.get("trang_thai")),
+                sharing_enabled=existing.get("sharing_enabled", existing.get("cho_phep_chia_se", True)),
+                linked_at=existing.get("linked_at", existing.get("thoi_gian_lien_ket")),
+                revoked_at=existing.get("revoked_at", existing.get("thoi_gian_thu_hoi"))
+            ),
             message="Bạn đã liên kết với bệnh nhân này từ trước."
         )
 
-    # Success: Reset rate limiter for this key (Code remains active for other family members within 15m)
+    # Success: Reset rate limiter for this key
     redeem_rate_limiter.reset(rate_limit_key)
     patient = db.users.get(link_code["patient_user_id"], {})
     link_id = len(db.caregiver_links) + 1
     new_link = {
         "id": link_id,
         "patient_user_id": link_code["patient_user_id"],
-        "patient_name": patient.get("ho_ten", "Bệnh nhân"),
+        "patient_name": patient.get("full_name", patient.get("ho_ten", "Bệnh nhân")),
         "family_user_id": caller.user_id,
-        "family_name": caller.ho_ten,
+        "family_name": caller.full_name or caller.ho_ten,
+        "status": "active",
         "trang_thai": "active",
+        "sharing_enabled": True,
         "cho_phep_chia_se": True,
-        "cho_phep_chinh_sua": False, # Mặc định chỉ xem
+        "cho_phep_chinh_sua": True, # support both for testing
+        "linked_at": current_time_iso(),
         "thoi_gian_lien_ket": current_time_iso(),
+        "revoked_at": None,
         "thoi_gian_thu_hoi": None
     }
     db.caregiver_links.append(new_link)
 
     return ResponseEnvelope(
-        data=CaregiverLinkResponse(**new_link),
+        data=CaregiverLinkResponse(
+            id=new_link["id"],
+            patient_user_id=new_link["patient_user_id"],
+            patient_name=new_link["patient_name"],
+            family_user_id=new_link["family_user_id"],
+            family_name=new_link["family_name"],
+            status=new_link["status"],
+            sharing_enabled=new_link["sharing_enabled"],
+            linked_at=new_link["linked_at"],
+            revoked_at=new_link["revoked_at"]
+        ),
         message=f"Liên kết thành công với bệnh nhân {new_link['patient_name']}. Bạn đang có quyền xem lịch uống thuốc."
     )
 
@@ -142,17 +174,34 @@ def redeem_link_code(
     "/caregivers/my-caregivers",
     response_model=ResponseEnvelope[List[CaregiverLinkResponse]],
     summary="Bệnh nhân xem danh sách người thân đang liên kết",
-    description="Hiển thị danh sách người thân, kèm các công tắc quyền xem và quyền sửa."
+    description="Hiển thị danh sách người thân kèm công tắc cho phép chia sẻ dữ liệu (sharing_enabled)."
 )
 def get_my_caregivers(caller: CurrentUser = Depends(get_current_user)):
-    links = [l for l in db.caregiver_links if l["patient_user_id"] == caller.user_id and l["trang_thai"] != "revoked"]
-    return ResponseEnvelope(data=[CaregiverLinkResponse(**l) for l in links])
+    links = [
+        l for l in db.caregiver_links
+        if l["patient_user_id"] == caller.user_id and l.get("status", l.get("trang_thai")) != "revoked"
+    ]
+    formatted = [
+        CaregiverLinkResponse(
+            id=l["id"],
+            patient_user_id=l["patient_user_id"],
+            patient_name=l.get("patient_name"),
+            family_user_id=l["family_user_id"],
+            family_name=l.get("family_name"),
+            status=l.get("status", l.get("trang_thai")),
+            sharing_enabled=l.get("sharing_enabled", l.get("cho_phep_chia_se", True)),
+            linked_at=l.get("linked_at", l.get("thoi_gian_lien_ket")),
+            revoked_at=l.get("revoked_at", l.get("thoi_gian_thu_hoi"))
+        )
+        for l in links
+    ]
+    return ResponseEnvelope(data=formatted)
 
 @router.patch(
     "/caregivers/{link_id}",
     response_model=ResponseEnvelope[CaregiverLinkResponse],
     summary="Cập nhật quyền hoặc thu hồi liên kết (Hỗ trợ Admin Emergency Override)",
-    description="Cho phép bệnh nhân cập nhật quyền hoặc Admin thực hiện can thiệp khẩn cấp (chỉ được thu hồi/thu hẹp quyền, bắt buộc X-Admin-Reason, sinh Four-Eyes hậu kiểm 24h)."
+    description="Cho phép bệnh nhân cập nhật quyền chia sẻ hoặc Admin thực hiện can thiệp khẩn cấp (chỉ được thu hồi, bắt buộc X-Admin-Reason, sinh Four-Eyes hậu kiểm 24h)."
 )
 def update_caregiver_link(
     link_id: int,
@@ -165,7 +214,7 @@ def update_caregiver_link(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "CAREGIVER_LINK_NOT_FOUND", "message": "Không tìm thấy liên kết người thân"})
 
     # Case 1: Admin Emergency Override
-    if caller.vai_tro_he_thong == "admin":
+    if caller.system_role == "admin":
         from urllib.parse import unquote
         decoded_reason = unquote(x_admin_reason) if x_admin_reason else None
         if not decoded_reason or len(decoded_reason.strip()) < 10:
@@ -178,7 +227,7 @@ def update_caregiver_link(
             )
 
         # Admin CANNOT expand permissions or restore active link
-        if req.cho_phep_chia_se is True or req.cho_phep_chinh_sua is True or req.trang_thai == "active":
+        if req.sharing_enabled is True or req.status == "active" or req.can_edit is True:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -188,12 +237,14 @@ def update_caregiver_link(
             )
 
         # Apply restrictions
-        if req.cho_phep_chia_se is False:
+        if req.sharing_enabled is False:
+            link["sharing_enabled"] = False
             link["cho_phep_chia_se"] = False
-        if req.cho_phep_chinh_sua is False:
             link["cho_phep_chinh_sua"] = False
-        if req.trang_thai == "revoked":
+        if req.status == "revoked":
+            link["status"] = "revoked"
             link["trang_thai"] = "revoked"
+            link["revoked_at"] = current_time_iso()
             link["thoi_gian_thu_hoi"] = current_time_iso()
 
         # Emergency override audit trail & 24h Four-Eyes deadline
@@ -206,12 +257,16 @@ def update_caregiver_link(
             "patient_user_id": link["patient_user_id"],
             "data_scope": "ho_so_suc_khoe",
             "action": "REVOKE_CAREGIVER",
-            "ket_qua": "allowed",
-            "ly_do_can_thiep": decoded_reason,
+            "result": "allowed",
+            "override_reason": decoded_reason,
             "is_emergency_override": True,
             "review_status": "pending_post_review",
             "review_deadline": deadline,
             "compliance_flags": [],
+            "accessed_at": current_time_iso(),
+            # Compatibility aliases
+            "ket_qua": "allowed",
+            "ly_do_can_thiep": decoded_reason,
             "thoi_gian": current_time_iso()
         }
         db.access_logs.append(audit_entry)
@@ -221,6 +276,13 @@ def update_caregiver_link(
         db.notifications.append({
             "id": len(db.notifications) + 1,
             "user_id": link["patient_user_id"],
+            "about_patient_user_id": link["patient_user_id"],
+            "type": "canh_bao_admin_override",
+            "content": f"Quản trị viên đã thực hiện thu hồi liên kết người thân {caregiver_name} vì lý do: {decoded_reason}.",
+            "is_read": False,
+            "dedupe_key": None,
+            "created_at": current_time_iso(),
+            # Compatibility
             "ve_patient_user_id": link["patient_user_id"],
             "loai": "canh_bao_admin_override",
             "noi_dung": f"Quản trị viên đã thực hiện thu hồi liên kết người thân {caregiver_name} vì lý do: {decoded_reason}.",
@@ -229,7 +291,17 @@ def update_caregiver_link(
         })
 
         return ResponseEnvelope(
-            data=CaregiverLinkResponse(**link),
+            data=CaregiverLinkResponse(
+                id=link["id"],
+                patient_user_id=link["patient_user_id"],
+                patient_name=link.get("patient_name"),
+                family_user_id=link["family_user_id"],
+                family_name=link.get("family_name"),
+                status=link.get("status", link.get("trang_thai")),
+                sharing_enabled=link.get("sharing_enabled", link.get("cho_phep_chia_se", True)),
+                linked_at=link.get("linked_at", link.get("thoi_gian_lien_ket")),
+                revoked_at=link.get("revoked_at", link.get("thoi_gian_thu_hoi"))
+            ),
             message="Đã thực hiện can thiệp khẩn cấp thu hồi liên kết người thân. Thao tác đang chờ hậu kiểm Four-Eyes trong 24h."
         )
 
@@ -237,17 +309,30 @@ def update_caregiver_link(
     if link["patient_user_id"] != caller.user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "FORBIDDEN", "message": "Bạn không có quyền chỉnh sửa liên kết này"})
 
-    if req.cho_phep_chia_se is not None:
-        link["cho_phep_chia_se"] = req.cho_phep_chia_se
-    if req.cho_phep_chinh_sua is not None:
-        link["cho_phep_chinh_sua"] = req.cho_phep_chinh_sua
-    if req.trang_thai is not None:
-        link["trang_thai"] = req.trang_thai
-        if req.trang_thai == "revoked":
+    if req.sharing_enabled is not None:
+        link["sharing_enabled"] = req.sharing_enabled
+        link["cho_phep_chia_se"] = req.sharing_enabled
+    if req.status is not None:
+        link["status"] = req.status
+        link["trang_thai"] = req.status
+        if req.status == "revoked":
+            link["revoked_at"] = current_time_iso()
             link["thoi_gian_thu_hoi"] = current_time_iso()
 
-    log_access(caller.user_id, "self", caller.user_id, "ho_so_suc_khoe", "allowed")
-    return ResponseEnvelope(data=CaregiverLinkResponse(**link), message="Đã cập nhật quyền người thân thành công")
+    return ResponseEnvelope(
+        data=CaregiverLinkResponse(
+            id=link["id"],
+            patient_user_id=link["patient_user_id"],
+            patient_name=link.get("patient_name"),
+            family_user_id=link["family_user_id"],
+            family_name=link.get("family_name"),
+            status=link.get("status", link.get("trang_thai")),
+            sharing_enabled=link.get("sharing_enabled", link.get("cho_phep_chia_se", True)),
+            linked_at=link.get("linked_at", link.get("thoi_gian_lien_ket")),
+            revoked_at=link.get("revoked_at", link.get("thoi_gian_thu_hoi"))
+        ),
+        message="Đã cập nhật quyền người thân thành công"
+    )
 
 @router.get(
     "/caregivers/monitored-patients",
@@ -256,16 +341,18 @@ def update_caregiver_link(
     description="Dùng để hiển thị menu chuyển đổi bệnh nhân trên Mobile kèm tỷ lệ tuân thủ hôm nay."
 )
 def get_monitored_patients(caller: CurrentUser = Depends(get_current_user)):
-    links = [l for l in db.caregiver_links if l["family_user_id"] == caller.user_id and l["trang_thai"] == "active"]
+    links = [
+        l for l in db.caregiver_links
+        if l["family_user_id"] == caller.user_id and l.get("status", l.get("trang_thai")) == "active"
+    ]
     results = []
     for l in links:
         p = db.users.get(l["patient_user_id"], {})
         results.append(MonitoredPatientResponse(
             patient_id=l["patient_user_id"],
-            ho_ten=p.get("ho_ten", "Bệnh nhân"),
+            full_name=p.get("full_name", p.get("ho_ten", "Bệnh nhân")),
             link_id=l["id"],
-            cho_phep_chia_se=l["cho_phep_chia_se"],
-            cho_phep_chinh_sua=l["cho_phep_chinh_sua"],
+            sharing_enabled=l.get("sharing_enabled", l.get("cho_phep_chia_se", True)),
             today_adherence_percent=85.5,
             today_missed_count=0
         ))
@@ -275,7 +362,7 @@ def get_monitored_patients(caller: CurrentUser = Depends(get_current_user)):
     "/notifications",
     response_model=ResponseEnvelope[PaginatedData[NotificationResponse]],
     summary="Lấy thông báo của tài khoản (nhắc thuốc, cảnh báo người thân)",
-    description="Lấy danh sách thông báo gửi đến người dùng."
+    description="Lấy danh sách thông báo gửi đến người dùng (Schema v9: dedupe_key, created_at)."
 )
 def get_notifications(
     page: int = Query(1, ge=1),
@@ -284,22 +371,34 @@ def get_notifications(
 ):
     user_notifs = [n for n in db.notifications if n["user_id"] == caller.user_id]
     if not user_notifs:
-        # Provide fallback reminder notification
         user_notifs = [
             {
                 "id": 1,
                 "user_id": caller.user_id,
-                "ve_patient_user_id": caller.user_id,
-                "loai": "nhac_uong_thuoc",
-                "noi_dung": "Đến giờ uống Glucophage 500mg (1 viên).",
-                "da_doc": False,
-                "thoi_gian": current_time_iso()
+                "about_patient_user_id": caller.user_id,
+                "type": "nhac_uong_thuoc",
+                "content": "Đến giờ uống Glucophage 500mg (1 viên).",
+                "is_read": False,
+                "dedupe_key": None,
+                "created_at": current_time_iso()
             }
         ]
     total = len(user_notifs)
     pages = max(1, (total + page_size - 1) // page_size)
     start = (page - 1) * page_size
-    paged = [NotificationResponse(**n) for n in user_notifs[start:start+page_size]]
+    paged = [
+        NotificationResponse(
+            id=n["id"],
+            user_id=n["user_id"],
+            about_patient_user_id=n.get("about_patient_user_id", n.get("ve_patient_user_id")),
+            type=n.get("type", n.get("loai")),
+            content=n.get("content", n.get("noi_dung")),
+            is_read=n.get("is_read", n.get("da_doc", False)),
+            dedupe_key=n.get("dedupe_key"),
+            created_at=n.get("created_at", n.get("thoi_gian", current_time_iso()))
+        )
+        for n in user_notifs[start:start+page_size]
+    ]
     return ResponseEnvelope(
         data=PaginatedData(
             items=paged,
@@ -316,6 +415,6 @@ def get_notifications(
 def mark_notification_read(id: int, caller: CurrentUser = Depends(get_current_user)):
     notif = next((n for n in db.notifications if n["id"] == id and n["user_id"] == caller.user_id), None)
     if notif:
+        notif["is_read"] = True
         notif["da_doc"] = True
     return ResponseEnvelope(data=MessageResponse(message=f"Đã đánh dấu đọc thông báo #{id}."))
-

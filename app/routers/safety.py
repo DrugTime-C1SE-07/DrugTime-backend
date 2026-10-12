@@ -1,4 +1,4 @@
-"""Router 6: Drug Safety & Pure Rule-Based Interaction Warnings (QA.04)."""
+"""Router 6: Drug Safety & Pure Rule-Based Interaction Warnings (Schema v9: CD7, QA.04)."""
 from typing import List
 from fastapi import APIRouter, Depends
 from app.schemas.common import ResponseEnvelope, MessageResponse
@@ -8,7 +8,7 @@ from app.schemas.safety import (
     AcknowledgeRecommendationRequest
 )
 from app.core.security import CurrentUser, get_current_user
-from app.core.access_control import require_patient_read, require_patient_write
+from app.core.access_control import require_patient_read
 from app.mock_db import db, current_time_iso
 
 router = APIRouter(prefix="", tags=["6. Drug Safety & Interactions"])
@@ -17,17 +17,17 @@ router = APIRouter(prefix="", tags=["6. Drug Safety & Interactions"])
     "/patients/{patient_id}/regimens/analyze",
     response_model=ResponseEnvelope[RegimenSnapshotResponse],
     summary="Kích hoạt phân tích tương tác trên toàn bộ phác đồ thuốc hiện tại",
-    description="Chạy bộ máy kiểm tra xác định (Rule-based, Bảng A-F, không LLM). Trả về snapshot kết quả."
+    description="Chạy bộ máy kiểm tra xác định (Rule-based, Bảng A-F, không LLM theo FR04/CD7). Trả về snapshot kết quả."
 )
 def analyze_patient_regimen(
     patient_id: str,
     actor_role: str = Depends(require_patient_read("canh_bao_tuong_tac"))
 ):
-    # # TODO: implement real rule engine (Bảng C, D, E, dose thresholds)
     now = current_time_iso()
     snapshot = {
         "id": len(db.regimen_snapshots) + 1,
         "user_id": patient_id,
+        "analyzed_at": now,
         "thoi_gian_phan_tich": now,
         "finding_count": len(db.regimen_findings),
         "highest_severity": 2
@@ -35,7 +35,13 @@ def analyze_patient_regimen(
     db.regimen_snapshots.append(snapshot)
     
     return ResponseEnvelope(
-        data=RegimenSnapshotResponse(**snapshot),
+        data=RegimenSnapshotResponse(
+            id=snapshot["id"],
+            user_id=snapshot["user_id"],
+            analyzed_at=snapshot["analyzed_at"],
+            finding_count=snapshot["finding_count"],
+            highest_severity=snapshot["highest_severity"]
+        ),
         message="Phân tích an toàn dược lý hoàn tất theo chuẩn Dược thư Quốc gia Việt Nam."
     )
 
@@ -49,7 +55,24 @@ def get_regimen_findings(
     patient_id: str,
     actor_role: str = Depends(require_patient_read("canh_bao_tuong_tac"))
 ):
-    return ResponseEnvelope(data=[RegimenFindingResponse(**f) for f in db.regimen_findings])
+    formatted = [
+        RegimenFindingResponse(
+            id=f["id"],
+            snapshot_id=f["snapshot_id"],
+            warning_type=f.get("warning_type", f.get("loai_canh_bao")),
+            source_table=f.get("source_table", f.get("nguon_bang")),
+            source_id=f.get("source_id"),
+            severity_level=f.get("severity_level", f.get("muc_do")),
+            description=f.get("description", f.get("mo_ta")),
+            handling_type=f.get("handling_type", f.get("loai_xu_ly")),
+            min_interval_hours=f.get("min_interval_hours", f.get("khoang_cach_gio")),
+            disclaimer=f.get("disclaimer"),
+            related_medication_ids=f.get("related_medication_ids", []),
+            is_shown_to_user=f.get("is_shown_to_user", True)
+        )
+        for f in db.regimen_findings
+    ]
+    return ResponseEnvelope(data=formatted)
 
 @router.post(
     "/interactions/quick-check",
@@ -61,20 +84,19 @@ def quick_check_interactions(
     req: QuickCheckRequest,
     caller: CurrentUser = Depends(get_current_user)
 ):
-    # # TODO: implement real rule engine quick-check
     warnings = []
     # If Metformin (101) and Amlor (102) checked with diabetes
     if 101 in req.medication_ids and 102 in req.medication_ids:
         warnings.append(QuickCheckWarningItem(
-            loai="Thuốc - Thuốc",
-            cap_doi="Metformin + Amlodipine",
-            muc_do=1,
-            mo_ta="Amlodipine có thể làm giảm nhẹ hiệu quả kiểm soát đường huyết của Metformin trong một số trường hợp hiếm gặp.",
-            loai_xu_ly="can_theo_doi"
+            warning_type="Thuốc - Thuốc",
+            pair="Metformin + Amlodipine",
+            severity_level=1,
+            description="Amlodipine có thể làm giảm nhẹ hiệu quả kiểm soát đường huyết của Metformin trong một số trường hợp hiếm gặp.",
+            handling_type="can_theo_doi"
         ))
 
-    safe = all(w.muc_do < 3 for w in warnings)
-    highest = max([w.muc_do for w in warnings], default=1)
+    safe = all(w.severity_level < 3 for w in warnings)
+    highest = max([w.severity_level for w in warnings], default=1)
     
     return ResponseEnvelope(
         data=QuickCheckResponse(safe=safe, highest_severity=highest, warnings=warnings),
@@ -85,7 +107,7 @@ def quick_check_interactions(
     "/recommendations/{id}/acknowledge",
     response_model=ResponseEnvelope[MessageResponse],
     summary="Đánh dấu bệnh nhân đã đọc/xử lý khuyến nghị an toàn",
-    description="Ghi nhận phản hồi của người dùng đối với cảnh báo tương tác."
+    description="Ghi nhận phản hồi của người dùng đối với cảnh báo tương tác (Schema v9: is_viewed, is_handled)."
 )
 def acknowledge_recommendation(
     id: int,

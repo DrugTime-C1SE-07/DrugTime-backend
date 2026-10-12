@@ -5,9 +5,10 @@ from fastapi.exceptions import RequestValidationError, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.schemas.common import ErrorEnvelope, ErrorDetail
+from app.mock_db import db
 from app.routers import (
     auth, consents, conditions, prescriptions,
-    schedules, safety, caregivers, meals, admin
+    schedules, safety, caregivers, meals, admin, disease_groups
 )
 
 app = FastAPI(
@@ -73,11 +74,15 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 # Health check
 @app.get("/healthz", tags=["Hạ tầng"])
-@app.get("/api/v1/health", tags=["Hạ tầng"])
 def health_check():
-    return {"status": "ok", "service": "drugtime-api", "version": "1.0.0"}
+    return {
+        "status": "ok",
+        "service": "drugtime-api",
+        "version": "1.0.0",
+        "workers": db.worker_heartbeats
+    }
 
-# Mount All 9 Domain Routers
+# Mount All 10 Domain Routers
 API_V1_PREFIX = "/api/v1"
 app.include_router(auth.router, prefix=API_V1_PREFIX)
 app.include_router(consents.router, prefix=API_V1_PREFIX)
@@ -88,3 +93,4 @@ app.include_router(safety.router, prefix=API_V1_PREFIX)
 app.include_router(caregivers.router, prefix=API_V1_PREFIX)
 app.include_router(meals.router, prefix=API_V1_PREFIX)
 app.include_router(admin.router, prefix=API_V1_PREFIX)
+app.include_router(disease_groups.router, prefix=API_V1_PREFIX)

@@ -20,10 +20,6 @@ def test_health_check():
     assert res.status_code == 200
     assert res.json()["status"] == "ok"
 
-    res_v1 = client.get("/api/v1/health")
-    assert res_v1.status_code == 200
-    assert res_v1.json()["status"] == "ok"
-
 def test_openapi_json_generation():
     res = client.get("/openapi.json")
     assert res.status_code == 200
@@ -34,39 +30,39 @@ def test_openapi_json_generation():
     assert "/api/v1/caregivers/link-codes/redeem" in openapi["paths"]
     assert "/api/v1/admin/audit-logs" in openapi["paths"]
 
-def test_user_profile_and_simple_mode():
-    # Get profile
+def test_user_profile():
+    # Get profile (Schema v9: no server-side che_do_nguoi_cao_tuoi)
     res = client.get("/api/v1/users/me", headers={"Authorization": "Bearer usr-patient-1"})
     assert res.status_code == 200
     data = res.json()["data"]
     assert data["id"] == "usr-patient-1"
-    assert data["che_do_nguoi_cao_tuoi"] is True
+    assert data["full_name"] == "Nguyễn Văn Bệnh Nhân"
 
-    # Update profile (toggle simple mode)
+    # Update profile
     patch_res = client.patch(
         "/api/v1/users/me",
         headers={"Authorization": "Bearer usr-patient-1"},
-        json={"che_do_nguoi_cao_tuoi": False}
+        json={"full_name": "Nguyễn Văn Bệnh Nhân (Đã đổi tên)"}
     )
     assert patch_res.status_code == 200
-    assert patch_res.json()["data"]["che_do_nguoi_cao_tuoi"] is False
+    assert patch_res.json()["data"]["full_name"] == "Nguyễn Văn Bệnh Nhân (Đã đổi tên)"
 
 def test_consents_nd356():
     res = client.get("/api/v1/consents/me", headers={"Authorization": "Bearer usr-patient-1"})
     assert res.status_code == 200
     consents = res.json()["data"]
     assert len(consents) == 3
-    purposes = {c["loai_dong_y"] for c in consents}
+    purposes = {c["consent_type"] for c in consents}
     assert purposes == {"health_data", "family_sharing", "ai_meal"}
 
     # Submit consent change
     post_res = client.post(
         "/api/v1/consents",
         headers={"Authorization": "Bearer usr-patient-1"},
-        json={"loai_dong_y": "ai_meal", "trang_thai": "thu_hoi", "phien_ban_van_ban": "v1.1"}
+        json={"consent_type": "ai_meal", "status": "thu_hoi", "document_version": "v1.1"}
     )
     assert post_res.status_code == 201
-    assert post_res.json()["data"]["trang_thai"] == "thu_hoi"
+    assert post_res.json()["data"]["status"] == "thu_hoi"
 
 def test_conditions_soft_delete():
     # List active conditions
@@ -101,10 +97,10 @@ def test_prescription_metadata_and_soft_delete():
     res = client.patch(
         "/api/v1/prescriptions/1",
         headers={"Authorization": "Bearer usr-patient-1"},
-        json={"ngay_ke_don": "2026-09-20", "noi_ke_don": "Phòng khám Đa khoa Quốc tế"}
+        json={"prescribed_date": "2026-09-20", "prescribing_facility": "Phòng khám Đa khoa Quốc tế"}
     )
     assert res.status_code == 200
-    assert res.json()["data"]["noi_ke_don"] == "Phòng khám Đa khoa Quốc tế"
+    assert res.json()["data"]["prescribing_facility"] == "Phòng khám Đa khoa Quốc tế"
 
     # Soft delete user-medication
     del_med = client.delete(
@@ -221,7 +217,7 @@ def test_async_meal_suggestions():
     assert poll_res.status_code == 200
     poll_data = poll_res.json()["data"]
     assert poll_data["status"] == "completed"
-    assert poll_data["result"]["bua_an"] == "Lunch"
+    assert poll_data["result"]["meal_type"] == "Lunch"
 
 def test_admin_audit_logs_pagination_and_auditability():
     # Trigger a patient read access to generate audit log
@@ -313,10 +309,10 @@ def test_caregiver_emergency_override_and_in_app_notification():
             "Authorization": "Bearer usr-admin-1",
             "X-Admin-Reason": quote(revoke_reason)
         },
-        json={"trang_thai": "revoked"}
+        json={"status": "revoked"}
     )
     assert revoke_res.status_code == 200
-    assert revoke_res.json()["data"]["trang_thai"] == "revoked"
+    assert revoke_res.json()["data"]["status"] == "revoked"
 
     # Verify emergency audit entry and Four-Eyes deadline
     last_audit = next(l for l in reversed(db.access_logs) if l.get("action") == "REVOKE_CAREGIVER")
@@ -326,7 +322,7 @@ def test_caregiver_emergency_override_and_in_app_notification():
 
     # Verify in-app notification sent to patient
     patient_notifs = [n for n in db.notifications if n["user_id"] == "usr-patient-1"]
-    assert any("thu hồi liên kết" in n["noi_dung"] and revoke_reason in n["noi_dung"] for n in patient_notifs)
+    assert any("thu hồi liên kết" in n.get("content", n.get("noi_dung", "")) and revoke_reason in n.get("content", n.get("noi_dung", "")) for n in patient_notifs)
 
 def test_four_eyes_post_review_three_states_and_guardrails():
     from urllib.parse import quote
@@ -361,8 +357,8 @@ def test_four_eyes_post_review_three_states_and_guardrails():
     assert self_review_res.json()["error"]["code"] == "CANNOT_REVIEW_OWN_ACTION"
 
     # Guardrail 3: Admin B reviews a non-emergency log -> 409 REVIEW_NOT_REQUIRED
-    # Trigger a normal read log
-    client.get("/api/v1/patients/usr-patient-1/prescriptions", headers={"Authorization": "Bearer usr-patient-1"})
+    # Trigger a normal read log by family member (patient self access is not logged in access_logs)
+    client.get("/api/v1/patients/usr-patient-1/prescriptions", headers={"Authorization": "Bearer usr-family-1"})
     normal_log = db.access_logs[-1]
     not_req_res = client.post(
         f"/api/v1/admin/audit-logs/{normal_log['id']}/post-review",
@@ -443,13 +439,13 @@ def test_link_code_multi_use_and_global_invalidation():
     # Patient creates a link code
     create_res = client.post("/api/v1/caregivers/link-codes", headers={"Authorization": "Bearer usr-patient-1"})
     assert create_res.status_code == 201
-    code = create_res.json()["data"]["ma"]
+    code = create_res.json()["data"]["code"]
 
     # 1. Family member 1 redeems code -> Success (Multi-use)
     redeem1 = client.post(
         "/api/v1/caregivers/link-codes/redeem",
         headers={"Authorization": "Bearer usr-family-1"},
-        json={"ma": code}
+        json={"code": code}
     )
     assert redeem1.status_code == 200
 
@@ -457,7 +453,7 @@ def test_link_code_multi_use_and_global_invalidation():
     redeem2 = client.post(
         "/api/v1/caregivers/link-codes/redeem",
         headers={"Authorization": "Bearer usr-family-readonly"},
-        json={"ma": code}
+        json={"code": code}
     )
     assert redeem2.status_code == 200
 
@@ -469,7 +465,7 @@ def test_link_code_multi_use_and_global_invalidation():
         client.post(
             "/api/v1/caregivers/link-codes/redeem",
             headers={"Authorization": "Bearer usr-family-1"},
-            json={"ma": fake_code}
+            json={"code": fake_code}
         )
 
     # 11th attempt on fake_code triggers LINK_CODE_INVALIDATED
@@ -477,7 +473,7 @@ def test_link_code_multi_use_and_global_invalidation():
     blocked_res = client.post(
         "/api/v1/caregivers/link-codes/redeem",
         headers={"Authorization": "Bearer usr-family-1"},
-        json={"ma": fake_code}
+        json={"code": fake_code}
     )
     assert blocked_res.status_code == 400
     assert blocked_res.json()["error"]["code"] == "LINK_CODE_INVALIDATED"
@@ -543,4 +539,66 @@ def test_admin_rule_change_logs_and_async_data_export():
     poll_data = poll_res.json()["data"]
     assert poll_data["job_id"] == job_id
     assert poll_data["download_url"] is not None
+
+def test_disease_groups_lookup_and_admin_crud():
+    # 1. Public / mobile lookup
+    res = client.get("/api/v1/disease-groups")
+    assert res.status_code == 200
+    groups = res.json()["data"]
+    assert len(groups) >= 4
+    codes = [g["code"] for g in groups]
+    assert "tieu_duong" in codes
+
+    # 2. Admin adds a new disease group
+    post_res = client.post(
+        "/api/v1/admin/disease-groups",
+        headers={"Authorization": "Bearer usr-admin-1"},
+        json={"code": "gout", "name": "Bệnh Gút (Gout)"}
+    )
+    assert post_res.status_code == 201
+    created = post_res.json()["data"]
+    assert created["code"] == "gout"
+
+    # 3. Non-admin cannot manage disease groups
+    forbidden_res = client.post(
+        "/api/v1/admin/disease-groups",
+        headers={"Authorization": "Bearer usr-patient-1"},
+        json={"code": "hen_suyen", "name": "Hen phế quản"}
+    )
+    assert forbidden_res.status_code == 403
+
+def test_user_erased_tombstone_rejection():
+    # Mark user as erased (tombstone)
+    db.users["usr-patient-1"]["erased_at"] = "2026-09-24T00:00:00Z"
+
+    # Attempt to authenticate
+    res = client.get("/api/v1/users/me", headers={"Authorization": "Bearer usr-patient-1"})
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "ACCOUNT_ERASED"
+
+def test_schedule_effective_from_and_notification_dedupe():
+    # 1. Create schedule and verify effective_from is populated
+    post_res = client.post(
+        "/api/v1/user-medications/1/schedules",
+        headers={"Authorization": "Bearer usr-patient-1"},
+        json={
+            "intake_time": "12:00",
+            "days_of_week": "2,4,6",
+            "reminder_enabled": True
+        }
+    )
+    assert post_res.status_code == 201
+    schedule_data = post_res.json()["data"]
+    assert schedule_data["effective_from"] is not None
+
+    # 2. Notifications have dedupe_key and created_at
+    notif_res = client.get(
+        "/api/v1/notifications",
+        headers={"Authorization": "Bearer usr-family-1"}
+    )
+    assert notif_res.status_code == 200
+    notifs = notif_res.json()["data"]["items"]
+    assert len(notifs) > 0
+    assert notifs[0]["dedupe_key"] is not None
+    assert notifs[0]["created_at"] is not None
 
