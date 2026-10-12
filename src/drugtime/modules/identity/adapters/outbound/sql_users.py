@@ -57,6 +57,14 @@ class SqlUsers:
         )
         return [(r.user_id, r.fcm_token) for r in rows]
 
+    def emails(self, user_ids: list[UUID]) -> dict[UUID, str | None]:
+        if not user_ids:
+            return {}
+        rows = self._c.execute(
+            text("SELECT id, email FROM users WHERE id = ANY(:ids)"), {"ids": user_ids}
+        )
+        return {r.id: r.email for r in rows}
+
     def erase(self, user_id: UUID) -> None:
         self._c.execute(text("DELETE FROM device_tokens WHERE user_id = :u"), {"u": user_id})
         self._c.execute(

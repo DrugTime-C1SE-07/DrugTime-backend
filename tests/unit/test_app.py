@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from drugtime.main import create_app
-from drugtime.shared.errors import ServiceUnavailable, TooManyRequests
+from drugtime.shared.errors import Conflict, ServiceUnavailable, TooManyRequests
 
 
 def test_liveness_and_routes_mounted():
@@ -77,3 +77,14 @@ def test_rate_limit_and_unavailable_map_to_429_and_503():
     assert (r.status_code, r.json()) == (429, {"detail": "rate_limited"})
     r = client.get("/_test/unavailable")
     assert (r.status_code, r.json()) == (503, {"detail": "auth_provider_unavailable"})
+
+
+def test_conflict_maps_to_409():
+    app = create_app()
+
+    @app.get("/_test/conflict")
+    def _conflict():
+        raise Conflict("version_conflict")
+
+    r = TestClient(app).get("/_test/conflict")
+    assert (r.status_code, r.json()) == (409, {"detail": "version_conflict"})

@@ -192,6 +192,57 @@ class Factory:
             )
         return mid
 
+    def ingredient(self, *, name: str | None = None, aliases: tuple[str, ...] = ()) -> int:
+        """Hoạt chất chuẩn mới (tên ngẫu nhiên nếu không truyền), kèm tên gọi khác."""
+        iid = self.db.execute(
+            text(
+                "INSERT INTO active_ingredients (standard_name, role) "
+                "VALUES (:n, 'dieu_tri_benh_nen') RETURNING id"
+            ),
+            {"n": name or f"ingredient-{uuid4().hex}"},
+        ).scalar_one()
+        for alias in aliases:
+            self.db.execute(
+                text(
+                    "INSERT INTO ingredient_aliases (active_ingredient_id, alias_text) "
+                    "VALUES (:i, :a)"
+                ),
+                {"i": iid, "a": alias},
+            )
+        return iid
+
+    def medication_with(self, ingredient_ids: list[int]) -> int:
+        """Thuốc danh mục chứa đúng các hoạt chất này (thuốc phối hợp khi nhiều hơn một)."""
+        mid = self.catalog_medication(with_ingredient=False)
+        for iid in ingredient_ids:
+            self.db.execute(
+                text(
+                    "INSERT INTO medication_active_ingredients (medication_id, "
+                    "active_ingredient_id, strength_value, strength_unit, dosing_unit) "
+                    "VALUES (:m, :a, 5, 'mg', 'vien')"
+                ),
+                {"m": mid, "a": iid},
+            )
+        return mid
+
+    def rule_rows(self, table: str, rule_id: int) -> list[dict]:
+        """Mọi phiên bản của một quy tắc (task 2.16), theo version."""
+        assert table in ("active_ingredient_interactions", "drug_food_interactions")
+        rows = self.db.execute(
+            text(f"SELECT * FROM {table} WHERE rule_id = :r ORDER BY version"), {"r": rule_id}
+        )
+        return [dict(r._mapping) for r in rows]
+
+    def thresholds_of(self, version_id: int) -> list[dict]:
+        rows = self.db.execute(
+            text(
+                "SELECT * FROM active_ingredient_interaction_dose_thresholds "
+                "WHERE interaction_id = :v ORDER BY id"
+            ),
+            {"v": version_id},
+        )
+        return [dict(r._mapping) for r in rows]
+
     def counts(self, user_id: UUID) -> dict[str, int]:
         """Số dòng thuốc, lịch, đơn thuốc của một người dùng."""
         row = self.db.execute(
@@ -268,6 +319,31 @@ def make(db) -> Factory:
     return Factory(db)
 
 
+@pytest.fixture
+def admin_auth(make):
+    """(admin_id, header) với phiên admin_web thật của một tài khoản admin mới."""
+    from drugtime.modules.identity.application.sign_in import issue_app_session
+    from drugtime.modules.identity.domain.user import SessionType
+
+    admin_id = make.user(admin=True, consents=())
+    token = issue_app_session(admin_id, SessionType.ADMIN_WEB, datetime.now(UTC)).token
+    return admin_id, {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(scope="session")
+def role_engines(admin_engine, app_settings):
+    """Engine đăng nhập bằng api_role và worker_role (giao dịch thật) để kiểm grant/trigger.
+    Chỉ đặt mật khẩu trên DB local, như app_settings làm với api_role."""
+    from drugtime.shared.db import get_engine
+
+    with admin_engine.connect() as c:
+        c.execute(text(f"ALTER ROLE worker_role WITH LOGIN PASSWORD '{API_PASSWORD}'"))
+    worker_url = make_url(ADMIN_URL).set(username="worker_role", password=API_PASSWORD)
+    worker = create_engine(worker_url.render_as_string(hide_password=False))
+    yield {"api_role": get_engine(), "worker_role": worker}
+    worker.dispose()
+
+
 def _scheduled_body(medication_id: int, **kw) -> dict:
     return {
         "client_uuid": str(uuid4()),
@@ -298,3 +374,25 @@ def scheduled_body():
 @pytest.fixture
 def as_needed_body():
     return _as_needed_body
+
+
+@pytest.fixture
+def wait_for_lock_waiters(db):
+    """wait_for_lock_waiters(n): chờ tới khi có `n` phiên api_role đang chờ khóa DB, để hai
+    request chắc chắn chạy chồng nhau (không dùng sleep cố định)."""
+    import time
+
+    def wait(n: int, deadline_s: float = 20.0) -> None:
+        end = time.monotonic() + deadline_s
+        while time.monotonic() < end:
+            waiting = db.execute(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity WHERE usename = 'api_role' "
+                    "AND wait_event_type = 'Lock'"
+                )
+            ).scalar_one()
+            if waiting >= n:
+                return
+        raise AssertionError(f"không thấy {n} request chờ khóa trong {deadline_s}s")
+
+    return wait
