@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 
 from drugtime.modules.catalog.adapters.inbound.schemas import (
+    ActiveIngredientPageOut,
     CatalogMedicationList,
     CatalogMedicationSummary,
     CatalogSyncRunList,
@@ -12,8 +13,10 @@ from drugtime.modules.catalog.adapters.inbound.schemas import (
     MedicationResponse,
     MedicationUpdate,
 )
+from drugtime.modules.catalog.adapters.outbound.sql_active_ingredients import SqlActiveIngredients
 from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
 from drugtime.modules.catalog.adapters.outbound.sql_sync_runs import SqlSyncRuns
+from drugtime.modules.catalog.application.list_active_ingredients import list_active_ingredients
 from drugtime.modules.catalog.application.list_sync_runs import list_sync_runs
 from drugtime.modules.catalog.application.search_medications import search_medications
 from drugtime.modules.catalog.domain.sync_run import CatalogSyncSource, CatalogSyncStatus
@@ -159,3 +162,32 @@ def delete_medication_admin(
 ) -> None:
     CatalogService(uow).soft_delete(med_id)
     return None
+
+
+# ============================================================================
+# Admin Dashboard / Tra cứu hoạt chất để nhập quy tắc tương tác (PB05, Task 2.16)
+# ============================================================================
+
+
+@router.get(
+    "/admin/active-ingredients",
+    response_model=ActiveIngredientPageOut,
+    responses={
+        401: {"model": ErrorDetail, "description": "Chưa xác thực"},
+        403: {"model": ErrorDetail, "description": "Chỉ Admin (`admin_only`)"},
+    },
+    operation_id="listActiveIngredients",
+    summary="Admin: tra cứu hoạt chất trong danh mục",
+)
+def list_active_ingredients_admin(
+    uow: UowDep,
+    _admin: AdminDep,
+    q: Annotated[str | None, Query(min_length=1, max_length=100)] = None,
+    medication_id: Annotated[int | None, Query()] = None,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ActiveIngredientPageOut:
+    page = list_active_ingredients(
+        uow, SqlActiveIngredients(), q=q, medication_id=medication_id, skip=skip, limit=limit
+    )
+    return ActiveIngredientPageOut.from_domain(page)

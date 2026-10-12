@@ -136,3 +136,39 @@ class MedicationResponse(MedicationBase):
 class MedicationListResponse(BaseModel):
     total: int
     items: list[MedicationResponse]
+
+
+# --- Admin tra cứu hoạt chất (task 2.16) ---
+
+
+class ActiveIngredientSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    standard_name: str
+    atc_code: str | None
+    pharmacological_group: str | None
+    aliases: list[str]
+
+
+class ActiveIngredientPageOut(BaseModel):
+    model_config = ConfigDict(extra="forbid", title="ActiveIngredientPage")
+
+    items: list[ActiveIngredientSummary] = Field(max_length=100)
+    total: int = Field(ge=0)
+
+    @classmethod
+    def from_domain(cls, page) -> "ActiveIngredientPageOut":  # page: ActiveIngredientPage
+        return cls(
+            items=[
+                ActiveIngredientSummary(
+                    id=i.id,
+                    standard_name=i.standard_name,
+                    atc_code=i.atc_code,
+                    pharmacological_group=i.pharmacological_group,
+                    aliases=i.aliases,
+                )
+                for i in page.items
+            ],
+            total=page.total,
+        )
