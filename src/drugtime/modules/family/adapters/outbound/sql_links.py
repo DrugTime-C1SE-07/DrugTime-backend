@@ -112,10 +112,6 @@ class SqlLinks:
             {"u": user_id},
         )
         c.execute(text("DELETE FROM link_codes WHERE patient_user_id = :u"), {"u": user_id})
-        c.execute(
-            text("UPDATE link_codes SET family_user_id = NULL WHERE family_user_id = :u"),
-            {"u": user_id},
-        )
 
 
 def _record(row) -> FamilyLink:
