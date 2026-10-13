@@ -132,3 +132,14 @@ def test_sql_active_sharing_queries_keep_existing_filter__AC11():
     second_sql = uow.connection.calls[1][0]
     assert "status = 'active' AND sharing_enabled = true" in first_sql
     assert "status = 'active' AND sharing_enabled = true" in second_sql
+
+
+def test_sql_erase_deletes_link_code_without_family_column__AC14():
+    user_id = uuid4()
+    uow = FakeUow([])
+
+    SqlLinks().erase(uow, user_id)
+
+    link_code_sql = [sql for sql, _ in uow.connection.calls if "link_codes" in sql]
+    assert link_code_sql == ["DELETE FROM link_codes WHERE patient_user_id = :u"]
+    assert all(params == {"u": user_id} for _, params in uow.connection.calls)
