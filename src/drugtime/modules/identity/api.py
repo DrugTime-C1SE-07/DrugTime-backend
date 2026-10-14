@@ -18,9 +18,19 @@ __all__ = [
     "eraser",
     "require_admin",
     "router",
-    "user_name",
-    "user_names",
+    "user_emails",
+    "user_exists",
 ]
+
+
+def user_exists(uow: UnitOfWork, user_id: UUID) -> bool:
+    """Có dòng users với id này (kể cả tài khoản đã xoá dữ liệu)."""
+    return SqlUsers(uow).get(user_id) is not None
+
+
+def user_emails(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str | None]:
+    """Email hiện tại của các user (None nếu đã xoá dữ liệu); id không tồn tại thì bị bỏ qua."""
+    return SqlUsers(uow).emails(list(user_ids))
 
 
 def android_tokens(uow: UnitOfWork, user_ids: list[UUID]) -> list[tuple[UUID, str]]:

@@ -57,21 +57,13 @@ class SqlUsers:
         )
         return [(r.user_id, r.fcm_token) for r in rows]
 
-    def user_name(self, user_id: UUID) -> str | None:
-        row = self._c.execute(
-            text("SELECT full_name FROM users WHERE id = :id AND erased_at IS NULL"),
-            {"id": user_id},
-        ).first()
-        return None if row is None else row.full_name
-
-    def user_names(self, user_ids: list[UUID]) -> dict[UUID, str]:
+    def emails(self, user_ids: list[UUID]) -> dict[UUID, str | None]:
         if not user_ids:
             return {}
         rows = self._c.execute(
-            text("SELECT id, full_name FROM users WHERE id = ANY(:ids) AND erased_at IS NULL"),
-            {"ids": user_ids},
+            text("SELECT id, email FROM users WHERE id = ANY(:ids)"), {"ids": user_ids}
         )
-        return {r.id: r.full_name for r in rows if r.full_name}
+        return {r.id: r.email for r in rows}
 
     def erase(self, user_id: UUID) -> None:
         self._c.execute(text("DELETE FROM device_tokens WHERE user_id = :u"), {"u": user_id})

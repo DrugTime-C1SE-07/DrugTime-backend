@@ -40,5 +40,5 @@ def current_user(
 
 def require_admin(user: CurrentUser = Depends(current_user)) -> CurrentUser:
     if not user.is_admin:
-        raise Forbidden("Admin only")
+        raise Forbidden("admin_only")
     return user

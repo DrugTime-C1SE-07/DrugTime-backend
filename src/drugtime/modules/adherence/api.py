@@ -22,7 +22,10 @@ from drugtime.shared.clock import now
 from drugtime.shared.config import get_settings
 from drugtime.shared.uow import UnitOfWork
 
-__all__ = ["Alert", "NotificationPort", "eraser", "router", "scan_missed_doses"]
+__all__ = ["Alert", "NotificationPort", "eraser", "recorded_doses", "router", "scan_missed_doses"]
+
+# Liều đã ghi, cho medication tính mốc hiệu lực khi sửa lịch; main.py nối vào medication.
+recorded_doses = SqlDoseLogs()
 
 
 def scan_missed_doses(uow_factory, *, notifier: NotificationPort) -> int:

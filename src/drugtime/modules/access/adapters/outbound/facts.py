@@ -3,11 +3,12 @@ from uuid import UUID
 from drugtime.modules.access.domain.rules import SCOPE_PURPOSE, AccessFacts, Scope
 from drugtime.modules.consent import api as consent
 from drugtime.modules.family import api as family
+from drugtime.modules.identity import api as identity
 from drugtime.shared.uow import UnitOfWork
 
 
 class ModuleFactsReader:
-    """Hiện thực FactsReader bằng cách gọi family.api và consent.api (K19, K20)."""
+    """Hiện thực FactsReader bằng cách gọi family.api, consent.api và identity.api (K19, K20)."""
 
     def read(
         self,
@@ -27,6 +28,7 @@ class ModuleFactsReader:
             and family.has_active_sharing_link(uow, patient_id, caller_id),
             family_sharing_consent=(not is_self)
             and consent.has_active_consent(uow, patient_id, consent.Purpose.FAMILY_SHARING),
+            patient_exists=is_self or identity.user_exists(uow, patient_id),
         )
 
     def sharing_family_ids(self, uow: UnitOfWork, patient_id: UUID) -> list[UUID]:

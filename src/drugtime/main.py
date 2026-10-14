@@ -16,6 +16,7 @@ from drugtime.modules.interaction import api as interaction
 from drugtime.modules.medication import api as medication
 from drugtime.shared.config import get_settings
 from drugtime.shared.errors import (
+    Conflict,
     DomainError,
     Forbidden,
     NotFound,
@@ -41,6 +42,7 @@ _STATUS = {
     NotFound: 404,
     Unauthorized: 401,
     Forbidden: 403,
+    Conflict: 409,
     DomainError: 422,
     TooManyRequests: 429,
     ServiceUnavailable: 503,
@@ -58,6 +60,8 @@ def create_app() -> FastAPI:
             allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type"],
         )
+    # medication đọc liều đã ghi qua port; adherence sở hữu dose_logs (task 2.04).
+    medication.configure(recorded_doses=adherence.recorded_doses)
     for module in MODULES:
         app.include_router(module.router)
 

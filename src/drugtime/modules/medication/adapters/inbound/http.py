@@ -1,8 +1,14 @@
-from fastapi import APIRouter, Depends, Path, Response
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Path, Query, Response
 from pydantic import BaseModel
 
 from drugtime.modules.identity import api as identity
 from drugtime.modules.medication.adapters.inbound.schemas import (
+    MedicationScheduleCreate,
+    MedicationScheduleUpdate,
+    PatientSchedule,
+    PatientScheduleList,
     UserMedication,
     UserMedicationCreate,
     UserMedicationList,
@@ -17,12 +23,35 @@ from drugtime.modules.medication.application.create_medication import create_med
 from drugtime.modules.medication.application.delete_medication import delete_medication
 from drugtime.modules.medication.application.get_medication import get_medication
 from drugtime.modules.medication.application.list_medications import list_medications
+from drugtime.modules.medication.application.list_patient_schedules import (
+    list_patient_schedules,
+)
+from drugtime.modules.medication.application.manage_schedules import (
+    add_schedule,
+    remove_schedule,
+    update_schedule,
+)
+from drugtime.modules.medication.application.ports import RecordedDoses
 from drugtime.modules.medication.application.update_medication import update_medication
 from drugtime.shared.db import SqlUnitOfWork, get_uow
 
 router = APIRouter(prefix="/medications", tags=["medication"])
+patients_router = APIRouter(prefix="/patients", tags=["medication"])
 
-# TODO: GET /patients/{id}/schedules cho Mobile kéo lịch về (DM2) — task lịch uống.
+# Port liều đã ghi (hiện thực ở adherence), do composition root nối qua medication.api.configure.
+_recorded_doses: RecordedDoses | None = None
+
+
+def set_recorded_doses(port: RecordedDoses) -> None:
+    global _recorded_doses
+    _recorded_doses = port
+
+
+def recorded_doses() -> RecordedDoses:
+    """Chưa nối thì lỗi, không âm thầm bỏ qua mốc hiệu lực theo liều xác nhận sớm (QD-16)."""
+    if _recorded_doses is None:
+        raise RuntimeError("medication.configure(recorded_doses=...) chưa được gọi")
+    return _recorded_doses
 
 
 class ErrorDetail(BaseModel):
@@ -40,7 +69,21 @@ _UNPROCESSABLE = {
         "medication_rule_violation | medication_stopped"
     }
 }
+_SCHEDULE_NOT_FOUND = {
+    404: {
+        "model": ErrorDetail,
+        "description": "user_medication_not_found | medication_schedule_not_found",
+    }
+}
+_SCHEDULE_UNPROCESSABLE = {
+    422: {
+        "description": "ValidationError, hoặc ErrorDetail với medication_stopped | "
+        "medication_rule_violation | schedule_time_conflict | schedule_limit_reached | "
+        "last_schedule_not_removable"
+    }
+}
 MedicationId = Path(ge=1, description="Id thuốc của người bệnh (UserMedication.id)")
+ScheduleId = Path(ge=1, description="Id lịch đang mở của thuốc (MedicationSchedule.id)")
 
 
 @router.get(
@@ -133,6 +176,7 @@ def patch_user_medication(
     id: int = MedicationId,
     uow: SqlUnitOfWork = Depends(get_uow),
     user: identity.CurrentUser = Depends(identity.current_user),
+    recorded: RecordedDoses = Depends(recorded_doses),
 ) -> UserMedication:
     view = update_medication(
         uow,
@@ -143,6 +187,7 @@ def patch_user_medication(
         access=AccessGuardAdapter(),
         catalog=CatalogAdapter(),
         meds=SqlMedication(),
+        recorded=recorded,
     )
     return UserMedication.from_view(view)
 
@@ -158,6 +203,7 @@ def delete_user_medication(
     id: int = MedicationId,
     uow: SqlUnitOfWork = Depends(get_uow),
     user: identity.CurrentUser = Depends(identity.current_user),
+    recorded: RecordedDoses = Depends(recorded_doses),
 ) -> Response:
     delete_medication(
         uow,
@@ -166,5 +212,128 @@ def delete_user_medication(
         user_medication_id=id,
         access=AccessGuardAdapter(),
         meds=SqlMedication(),
+        recorded=recorded,
     )
     return Response(status_code=204)
+
+
+# --- Lịch uống (task 2.04) -----------------------------------------------------------------
+
+
+@router.post(
+    "/{id}/schedules",
+    status_code=201,
+    response_model=UserMedication,
+    responses={**_ERRORS, **_NOT_FOUND, **_SCHEDULE_UNPROCESSABLE},
+    operation_id="addMedicationSchedule",
+)
+def post_medication_schedule(
+    body: MedicationScheduleCreate,
+    id: int = MedicationId,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+    recorded: RecordedDoses = Depends(recorded_doses),
+) -> UserMedication:
+    view = add_schedule(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        user_medication_id=id,
+        intake_time=body.to_time(),
+        reminder_enabled=body.reminder_enabled,
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+        recorded=recorded,
+    )
+    return UserMedication.from_view(view)
+
+
+@router.patch(
+    "/{id}/schedules/{schedule_id}",
+    response_model=UserMedication,
+    responses={**_ERRORS, **_SCHEDULE_NOT_FOUND, **_SCHEDULE_UNPROCESSABLE},
+    operation_id="updateMedicationSchedule",
+)
+def patch_medication_schedule(
+    body: MedicationScheduleUpdate,
+    id: int = MedicationId,
+    schedule_id: int = ScheduleId,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+    recorded: RecordedDoses = Depends(recorded_doses),
+) -> UserMedication:
+    view = update_schedule(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        user_medication_id=id,
+        schedule_id=schedule_id,
+        intake_time=body.to_time(),
+        reminder_enabled=body.reminder_enabled,
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+        recorded=recorded,
+    )
+    return UserMedication.from_view(view)
+
+
+@router.delete(
+    "/{id}/schedules/{schedule_id}",
+    response_model=UserMedication,
+    responses={**_ERRORS, **_SCHEDULE_NOT_FOUND, **_SCHEDULE_UNPROCESSABLE},
+    operation_id="removeMedicationSchedule",
+)
+def delete_medication_schedule(
+    id: int = MedicationId,
+    schedule_id: int = ScheduleId,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+    recorded: RecordedDoses = Depends(recorded_doses),
+) -> UserMedication:
+    view = remove_schedule(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        user_medication_id=id,
+        schedule_id=schedule_id,
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+        recorded=recorded,
+    )
+    return UserMedication.from_view(view)
+
+
+@patients_router.get(
+    "/{patient_id}/schedules",
+    response_model=PatientScheduleList,
+    responses={
+        **_ERRORS,
+        422: {"description": "ValidationError (patient_id, limit) | ErrorDetail invalid_cursor"},
+    },
+    operation_id="listPatientSchedules",
+)
+def get_patient_schedules(
+    patient_id: UUID,
+    limit: int = Query(100, ge=1, le=200, description="Số lịch tối đa của trang."),
+    # Kiểu str, mặc định None: không gửi được chấp nhận, gửi chuỗi rỗng bị 422 (như contract).
+    cursor: str = Query(None, min_length=1, max_length=200, description="next_cursor trang trước."),
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> PatientScheduleList:
+    page = list_patient_schedules(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        patient_id=patient_id,
+        limit=limit,
+        cursor=cursor,
+        access=AccessGuardAdapter(),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+    )
+    return PatientScheduleList(
+        items=[PatientSchedule.from_view(v) for v in page.items], next_cursor=page.next_cursor
+    )
