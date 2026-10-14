@@ -38,6 +38,14 @@ def android_tokens(uow: UnitOfWork, user_ids: list[UUID]) -> list[tuple[UUID, st
     return SqlUsers(uow).device_tokens(user_ids, "android")
 
 
+def user_name(uow: UnitOfWork, user_id: UUID) -> str | None:
+    return SqlUsers(uow).user_name(user_id)
+
+
+def user_names(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str]:
+    return SqlUsers(uow).user_names(user_ids)
+
+
 class _Eraser:
     name = "identity"
 
