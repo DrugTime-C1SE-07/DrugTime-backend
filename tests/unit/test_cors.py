@@ -32,6 +32,7 @@ def test_allowed_origin_preflight(monkeypatch):
     assert r.status_code == 200
     assert r.headers["access-control-allow-origin"] == ALLOWED
     assert "access-control-allow-credentials" not in r.headers
+    assert "PUT" in r.headers["access-control-allow-methods"]
 
 
 def test_other_origin_not_allowed(monkeypatch):

@@ -24,6 +24,15 @@ def test_self_access_is_not_logged_and_follows_purpose_consent():
     assert not decide(facts(caller_id=P, purpose_consent=False)).allowed
 
 
+def test_profile_self_audit_does_not_grant_extra_permissions():
+    for consent, action in product((False, True), Action):
+        result = decide(facts(caller_id=P, purpose_consent=consent), action, audit_self=True)
+        assert result.allowed is consent
+        assert result.log_role is ActorRole.PATIENT
+    missing = decide(facts(caller_id=P, patient_exists=False), audit_self=True)
+    assert not missing.allowed and missing.log_role is None
+
+
 def test_family_needs_link_sharing_and_consents():
     assert decide(facts()).log_role is ActorRole.FAMILY
     for missing in ("active_sharing_link", "family_sharing_consent", "purpose_consent"):

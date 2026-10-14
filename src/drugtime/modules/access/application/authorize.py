@@ -17,7 +17,11 @@ def authorize(
     scope: Scope,
     action: Action = Action.READ,
 ) -> None:
-    decision = decide(facts.read(uow, caller_id, caller_is_admin, patient_id, scope), action)
+    decision = decide(
+        facts.read(uow, caller_id, caller_is_admin, patient_id, scope),
+        action,
+        audit_self=scope is Scope.HEALTH_PROFILE,
+    )
     if decision.allowed:
         if decision.log_role is not None:
             # Cùng transaction với request: ghi log lỗi thì request lỗi (fail-closed).

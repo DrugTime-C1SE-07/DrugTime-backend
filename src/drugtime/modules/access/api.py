@@ -22,7 +22,8 @@ def authorize(
     action: Action = Action.READ,
 ) -> None:
     """Raise Forbidden nếu không có quyền; ghi access_logs khi cần.
-    action=WRITE: chỉ chính chủ được ghi; người thân và admin chỉ được đọc."""
+    action=WRITE: chỉ chính chủ được ghi. Người thân chỉ đọc theo chia sẻ;
+    admin không được đọc dữ liệu y tế. HEALTH_PROFILE ghi audit cả chính chủ."""
     _authorize.authorize(
         uow,
         ModuleFactsReader(),
