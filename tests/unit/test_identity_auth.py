@@ -269,3 +269,19 @@ def test_complete_profile_accepts_valid_profile():
     )
 
     assert users.updated_profile == (user_id, "Nguyễn Thị Lan", date(1958, 4, 12), "nu")
+
+
+def test_onboarding_uses_same_vietnam_day_as_health_profile():
+    from datetime import UTC
+
+    users = FakeUsers()
+    user_id = uuid4()
+    sign_in.complete_profile(
+        users,
+        user_id=user_id,
+        ho_ten="  Bao  ",
+        ngay_sinh=date(2026, 10, 13),
+        gioi_tinh=" MALE ",
+        now=datetime(2026, 10, 12, 18, tzinfo=UTC),
+    )
+    assert users.updated_profile == (user_id, "Bao", date(2026, 10, 13), "male")

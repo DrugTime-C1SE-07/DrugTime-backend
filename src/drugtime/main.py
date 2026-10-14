@@ -57,7 +57,7 @@ def create_app() -> FastAPI:
             CORSMiddleware,
             allow_origins=origins,
             allow_credentials=False,  # xác thực bằng bearer, không dùng cookie
-            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type"],
         )
     # medication đọc liều đã ghi qua port; adherence sở hữu dose_logs (task 2.04).
@@ -71,6 +71,11 @@ def create_app() -> FastAPI:
             return JSONResponse({"detail": str(exc)}, status_code=status)
 
         app.add_exception_handler(exc_type, handler)
+
+    def internal_error(_: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse({"detail": "Internal server error"}, status_code=500)
+
+    app.add_exception_handler(Exception, internal_error)
     return app
 
 
