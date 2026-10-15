@@ -33,11 +33,24 @@ _UPDATE_STATUS = text("""
 UPDATE caregiver_links
 SET status = :status,
     revoked_at = :revoked_at,
-    rejected_at = :rejected_at
+    rejected_at = :rejected_at,
+    sharing_enabled = CASE WHEN :status = 'revoked' THEN false ELSE sharing_enabled END
 WHERE id = :id
 RETURNING id, patient_user_id, family_user_id, status, sharing_enabled,
           linked_at, revoked_at, rejected_at
 """)
+
+_REVOKE_LINK = text("""
+UPDATE caregiver_links
+SET status = 'revoked',
+    revoked_at = COALESCE(revoked_at, :revoked_at),
+    sharing_enabled = false
+WHERE id = :id
+  AND (patient_user_id = :caller_id OR family_user_id = :caller_id)
+RETURNING id, patient_user_id, family_user_id, status, sharing_enabled,
+          linked_at, revoked_at, rejected_at
+""")
+
 
 
 class SqlLinks:
@@ -82,6 +95,25 @@ class SqlLinks:
             },
         ).one()
         return _record(row)
+
+    def revoke(
+        self,
+        uow: UnitOfWork,
+        *,
+        link_id: int,
+        caller_id: UUID,
+        now: datetime,
+    ) -> FamilyLink | None:
+        row = uow.connection.execute(
+            _REVOKE_LINK,
+            {
+                "id": link_id,
+                "caller_id": caller_id,
+                "revoked_at": now,
+            },
+        ).first()
+        return None if row is None else _record(row)
+
 
     def has_active_sharing_link(self, uow: UnitOfWork, patient_id: UUID, family_id: UUID) -> bool:
         return (

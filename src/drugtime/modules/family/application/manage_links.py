@@ -9,7 +9,7 @@ from drugtime.modules.family.domain.link import (
     pending_link,
     transition_link,
 )
-from drugtime.shared.errors import NotFound
+from drugtime.shared.errors import Forbidden, NotFound
 from drugtime.shared.uow import UnitOfWork
 
 
@@ -29,12 +29,40 @@ def approve_link(uow: UnitOfWork, *, link_id: int, now: datetime, links: Links) 
     )
 
 
-def revoke_link(uow: UnitOfWork, *, link_id: int, now: datetime, links: Links) -> FamilyLink:
-    link = _get_link(uow, links, link_id)
+def revoke_link(
+    uow: UnitOfWork,
+    *,
+    link_id: int,
+    caller_id: UUID | None = None,
+    now: datetime,
+    links: Links,
+) -> FamilyLink:
+    link = links.get(uow, link_id)
+    if link is None:
+        raise Forbidden("khong_co_quyen")
+
+    if caller_id is not None:
+        if caller_id != link.patient_user_id and caller_id != link.family_user_id:
+            raise Forbidden("khong_co_quyen")
+
+    # Idempotent: nếu link đã revoked trước đó thì giữ nguyên mốc thời gian ban đầu, không ghi đè
+    if link.status is LinkStatus.REVOKED:
+        return link
+
     updated = transition_link(link, LinkStatus.REVOKED, now=now)
+    if hasattr(links, "revoke"):
+        persisted = links.revoke(
+            uow,
+            link_id=link_id,
+            caller_id=caller_id or link.patient_user_id,
+            now=now,
+        )
+        if persisted is not None:
+            return persisted
     return links.update_status(
         uow, link_id, updated.status, updated.revoked_at, updated.rejected_at
     )
+
 
 
 def reject_link(uow: UnitOfWork, *, link_id: int, now: datetime, links: Links) -> FamilyLink:

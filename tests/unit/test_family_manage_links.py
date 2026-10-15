@@ -10,6 +10,7 @@ from drugtime.modules.family.application.manage_links import (
     revoke_link,
 )
 from drugtime.modules.family.domain.link import FamilyLink, FamilyLinkError, LinkStatus
+from drugtime.shared.errors import Forbidden, NotFound
 
 
 class FakeLinks:
@@ -46,12 +47,13 @@ class FakeLinks:
 
     def update_status(self, uow, link_id, status, revoked_at, rejected_at):
         link = self.links[link_id]
+        sharing_enabled = False if status == LinkStatus.REVOKED else link.sharing_enabled
         updated = FamilyLink(
             id=link.id,
             patient_user_id=link.patient_user_id,
             family_user_id=link.family_user_id,
             status=status,
-            sharing_enabled=link.sharing_enabled,
+            sharing_enabled=sharing_enabled,
             linked_at=link.linked_at,
             revoked_at=revoked_at,
             rejected_at=rejected_at,
@@ -60,7 +62,35 @@ class FakeLinks:
         self.updated.append(updated)
         return updated
 
+    def revoke(self, uow, *, link_id, caller_id, now):
+        link = self.links.get(link_id)
+        if link is None:
+            return None
+        if caller_id != link.patient_user_id and caller_id != link.family_user_id:
+            return None
+        updated = FamilyLink(
+            id=link.id,
+            patient_user_id=link.patient_user_id,
+            family_user_id=link.family_user_id,
+            status=LinkStatus.REVOKED,
+            sharing_enabled=False,
+            linked_at=link.linked_at,
+            revoked_at=link.revoked_at or now,
+            rejected_at=link.rejected_at,
+        )
+        self.links[link_id] = updated
+        self.updated.append(updated)
+        return updated
+
     def has_active_sharing_link(self, uow, patient_id, family_id):
+        for link in self.links.values():
+            if (
+                link.patient_user_id == patient_id
+                and link.family_user_id == family_id
+                and link.status == LinkStatus.ACTIVE
+                and link.sharing_enabled
+            ):
+                return True
         return False
 
     def sharing_family_ids(self, uow, patient_id):
@@ -68,6 +98,7 @@ class FakeLinks:
 
     def erase(self, uow, user_id):
         pass
+
 
 
 def test_create_link_request_creates_pending_for_new_pair__AC1():
@@ -146,14 +177,147 @@ def test_approve_link_updates_pending_to_active__AC7():
 
 def test_revoke_link_updates_active_to_revoked__AC8():
     now = datetime(2026, 10, 7, tzinfo=UTC)
-    link = FamilyLink(1, uuid4(), uuid4(), LinkStatus.ACTIVE)
+    patient_id = uuid4()
+    family_id = uuid4()
+    link = FamilyLink(1, patient_id, family_id, LinkStatus.ACTIVE, sharing_enabled=True)
     links = FakeLinks([link])
 
-    result = revoke_link(object(), link_id=1, now=now, links=links)
+    result = revoke_link(object(), link_id=1, caller_id=patient_id, now=now, links=links)
 
     assert result.status is LinkStatus.REVOKED
+    assert result.sharing_enabled is False
     assert result.revoked_at == now
     assert links.updated == [result]
+
+
+def test_revoke_link_by_family_self_leave():
+    now = datetime(2026, 10, 7, tzinfo=UTC)
+    patient_id = uuid4()
+    family_id = uuid4()
+    link = FamilyLink(1, patient_id, family_id, LinkStatus.ACTIVE, sharing_enabled=True)
+    links = FakeLinks([link])
+
+    result = revoke_link(object(), link_id=1, caller_id=family_id, now=now, links=links)
+
+    assert result.status is LinkStatus.REVOKED
+    assert result.sharing_enabled is False
+    assert result.revoked_at == now
+    assert links.updated == [result]
+
+
+def test_revoke_link_by_stranger_raises_forbidden():
+    now = datetime(2026, 10, 7, tzinfo=UTC)
+    patient_id = uuid4()
+    family_id = uuid4()
+    stranger_id = uuid4()
+    link = FamilyLink(1, patient_id, family_id, LinkStatus.ACTIVE, sharing_enabled=True)
+    links = FakeLinks([link])
+
+    with pytest.raises(Forbidden) as exc:
+        revoke_link(object(), link_id=1, caller_id=stranger_id, now=now, links=links)
+
+    assert exc.value.args[0] == "khong_co_quyen"
+    assert not links.updated
+
+
+def test_revoke_non_existent_link_raises_forbidden():
+    now = datetime(2026, 10, 7, tzinfo=UTC)
+    links = FakeLinks([])
+
+    with pytest.raises(Forbidden) as exc:
+        revoke_link(object(), link_id=999, caller_id=uuid4(), now=now, links=links)
+
+    assert exc.value.args[0] == "khong_co_quyen"
+    assert not links.updated
+
+
+def test_revoke_pending_link_updates_to_revoked():
+    now = datetime(2026, 10, 7, tzinfo=UTC)
+    patient_id = uuid4()
+    family_id = uuid4()
+    link = FamilyLink(1, patient_id, family_id, LinkStatus.PENDING, sharing_enabled=False)
+    links = FakeLinks([link])
+
+    result = revoke_link(object(), link_id=1, caller_id=patient_id, now=now, links=links)
+
+    assert result.status is LinkStatus.REVOKED
+    assert result.sharing_enabled is False
+    assert result.revoked_at == now
+    assert links.updated == [result]
+
+
+def test_revoke_already_revoked_link_idempotent():
+    first_now = datetime(2026, 10, 7, 10, 0, tzinfo=UTC)
+    second_now = datetime(2026, 10, 7, 11, 0, tzinfo=UTC)
+    patient_id = uuid4()
+    family_id = uuid4()
+    link = FamilyLink(
+        1, patient_id, family_id, LinkStatus.REVOKED, sharing_enabled=False, revoked_at=first_now
+    )
+    links = FakeLinks([link])
+
+    result = revoke_link(object(), link_id=1, caller_id=patient_id, now=second_now, links=links)
+
+    assert result.status is LinkStatus.REVOKED
+    assert result.revoked_at == first_now
+    assert links.updated == []
+
+
+def test_after_revoke_access_control_denies_and_logs():
+    now = datetime(2026, 10, 7, tzinfo=UTC)
+    patient_id = uuid4()
+    family_id = uuid4()
+    link = FamilyLink(1, patient_id, family_id, LinkStatus.ACTIVE, sharing_enabled=True)
+    links = FakeLinks([link])
+
+    assert links.has_active_sharing_link(object(), patient_id, family_id) is True
+
+    revoke_link(object(), link_id=1, caller_id=family_id, now=now, links=links)
+
+    assert links.has_active_sharing_link(object(), patient_id, family_id) is False
+
+    from drugtime.modules.access.application.authorize import authorize
+    from drugtime.modules.access.domain.rules import AccessFacts, Action, ActorRole, Scope
+
+    class Facts:
+        def read(self, uow, caller_id, caller_is_admin, patient_id, scope):
+            return AccessFacts(
+                caller_id=caller_id,
+                patient_id=patient_id,
+                caller_is_admin=caller_is_admin,
+                purpose_consent=True,
+                active_sharing_link=links.has_active_sharing_link(uow, patient_id, caller_id),
+                family_sharing_consent=True,
+            )
+
+    class Log:
+        def __init__(self):
+            self.denied = []
+            self.allowed = []
+
+        def append_allowed(self, uow, actor_id, role, patient_id, scope):
+            self.allowed.append((actor_id, role, patient_id, scope))
+
+        def append_denied(self, actor_id, role, patient_id, scope, reason):
+            self.denied.append((actor_id, role, patient_id, scope, reason))
+
+    log = Log()
+    with pytest.raises(Forbidden) as exc:
+        authorize(
+            object(),
+            Facts(),
+            log,
+            caller_id=family_id,
+            caller_is_admin=False,
+            patient_id=patient_id,
+            scope=Scope.MEDICATIONS,
+            action=Action.READ,
+        )
+
+    assert exc.value.args[0] == "khong_co_quyen"
+    assert len(log.denied) == 1
+    assert log.denied[0][1] is ActorRole.NO_ACCESS
+    assert log.denied[0][4] == "khong_co_quyen"
 
 
 def test_reject_link_updates_pending_to_rejected():
@@ -192,10 +356,13 @@ def test_rejected_link_cannot_be_approved_directly():
 
 
 def test_invalid_transition_does_not_write__AC10():
-    link = FamilyLink(1, uuid4(), uuid4(), LinkStatus.PENDING)
+    patient_id = uuid4()
+    link = FamilyLink(1, patient_id, uuid4(), LinkStatus.REJECTED)
     links = FakeLinks([link])
 
     with pytest.raises(FamilyLinkError):
-        revoke_link(object(), link_id=1, now=datetime(2026, 10, 7, tzinfo=UTC), links=links)
+        revoke_link(object(), link_id=1, caller_id=patient_id, now=datetime(2026, 10, 7, tzinfo=UTC), links=links)
 
     assert not links.updated
+
+

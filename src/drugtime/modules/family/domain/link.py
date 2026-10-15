@@ -84,18 +84,21 @@ def transition_link(link: FamilyLink, target: LinkStatus, *, now: datetime) -> F
             revoked_at=None,
             rejected_at=now,
         )
-    if link.status is LinkStatus.ACTIVE and target is LinkStatus.REVOKED:
+    if link.status in (LinkStatus.ACTIVE, LinkStatus.PENDING) and target is LinkStatus.REVOKED:
         return FamilyLink(
             id=link.id,
             patient_user_id=link.patient_user_id,
             family_user_id=link.family_user_id,
             status=LinkStatus.REVOKED,
-            sharing_enabled=link.sharing_enabled,
+            sharing_enabled=False,
             linked_at=link.linked_at,
             revoked_at=now,
             rejected_at=None,
         )
+    if link.status is LinkStatus.REVOKED and target is LinkStatus.REVOKED:
+        return link
     raise FamilyLinkError(
         "invalid_link_transition",
         f"cannot transition family link from {link.status.value} to {target.value}",
     )
+

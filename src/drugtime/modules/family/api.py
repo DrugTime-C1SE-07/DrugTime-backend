@@ -31,8 +31,13 @@ def approve_link(uow: UnitOfWork, link_id: int, now: datetime) -> FamilyLink:
     return manage_links.approve_link(uow, link_id=link_id, now=now, links=SqlLinks())
 
 
-def revoke_link(uow: UnitOfWork, link_id: int, now: datetime) -> FamilyLink:
-    return manage_links.revoke_link(uow, link_id=link_id, now=now, links=SqlLinks())
+def revoke_link(
+    uow: UnitOfWork, link_id: int, now: datetime, *, caller_id: UUID | None = None
+) -> FamilyLink:
+    return manage_links.revoke_link(
+        uow, link_id=link_id, caller_id=caller_id, now=now, links=SqlLinks()
+    )
+
 
 
 def reject_link(uow: UnitOfWork, link_id: int, now: datetime) -> FamilyLink:

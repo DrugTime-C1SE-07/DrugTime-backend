@@ -1,9 +1,17 @@
+import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 from uuid import uuid4
+
+if "sqlalchemy" not in sys.modules:
+    mock_sa = MagicMock()
+    mock_sa.text = lambda sql: sql
+    sys.modules["sqlalchemy"] = mock_sa
 
 from drugtime.modules.family.adapters.outbound.sql_links import SqlLinks
 from drugtime.modules.family.domain.link import FamilyLink, LinkStatus
+
 
 
 class FakeResult:
@@ -143,3 +151,29 @@ def test_sql_erase_deletes_link_code_without_family_column__AC14():
     link_code_sql = [sql for sql, _ in uow.connection.calls if "link_codes" in sql]
     assert link_code_sql == ["DELETE FROM link_codes WHERE patient_user_id = :u"]
     assert all(params == {"u": user_id} for _, params in uow.connection.calls)
+
+
+def test_sql_revoke_executes_coalesce_and_ownership():
+    patient_id = uuid4()
+    now = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
+    uow = FakeUow([_row(patient_id=patient_id, status="revoked", revoked_at=now)])
+
+    result = SqlLinks().revoke(uow, link_id=77, caller_id=patient_id, now=now)
+
+    assert result is not None
+    assert result.status is LinkStatus.REVOKED
+    sql, params = uow.connection.calls[0]
+    assert "COALESCE(revoked_at, :revoked_at)" in sql
+    assert "patient_user_id = :caller_id OR family_user_id = :caller_id" in sql
+    assert params == {"id": 77, "caller_id": patient_id, "revoked_at": now}
+
+
+def test_sql_revoke_returns_none_when_no_match():
+    patient_id = uuid4()
+    now = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
+    uow = FakeUow([None])
+
+    result = SqlLinks().revoke(uow, link_id=999, caller_id=patient_id, now=now)
+
+    assert result is None
+
