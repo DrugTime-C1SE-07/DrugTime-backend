@@ -2,6 +2,7 @@ from datetime import date
 from typing import Protocol
 from uuid import UUID
 
+from drugtime.modules.identity.domain.profile import ProfileRecord
 from drugtime.modules.identity.domain.user import UserRecord
 
 
@@ -17,6 +18,7 @@ class AuthProvider(Protocol):
 
 
 class UserRepository(Protocol):
+    def get_profile(self, user_id: UUID) -> ProfileRecord | None: ...
     def get(self, user_id: UUID) -> UserRecord | None: ...
     def create_minimal(self, user_id: UUID, *, phone: str | None, email: str | None) -> None: ...
     def update_profile(

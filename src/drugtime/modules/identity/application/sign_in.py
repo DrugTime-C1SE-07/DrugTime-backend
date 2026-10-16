@@ -5,12 +5,12 @@ from uuid import UUID
 import jwt
 
 from drugtime.modules.identity.application.ports import AuthProvider, UserRepository
+from drugtime.modules.identity.domain.profile import validate_profile
 from drugtime.modules.identity.domain.user import AppSession, SessionType
 from drugtime.shared.config import get_settings
 from drugtime.shared.errors import DomainError, Forbidden, Unauthorized
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_GENDERS = {"nam", "nu", "khac", "male", "female", "other"}
 
 
 def request_mobile_otp(auth: AuthProvider, *, phone: str | None, email: str | None) -> None:
@@ -206,13 +206,6 @@ def _normalize_phone(value: str | None) -> str:
     return phone
 
 
-def _validate_gender(value: str) -> str:
-    gender = _validate_required_text(value, "invalid_gender").lower()
-    if gender not in _GENDERS:
-        raise DomainError("invalid_gender")
-    return gender
-
-
 def _validate_profile(
     *,
     ho_ten: str,
@@ -220,12 +213,5 @@ def _validate_profile(
     gioi_tinh: str,
     now: datetime,
 ) -> tuple[str, str]:
-    full_name = _validate_required_text(ho_ten, "invalid_full_name")
-    gender = _validate_gender(gioi_tinh)
-    _validate_birth_date(ngay_sinh, now)
-    return full_name, gender
-
-
-def _validate_birth_date(value: date, now: datetime) -> None:
-    if value > now.date():
-        raise DomainError("invalid_date_of_birth")
+    profile = validate_profile(ho_ten, ngay_sinh, gioi_tinh, at=now)
+    return profile.full_name, profile.gender

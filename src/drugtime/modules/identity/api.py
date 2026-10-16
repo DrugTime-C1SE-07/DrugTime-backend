@@ -1,5 +1,6 @@
 """Giao diện công khai của identity. Module khác chỉ import file này."""
 
+from datetime import date, datetime
 from uuid import UUID
 
 from drugtime.modules.identity.adapters.inbound.dependencies import current_user, require_admin
@@ -7,10 +8,15 @@ from drugtime.modules.identity.adapters.inbound.http import router
 from drugtime.modules.identity.adapters.outbound.sql_users import SqlUsers
 from drugtime.modules.identity.adapters.outbound.supabase_auth import SupabaseAuth
 from drugtime.modules.identity.application import erase_user as _erase
+from drugtime.modules.identity.application import profile as _profile
+from drugtime.modules.identity.domain.profile import ProfileRecord
 from drugtime.modules.identity.domain.user import CurrentUser
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
+    "ProfileRecord",
+    "get_profile",
+    "update_profile",
     "CurrentUser",
     "account_remover",
     "android_tokens",
@@ -26,6 +32,29 @@ __all__ = [
 def user_exists(uow: UnitOfWork, user_id: UUID) -> bool:
     """Có dòng users với id này (kể cả tài khoản đã xoá dữ liệu)."""
     return SqlUsers(uow).get(user_id) is not None
+
+
+def get_profile(uow: UnitOfWork, user_id: UUID) -> ProfileRecord:
+    return _profile.get_profile(SqlUsers(uow), user_id)
+
+
+def update_profile(
+    uow: UnitOfWork,
+    user_id: UUID,
+    *,
+    full_name: str,
+    date_of_birth: date,
+    gender: str,
+    at: datetime,
+) -> None:
+    _profile.update_profile(
+        SqlUsers(uow),
+        user_id,
+        full_name=full_name,
+        date_of_birth=date_of_birth,
+        gender=gender,
+        at=at,
+    )
 
 
 def user_emails(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str | None]:

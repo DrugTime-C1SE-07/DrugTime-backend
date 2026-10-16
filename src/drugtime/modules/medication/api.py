@@ -10,6 +10,7 @@ from drugtime.modules.medication.adapters.inbound.http import (
     set_recorded_doses,
 )
 from drugtime.modules.medication.adapters.inbound.http import router as _medications_router
+from drugtime.modules.medication.adapters.inbound.profile_http import router as _profile_router
 from drugtime.modules.medication.adapters.outbound.sql_medication import SqlMedication
 from drugtime.modules.medication.application.ports import RecordedDoses
 from drugtime.modules.medication.domain.schedule import DoseOccurrence
@@ -31,6 +32,7 @@ __all__ = [
 router = APIRouter()
 router.include_router(_medications_router)
 router.include_router(patients_router)
+router.include_router(_profile_router)
 
 
 def configure(*, recorded_doses: RecordedDoses) -> None:

@@ -3,18 +3,26 @@
 from collections.abc import Callable
 from datetime import datetime
 
-from drugtime.modules.catalog.adapters.inbound.http import router
+from fastapi import APIRouter
+
+from drugtime.modules.catalog.adapters.inbound.conditions_http import router as _conditions_router
+from drugtime.modules.catalog.adapters.inbound.http import router as _catalog_router
 from drugtime.modules.catalog.adapters.outbound.job_queue import enqueue_sync
 from drugtime.modules.catalog.adapters.outbound.sql_active_ingredients import SqlActiveIngredients
 from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
+from drugtime.modules.catalog.adapters.outbound.sql_conditions import SqlConditions
 from drugtime.modules.catalog.application.list_active_ingredients import normalize_query
 from drugtime.modules.catalog.application.scheduling import is_sync_due
+from drugtime.modules.catalog.domain.condition import Condition
 from drugtime.modules.catalog.domain.medication import CatalogMedication
 from drugtime.modules.catalog.repository import CatalogSyncRepository
 from drugtime.shared.clock import now
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
+    "Condition",
+    "get_condition",
+    "condition_names",
     "CatalogMedication",
     "existing_ingredient_ids",
     "get_medication",
@@ -24,6 +32,18 @@ __all__ = [
     "router",
     "sync_if_due",
 ]
+
+router = APIRouter()
+router.include_router(_catalog_router)
+router.include_router(_conditions_router)
+
+
+def get_condition(uow: UnitOfWork, condition_id: int) -> Condition | None:
+    return SqlConditions().get(uow, condition_id)
+
+
+def condition_names(uow: UnitOfWork, ids: list[int]) -> dict[int, str]:
+    return SqlConditions().names(uow, ids)
 
 
 def get_medication(
