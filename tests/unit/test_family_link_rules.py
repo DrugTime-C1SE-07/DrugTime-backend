@@ -107,3 +107,14 @@ def test_rejected_cannot_be_approved_directly():
         transition_link(link, LinkStatus.ACTIVE, now=datetime(2026, 10, 8, tzinfo=UTC))
 
     assert exc.value.code == "invalid_link_transition"
+
+
+@pytest.mark.parametrize("target", [LinkStatus.ACTIVE, LinkStatus.REJECTED])
+def test_pending_decisions_clear_sharing_but_preserve_request_time(target):
+    now = datetime(2026, 10, 15, tzinfo=UTC)
+    requested = datetime(2026, 10, 14, tzinfo=UTC)
+    link = FamilyLink(1, uuid4(), uuid4(), LinkStatus.PENDING, True, requested)
+    result = transition_link(link, target, now=now)
+    assert result.sharing_enabled is False
+    assert result.linked_at == requested
+    assert result.rejected_at == (now if target is LinkStatus.REJECTED else None)
