@@ -67,3 +67,17 @@ def test_sql_insert_if_absent_returns_none_on_code_collision__AC7():
 
     assert SqlLinkCodes().insert_if_absent(uow, uuid4(), "TAKEN23456") is None
     assert len(uow.connection.calls) == 2
+
+
+def test_find_owner__AC4():
+    owner = uuid4()
+    uow = FakeUow([owner])
+
+    assert SqlLinkCodes().find_owner(uow, "K7M2Q9XAR4") == owner
+    sql, params = uow.connection.calls[0]
+    assert sql == "SELECT patient_user_id FROM link_codes WHERE code = :code"
+    assert params == {"code": "K7M2Q9XAR4"}
+
+
+def test_find_owner_none_for_unknown_code__AC4():
+    assert SqlLinkCodes().find_owner(FakeUow([None]), "K7M2Q9XAR4") is None

@@ -47,6 +47,16 @@ class FakeLinkCodes:
         return code
 
 
+class FakeConsents:
+    def __init__(self, granted=True):
+        self.granted = granted
+        self.calls = 0
+
+    def has_family_sharing(self, uow, user_id):
+        self.calls += 1
+        return self.granted
+
+
 def _sequence(*codes):
     it = iter(codes)
     return lambda: next(it)
@@ -100,7 +110,12 @@ def test_creates_code_when_absent__AC1():
     codes = FakeLinkCodes()
 
     result = get_link_code(
-        None, user_id=user, is_admin=False, codes=codes, generate=_sequence("ABCDEFGHJK")
+        None,
+        user_id=user,
+        is_admin=False,
+        codes=codes,
+        consents=FakeConsents(),
+        generate=_sequence("ABCDEFGHJK"),
     )
 
     assert (result.patient_user_id, result.code) == (user, "ABCDEFGHJK")
@@ -113,7 +128,9 @@ def test_returns_existing_code_without_insert__AC2():
     codes = FakeLinkCodes(stored={user: "MNPQRSTUVW"})
 
     for _ in range(3):
-        result = get_link_code(None, user_id=user, is_admin=False, codes=codes)
+        result = get_link_code(
+            None, user_id=user, is_admin=False, codes=codes, consents=FakeConsents()
+        )
         assert result.code == "MNPQRSTUVW"
     assert codes.inserts == []
 
@@ -123,7 +140,12 @@ def test_returns_concurrent_winner_code__AC3():
     codes = FakeLinkCodes(racer="WINNER2345")
 
     result = get_link_code(
-        None, user_id=user, is_admin=False, codes=codes, generate=_sequence("LOSER23456")
+        None,
+        user_id=user,
+        is_admin=False,
+        codes=codes,
+        consents=FakeConsents(),
+        generate=_sequence("LOSER23456"),
     )
 
     assert result.code == "WINNER2345"
@@ -139,6 +161,7 @@ def test_retries_on_code_collision__AC7():
         user_id=user,
         is_admin=False,
         codes=codes,
+        consents=FakeConsents(),
         generate=_sequence("TAKEN23456", "FRESH23456"),
     )
 
@@ -152,7 +175,12 @@ def test_gives_up_after_max_attempts_503__AC7():
 
     with pytest.raises(ServiceUnavailable) as exc:
         get_link_code(
-            None, user_id=user, is_admin=False, codes=codes, generate=lambda: "TAKEN23456"
+            None,
+            user_id=user,
+            is_admin=False,
+            codes=codes,
+            consents=FakeConsents(),
+            generate=lambda: "TAKEN23456",
         )
 
     assert str(exc.value) == "link_code_unavailable"
@@ -164,7 +192,7 @@ def test_admin_forbidden_before_any_query__AC9():
     codes = FakeLinkCodes()
 
     with pytest.raises(Forbidden) as exc:
-        get_link_code(None, user_id=uuid4(), is_admin=True, codes=codes)
+        get_link_code(None, user_id=uuid4(), is_admin=True, codes=codes, consents=FakeConsents())
 
     assert str(exc.value) == "khong_co_quyen"
     assert codes.finds == 0 and codes.inserts == []
@@ -175,7 +203,48 @@ def test_errors_do_not_contain_code__AC10():
 
     with pytest.raises(ServiceUnavailable) as exc:
         get_link_code(
-            None, user_id=uuid4(), is_admin=False, codes=codes, generate=lambda: "SECRET2345"
+            None,
+            user_id=uuid4(),
+            is_admin=False,
+            codes=codes,
+            consents=FakeConsents(),
+            generate=lambda: "SECRET2345",
         )
 
     assert "SECRET2345" not in str(exc.value)
+
+
+# --- task 3.13: BS-05 ---------------------------------------------------------------------
+
+
+def test_missing_family_sharing_forbidden__AC32():
+    codes = FakeLinkCodes(stored={})
+    consents = FakeConsents(granted=False)
+
+    with pytest.raises(Forbidden) as exc:
+        get_link_code(None, user_id=uuid4(), is_admin=False, codes=codes, consents=consents)
+
+    assert str(exc.value) == "family_sharing_consent_required"
+    assert codes.finds == 0 and codes.inserts == []
+
+
+def test_existing_code_hidden_without_family_sharing__AC32():
+    user = uuid4()
+    codes = FakeLinkCodes(stored={user: "MNPQRSTUVW"})
+
+    with pytest.raises(Forbidden):
+        get_link_code(None, user_id=user, is_admin=False, codes=codes, consents=FakeConsents(False))
+
+    assert codes.finds == 0
+
+
+def test_admin_checked_before_consent__AC32():
+    consents = FakeConsents(granted=False)
+
+    with pytest.raises(Forbidden) as exc:
+        get_link_code(
+            None, user_id=uuid4(), is_admin=True, codes=FakeLinkCodes(), consents=consents
+        )
+
+    assert str(exc.value) == "khong_co_quyen"
+    assert consents.calls == 0
