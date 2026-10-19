@@ -1,10 +1,11 @@
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from drugtime.modules.identity.domain.profile import ProfileRecord
 from drugtime.modules.identity.domain.user import UserRecord
-from drugtime.shared.errors import Unauthorized
+from drugtime.shared.errors import Conflict, Unauthorized
 from drugtime.shared.uow import UnitOfWork
 
 
@@ -41,21 +42,50 @@ class SqlUsers:
     def get_profile(self, user_id: UUID) -> ProfileRecord | None:
         row = self._c.execute(
             text(
-                "SELECT full_name, date_of_birth, gender FROM users "
+                "SELECT full_name, date_of_birth, gender, email FROM users "
                 "WHERE id = :id AND erased_at IS NULL"
             ),
             {"id": user_id},
         ).first()
         return None if row is None else ProfileRecord(*row)
 
-    def update_profile(self, user_id: UUID, *, full_name: str, date_of_birth, gender: str) -> None:
-        result = self._c.execute(
-            text(
-                "UPDATE users SET full_name = :full_name, date_of_birth = :dob, gender = :gender "
-                "WHERE id = :id AND erased_at IS NULL"
-            ),
-            {"full_name": full_name, "dob": date_of_birth, "gender": gender, "id": user_id},
-        )
+    def update_profile(
+        self,
+        user_id: UUID,
+        *,
+        full_name: str,
+        date_of_birth,
+        gender: str,
+        email: str | None = None,
+    ) -> None:
+        try:
+            if email is None:
+                statement = text(
+                    "UPDATE users SET full_name = :full_name, date_of_birth = :dob, "
+                    "gender = :gender WHERE id = :id AND erased_at IS NULL"
+                )
+            else:
+                statement = text(
+                    "UPDATE users SET full_name = :full_name, date_of_birth = :dob, "
+                    "gender = :gender, email = :email "
+                    "WHERE id = :id AND erased_at IS NULL"
+                )
+            result = self._c.execute(
+                statement,
+                {
+                    "full_name": full_name,
+                    "dob": date_of_birth,
+                    "gender": gender,
+                    "id": user_id,
+                    **({"email": email} if email is not None else {}),
+                },
+            )
+        except IntegrityError as exc:
+            if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == (
+                "users_email_lower_uq"
+            ):
+                raise Conflict("email_change_unavailable") from exc
+            raise
         if result.rowcount != 1:
             raise Unauthorized("Account does not exist or has been deleted")
 

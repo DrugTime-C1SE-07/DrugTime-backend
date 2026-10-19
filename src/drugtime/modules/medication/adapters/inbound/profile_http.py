@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -29,7 +30,9 @@ from drugtime.modules.medication.application.manage_user_conditions import (
 )
 from drugtime.modules.medication.domain.user_condition import NewUserCondition
 from drugtime.shared.db import unit_of_work
-from drugtime.shared.errors import DomainError
+from drugtime.shared.errors import DomainError, ServiceUnavailable
+
+_LOGGER = logging.getLogger(__name__)
 
 # Authentication remains in identity.current_user; this declares its bearer contract.
 router = APIRouter(
@@ -44,6 +47,11 @@ _CONDITIONS = SqlUserConditions()
 _CATALOG = ConditionCatalogAdapter()
 _ERRORS = {code: {"model": ProfileError} for code in (401, 403, 500)}
 _ERRORS[422] = {"model": ProfileValidationError}
+_PROFILE_WRITE_ERRORS = {
+    **_ERRORS,
+    409: {"model": ProfileError},
+    503: {"model": ProfileError},
+}
 _LINK_ERRORS = {**_ERRORS, 404: {"model": ProfileError}}
 LinkId = Annotated[int, Path(ge=1, le=9223372036854775807, json_schema_extra={"format": "int64"})]
 _NO_STORE = {"headers": {"Cache-Control": {"schema": {"type": "string", "const": "no-store"}}}}
@@ -82,26 +90,45 @@ def read_profile(request: Request, user: identity.CurrentUser = Depends(identity
     return response
 
 
-@router.put("/profile", status_code=204, responses=_ERRORS, operation_id="updateOwnProfile")
+@router.put(
+    "/profile",
+    status_code=204,
+    responses=_PROFILE_WRITE_ERRORS,
+    operation_id="updateOwnProfile",
+)
 def put_profile(
     body: ProfileUpdateRequest,
     request: Request,
     user: identity.CurrentUser = Depends(identity.current_user),
 ):
     _self_only(request)
-    with unit_of_work() as uow:
-        update_profile(
-            uow,
-            user_id=user.id,
-            is_admin=user.is_admin,
-            access=_ACCESS,
-            profiles=_PROFILES,
-            full_name=body.full_name,
-            date_of_birth=body.date_of_birth,
-            gender=body.gender,
-            at=datetime.now(UTC),
-        )
-        response = Response(status_code=204)
+    change = None
+    try:
+        with unit_of_work() as uow:
+            change = update_profile(
+                uow,
+                user_id=user.id,
+                is_admin=user.is_admin,
+                access=_ACCESS,
+                profiles=_PROFILES,
+                full_name=body.full_name,
+                date_of_birth=body.date_of_birth,
+                gender=body.gender,
+                email=body.email,
+                at=datetime.now(UTC),
+            )
+            response = Response(status_code=204)
+    except Exception:
+        if change is not None and change[1]:
+            try:
+                identity.restore_profile_email(user.id, change[0])
+            except Exception as rollback_error:
+                _LOGGER.error(
+                    "Could not restore Auth email after profile transaction failure for user %s",
+                    user.id,
+                )
+                raise ServiceUnavailable("auth_provider_unavailable") from rollback_error
+        raise
     return response
 
 
