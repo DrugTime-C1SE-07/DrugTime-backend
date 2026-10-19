@@ -22,8 +22,8 @@ from drugtime.shared.uow import UnitOfWork
 def create_link_request(
     uow: UnitOfWork, *, patient_id: UUID, family_id: UUID, links: Links
 ) -> FamilyLink:
-    existing = links.find_by_pair(uow, patient_id, family_id)
-    ensure_can_create_link(patient_id, family_id, existing)
+    open_link = links.find_open_by_pair(uow, patient_id, family_id)
+    ensure_can_create_link(patient_id, family_id, open_link)
     return links.create(uow, pending_link(patient_id, family_id))
 
 

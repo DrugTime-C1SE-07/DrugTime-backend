@@ -23,9 +23,13 @@ class FakeLinks:
         self.updated = []
         self.next_id = 100
 
-    def find_by_pair(self, uow, patient_id, family_id):
+    def find_open_by_pair(self, uow, patient_id, family_id):
         for link in self.links.values():
-            if link.patient_user_id == patient_id and link.family_user_id == family_id:
+            if (
+                link.patient_user_id == patient_id
+                and link.family_user_id == family_id
+                and link.status in (LinkStatus.PENDING, LinkStatus.ACTIVE)
+            ):
                 return link
         return None
 
@@ -130,14 +134,31 @@ def test_create_link_request_rejects_self_link_without_writing__AC4():
 def test_create_link_request_rejects_pending_or_active_duplicate__AC5():
     patient_id = uuid4()
     family_id = uuid4()
-    for status in (LinkStatus.PENDING, LinkStatus.ACTIVE):
+    expected = {LinkStatus.PENDING: "link_request_pending", LinkStatus.ACTIVE: "already_linked"}
+    for status, detail in expected.items():
         links = FakeLinks([FamilyLink(1, patient_id, family_id, status)])
 
-        with pytest.raises(FamilyLinkError) as exc:
+        with pytest.raises(Conflict) as exc:
             create_link_request(object(), patient_id=patient_id, family_id=family_id, links=links)
 
-        assert exc.value.code == "link_already_exists"
+        assert str(exc.value) == detail
         assert not links.created
+
+
+def test_create_link_request_reopens_rejected_or_revoked_pair__AC9():
+    patient_id = uuid4()
+    family_id = uuid4()
+    for status in (LinkStatus.REJECTED, LinkStatus.REVOKED):
+        old = FamilyLink(1, patient_id, family_id, status, sharing_enabled=True)
+        links = FakeLinks([old])
+
+        result = create_link_request(
+            object(), patient_id=patient_id, family_id=family_id, links=links
+        )
+
+        assert result.status is LinkStatus.PENDING
+        assert result.sharing_enabled is False
+        assert links.links[1] == old
 
 
 def test_approve_link_updates_pending_to_active__AC7():

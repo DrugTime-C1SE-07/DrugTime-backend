@@ -19,7 +19,14 @@ class Conflict(Exception):
 
 
 class TooManyRequests(Exception):
-    """Gửi quá nhanh hoặc quá nhiều lần (HTTP 429)."""
+    """Gửi quá nhanh hoặc quá nhiều lần (HTTP 429).
+
+    `retry_after`: số giây còn phải chờ; có thì response kèm header `Retry-After`.
+    """
+
+    def __init__(self, detail: str, retry_after: int | None = None) -> None:
+        super().__init__(detail)
+        self.retry_after = retry_after
 
 
 class ServiceUnavailable(Exception):
