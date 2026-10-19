@@ -1,6 +1,6 @@
 """Unit test cho Admin Medication Catalog CRUD API (PB04, Task 2.13)."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from drugtime.main import create_app
 from drugtime.modules.identity import api as identity
 from drugtime.shared.db import get_uow
-from drugtime.shared.errors import NotFound
 
 
 def _fake_uow():
@@ -80,7 +79,8 @@ def test_admin_endpoints_reject_non_admin_403(non_admin_client, method, path, bo
 # --- 2. Kiểm tra Pydantic Validation (422) ---
 
 
-def test_create_validation_source_pair_enforced(admin_client):
+@patch("drugtime.modules.catalog.application.service.SqlCatalog")
+def test_create_validation_source_pair_enforced(mock_sql_cls, admin_client):
     # source có nhưng source_ref là None -> 422
     r = admin_client.post(
         "/admin/medications",
@@ -94,14 +94,17 @@ def test_create_validation_source_pair_enforced(admin_client):
         json={"name": "Paracetamol 500mg", "source": None, "source_ref": "REF-001"},
     )
     assert r.status_code == 422
+    mock_sql_cls.assert_not_called()
 
 
-def test_create_validation_empty_name_rejected(admin_client):
+@patch("drugtime.modules.catalog.application.service.SqlCatalog")
+def test_create_validation_empty_name_rejected(mock_sql_cls, admin_client):
     r = admin_client.post(
         "/admin/medications",
         json={"name": ""},
     )
     assert r.status_code == 422
+    mock_sql_cls.assert_not_called()
 
 
 # --- 3. Kiểm tra các luồng CRUD thành công & 404 ---
@@ -175,6 +178,7 @@ def test_list_medications_pagination_and_query(mock_sql_cls, admin_client):
     assert data["total"] == 1
     assert len(data["items"]) == 1
     assert data["items"][0]["name"] == "Amlodipin 5mg"
+    mock_repo.list_active.assert_called_once_with(ANY, "amlo", 0, 10)
 
 
 @patch("drugtime.modules.catalog.application.service.SqlCatalog")
@@ -236,6 +240,18 @@ def test_update_medication_success(mock_sql_cls, admin_client):
 
 
 @patch("drugtime.modules.catalog.application.service.SqlCatalog")
+def test_update_medication_not_found(mock_sql_cls, admin_client):
+    mock_repo = MagicMock()
+    mock_sql_cls.return_value = mock_repo
+    mock_repo.update.return_value = None
+
+    r = admin_client.patch("/admin/medications/999", json={"name": "Unknown"})
+
+    assert r.status_code == 404
+    assert r.json() == {"detail": "Medication not found"}
+
+
+@patch("drugtime.modules.catalog.application.service.SqlCatalog")
 def test_delete_medication_soft_delete(mock_sql_cls, admin_client):
     mock_repo = MagicMock()
     mock_sql_cls.return_value = mock_repo
@@ -244,8 +260,10 @@ def test_delete_medication_soft_delete(mock_sql_cls, admin_client):
     r = admin_client.delete("/admin/medications/42")
     assert r.status_code == 204
     assert not r.content
+    mock_repo.soft_delete.assert_called_once_with(ANY, 42)
 
     # Trường hợp đã xóa hoặc không tìm thấy:
     mock_repo.soft_delete.return_value = False
     r_not_found = admin_client.delete("/admin/medications/42")
     assert r_not_found.status_code == 404
+    assert r_not_found.json() == {"detail": "Medication not found"}
