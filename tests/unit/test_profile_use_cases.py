@@ -29,7 +29,7 @@ def deps():
 
 def test_profile_nullable_and_batched_names(deps):
     profiles = Mock()
-    profiles.get.return_value = PersonalProfile(None, None, None)
+    profiles.get.return_value = PersonalProfile(None, None, None, "current@example.com")
     deps["conditions"].list.return_value = [
         UserConditionRecord(2, 3, None, "A"),
         UserConditionRecord(5, 7, "", None),
@@ -37,6 +37,7 @@ def test_profile_nullable_and_batched_names(deps):
     deps["catalog"].names.return_value = {3: "Diabetes", 7: "Hypertension"}
     result = get_profile(**deps, profiles=profiles)
     assert result.full_name is None
+    assert result.email == "current@example.com"
     assert [link.id for link in result.conditions] == [2, 5]
     deps["catalog"].names.assert_called_once_with(deps["uow"], [3, 7])
     deps["access"].authorize_read.assert_called_once_with(deps["uow"], USER, False)

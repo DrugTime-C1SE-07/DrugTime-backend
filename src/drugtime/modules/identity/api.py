@@ -15,8 +15,10 @@ from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
     "ProfileRecord",
+    "ProfileUpdateResult",
     "get_profile",
     "update_profile",
+    "restore_profile_email",
     "CurrentUser",
     "account_remover",
     "android_tokens",
@@ -45,16 +47,27 @@ def update_profile(
     full_name: str,
     date_of_birth: date,
     gender: str,
+    email: str | None = None,
     at: datetime,
-) -> None:
-    _profile.update_profile(
+) -> _profile.ProfileUpdateResult:
+    return _profile.update_profile(
         SqlUsers(uow),
+        SupabaseAuth(),
         user_id,
         full_name=full_name,
         date_of_birth=date_of_birth,
         gender=gender,
+        email=email,
         at=at,
     )
+
+
+ProfileUpdateResult = _profile.ProfileUpdateResult
+
+
+def restore_profile_email(user_id: UUID, email: str | None) -> None:
+    """Compensate an Auth email update when the profile DB transaction fails."""
+    SupabaseAuth().update_email(user_id, email)
 
 
 def user_emails(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str | None]:
