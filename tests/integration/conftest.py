@@ -39,7 +39,7 @@ def _api_url() -> str:
 def admin_engine():
     if make_url(ADMIN_URL).host not in _LOCAL_HOSTS:
         pytest.exit("Integration tests only run against a local database", returncode=2)
-    engine = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
+    engine = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 2})
     try:
         with engine.connect() as c:
             # api_role được tạo không có mật khẩu; đặt mật khẩu cho DB local để app đăng nhập.
