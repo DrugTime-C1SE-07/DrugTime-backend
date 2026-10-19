@@ -3,7 +3,7 @@ from uuid import UUID
 import httpx
 
 from drugtime.shared.config import get_settings
-from drugtime.shared.errors import ServiceUnavailable, TooManyRequests, Unauthorized
+from drugtime.shared.errors import Conflict, ServiceUnavailable, TooManyRequests, Unauthorized
 
 _TIMEOUT = 10
 _CREDENTIAL_ERRORS = {400, 401, 403, 404, 422}
@@ -81,6 +81,26 @@ class SupabaseAuth:
         r = self._send("POST", f"{self._base}/verify", headers={"apikey": self._anon}, json=body)
         _translate(r, credentials=True)
         return r.json()
+
+    def update_email(self, user_id: UUID, email: str | None) -> None:
+        """Update the login email for one Auth user through the server-only Admin API."""
+        if not self._service:
+            raise ServiceUnavailable("auth_provider_unavailable")
+        headers = {"apikey": self._service, "Authorization": f"Bearer {self._service}"}
+        r = self._send(
+            "PUT",
+            f"{self._base}/admin/users/{user_id}",
+            headers=headers,
+            json={"email": email, "email_confirm": email is not None},
+        )
+        if r.status_code in {409, 422}:
+            try:
+                error_code = r.json().get("code")
+            except (ValueError, AttributeError):
+                error_code = None
+            if error_code in {"email_exists", "user_already_exists"}:
+                raise Conflict("email_change_unavailable")
+        _translate(r, credentials=False)
 
     def delete_account(self, user_id: UUID) -> None:
         headers = {"apikey": self._service, "Authorization": f"Bearer {self._service}"}

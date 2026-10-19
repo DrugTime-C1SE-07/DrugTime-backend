@@ -243,3 +243,44 @@ def test_erase_deletes_attempts__AC19():
     sqls = [" ".join(sql.split()) for sql, _ in uow.connection.calls]
     assert "DELETE FROM link_request_attempts WHERE family_user_id = :u" in sqls
     assert all(params == {"u": user_id} for _, params in uow.connection.calls)
+
+
+def test_sharing_queries_require_evidence_for_exact_link_patient_and_family():
+    uow = FakeUow([None, []])
+    patient, family = uuid4(), uuid4()
+    assert SqlLinks().has_active_sharing_link(uow, patient, family) is False
+    assert SqlLinks().sharing_family_ids(uow, patient) == []
+    for sql, _ in uow.connection.calls:
+        assert "EXISTS" in sql and "family_link_consent_confirmations" in sql
+        assert "evidence.link_id = caregiver_links.id" in sql
+        assert "evidence.patient_user_id = caregiver_links.patient_user_id" in sql
+        assert "evidence.family_user_id = caregiver_links.family_user_id" in sql
+        assert "evidence.purpose = 'family_sharing'" in sql
+        assert "document_version" not in sql
+
+
+def test_get_decision_link_holds_update_lock():
+    uow = FakeUow([_row()])
+    assert SqlLinks().get_for_update(uow, 77).id == 77
+    assert "FOR UPDATE" in uow.connection.calls[0][0]
+    assert uow.connection.calls[0][1] == {"id": 77}
+
+
+def test_list_pending_filters_owner_orders_without_limit_or_mutating_time():
+    patient = uuid4()
+    uow = FakeUow([[_row(patient), _row(patient)]])
+    result = SqlLinks().list_pending(uow, patient)
+    assert len(result) == 2
+    sql, params = uow.connection.calls[0]
+    assert "WHERE patient_user_id = :p AND status = 'pending'" in sql
+    assert "ORDER BY linked_at DESC, id DESC" in sql
+    assert "LIMIT" not in sql and params == {"p": patient}
+
+
+def test_status_update_clears_new_decision_sharing_without_changing_linked_at():
+    uow = FakeUow([_row(status="active")])
+    SqlLinks().update_status(uow, 77, LinkStatus.ACTIVE, None, None)
+    sql, _ = uow.connection.calls[0]
+    update_clause = sql.split("RETURNING")[0]
+    assert "THEN false" in update_clause and "ELSE sharing_enabled" in update_clause
+    assert "linked_at" not in update_clause

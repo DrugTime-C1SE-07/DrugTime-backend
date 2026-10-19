@@ -25,8 +25,9 @@ class PersonalProfiles(Protocol):
         full_name: str,
         date_of_birth: date,
         gender: str,
+        email: str | None,
         at: datetime,
-    ) -> None: ...
+    ) -> tuple[str | None, bool]: ...
 
 
 class ConditionCatalog(Protocol):

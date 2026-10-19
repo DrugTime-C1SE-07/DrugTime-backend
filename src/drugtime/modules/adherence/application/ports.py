@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from drugtime.modules.adherence.domain.alert import Alert
+from drugtime.modules.adherence.domain.alert import Alert, NotificationRecord
 from drugtime.modules.adherence.domain.dose import (
     DoseConfirmation,
     DoseConfirmationPersistenceResult,
@@ -30,12 +30,42 @@ class DoseLogs(Protocol):
 
 class Notifications(Protocol):
     def create_missed_alert(
-        self, uow: UnitOfWork, recipient_id: UUID, patient_id: UUID, dedupe_key: str
-    ) -> UUID | None:
+        self,
+        uow: UnitOfWork,
+        recipient_id: UUID,
+        patient_id: UUID,
+        dedupe_key: str,
+        content: str | None = None,
+    ) -> int | None:
         """ON CONFLICT (dedupe_key) DO NOTHING; None nếu đã có."""
         ...
 
+    def list_for_user(
+        self,
+        uow: UnitOfWork,
+        user_id: UUID,
+        is_read: bool | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[NotificationRecord], int, int]:
+        """(items, total, unread_count)."""
+        ...
+
+    def mark_as_read(
+        self,
+        uow: UnitOfWork,
+        notification_id: int,
+        user_id: UUID,
+        is_read: bool = True,
+    ) -> NotificationRecord | None:
+        """Cập nhật is_read, trả về None nếu không tìm thấy hoặc không thuộc user."""
+        ...
+
     def erase_for_user(self, uow: UnitOfWork, user_id: UUID) -> None: ...
+
+
+class PatientNames(Protocol):
+    def get_patient_name(self, uow: UnitOfWork, patient_id: UUID) -> str | None: ...
 
 
 class ScanCursor(Protocol):

@@ -6,7 +6,14 @@ from sqlalchemy import text
 from drugtime.modules.family.domain.link import FamilyLink, LinkStatus
 from drugtime.shared.uow import UnitOfWork
 
-_ACTIVE = "status = 'active' AND sharing_enabled = true"
+_ACTIVE = """status = 'active' AND sharing_enabled = true
+AND EXISTS (
+    SELECT 1 FROM family_link_consent_confirmations AS evidence
+    WHERE evidence.link_id = caregiver_links.id
+      AND evidence.patient_user_id = caregiver_links.patient_user_id
+      AND evidence.family_user_id = caregiver_links.family_user_id
+      AND evidence.purpose = 'family_sharing'
+)"""
 
 _COLUMNS = """id, patient_user_id, family_user_id, status, sharing_enabled,
        linked_at, revoked_at, rejected_at, client_uuid"""
@@ -64,9 +71,11 @@ RETURNING {_COLUMNS}
 
 _UPDATE_STATUS = text(f"""
 UPDATE caregiver_links
-SET status = :status,
+SET status = CAST(:status AS link_status),
     revoked_at = :revoked_at,
-    rejected_at = :rejected_at
+    rejected_at = :rejected_at,
+    sharing_enabled = CASE WHEN CAST(:status AS text) IN ('active', 'rejected') THEN false
+                           ELSE sharing_enabled END
 WHERE id = :id
 RETURNING {_COLUMNS}
 """)
@@ -108,6 +117,23 @@ class SqlLinks:
     def get(self, uow: UnitOfWork, link_id: int) -> FamilyLink | None:
         row = uow.connection.execute(_SELECT_BY_ID, {"id": link_id}).first()
         return None if row is None else _record(row)
+
+    def get_for_update(self, uow: UnitOfWork, link_id: int) -> FamilyLink | None:
+        row = uow.connection.execute(
+            text(str(_SELECT_BY_ID) + " FOR UPDATE"), {"id": link_id}
+        ).first()
+        return None if row is None else _record(row)
+
+    def list_pending(self, uow: UnitOfWork, patient_id: UUID) -> list[FamilyLink]:
+        rows = uow.connection.execute(
+            text(
+                f"SELECT {_COLUMNS} FROM caregiver_links "
+                "WHERE patient_user_id = :p AND status = 'pending' "
+                "ORDER BY linked_at DESC, id DESC"
+            ),
+            {"p": patient_id},
+        )
+        return [_record(row) for row in rows]
 
     def create(self, uow: UnitOfWork, link: FamilyLink) -> FamilyLink:
         row = uow.connection.execute(

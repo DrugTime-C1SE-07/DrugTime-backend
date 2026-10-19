@@ -1,16 +1,24 @@
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict
 
 from drugtime.modules.adherence.adapters.outbound.other_modules import (
     AccessGuardAdapter,
     SchedulesAdapter,
 )
-from drugtime.modules.adherence.adapters.outbound.sql_adherence import SqlDoseLogs
+from drugtime.modules.adherence.adapters.outbound.sql_adherence import (
+    SqlDoseLogs,
+    SqlNotifications,
+)
 from drugtime.modules.adherence.application.confirm_doses import confirm_doses
+from drugtime.modules.adherence.application.manage_notifications import (
+    list_my_notifications,
+    update_notification_status,
+)
 from drugtime.modules.adherence.domain.dose import DoseConfirmation
 from drugtime.modules.identity import api as identity
 from drugtime.shared.clock import now
@@ -108,4 +116,115 @@ def post_doses(
     )
 
 
-# TODO: GET /patients/{patient_id}/adherence (DK1), GET /notifications (DK7)
+class NotificationType(StrEnum):
+    MISSED_DOSE_CARE_ALERT = "canh_bao_bo_lo_lieu_nguoi_than"
+
+
+class NotificationItemOut(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
+    id: int
+    type: NotificationType
+    title: str
+    content: str
+    is_read: bool
+    about_patient_user_id: UUID | None
+    about_patient_name: str | None
+    created_at: datetime
+
+
+class NotificationListOut(BaseModel):
+    items: list[NotificationItemOut]
+    total: int
+    unread_count: int
+
+
+class NotificationUpdateRequest(BaseModel):
+    is_read: bool
+
+
+class ErrorDetail(BaseModel):
+    detail: str
+
+
+_ERRORS = {
+    401: {"model": ErrorDetail, "description": "Chưa xác thực"},
+}
+_NOT_FOUND = {
+    404: {"model": ErrorDetail, "description": "notification_not_found"},
+}
+
+
+@router.get(
+    "/notifications",
+    response_model=NotificationListOut,
+    responses={**_ERRORS},
+    tags=["notification"],
+    operation_id="listMyNotifications",
+    summary="Lấy danh sách thông báo của chính người gọi",
+)
+def get_notifications(
+    is_read: bool | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> NotificationListOut:
+    result = list_my_notifications(
+        uow,
+        user_id=user.id,
+        is_read=is_read,
+        limit=limit,
+        offset=offset,
+        notifications=SqlNotifications(),
+    )
+    return NotificationListOut(
+        items=[
+            NotificationItemOut(
+                id=item.id,
+                type=NotificationType(item.type),
+                title="DrugTime",
+                content=item.content,
+                is_read=item.is_read,
+                about_patient_user_id=item.about_patient_user_id,
+                about_patient_name=item.about_patient_name,
+                created_at=item.created_at,
+            )
+            for item in result.items
+        ],
+        total=result.total,
+        unread_count=result.unread_count,
+    )
+
+
+@router.patch(
+    "/notifications/{id}",
+    response_model=NotificationItemOut,
+    responses={**_ERRORS, **_NOT_FOUND},
+    tags=["notification"],
+    operation_id="updateNotificationStatus",
+    summary="Cập nhật trạng thái đã đọc của thông báo",
+)
+def patch_notification(
+    id: Annotated[int, Path(ge=1)],
+    body: NotificationUpdateRequest,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> NotificationItemOut:
+    record = update_notification_status(
+        uow,
+        user_id=user.id,
+        notification_id=id,
+        is_read=body.is_read,
+        notifications=SqlNotifications(),
+    )
+    return NotificationItemOut(
+        id=record.id,
+        type=NotificationType(record.type),
+        title="DrugTime",
+        content=record.content,
+        is_read=record.is_read,
+        about_patient_user_id=record.about_patient_user_id,
+        about_patient_name=record.about_patient_name,
+        created_at=record.created_at,
+    )

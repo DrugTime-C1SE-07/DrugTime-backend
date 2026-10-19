@@ -157,3 +157,14 @@ def test_transition_keeps_client_uuid__AC29():
         assert transition_link(link, target, now=now).client_uuid == key
     active = transition_link(link, LinkStatus.ACTIVE, now=now)
     assert transition_link(active, LinkStatus.REVOKED, now=now).client_uuid == key
+
+
+@pytest.mark.parametrize("target", [LinkStatus.ACTIVE, LinkStatus.REJECTED])
+def test_pending_decisions_clear_sharing_but_preserve_request_time(target):
+    now = datetime(2026, 10, 15, tzinfo=UTC)
+    requested = datetime(2026, 10, 14, tzinfo=UTC)
+    link = FamilyLink(1, uuid4(), uuid4(), LinkStatus.PENDING, True, requested)
+    result = transition_link(link, target, now=now)
+    assert result.sharing_enabled is False
+    assert result.linked_at == requested
+    assert result.rejected_at == (now if target is LinkStatus.REJECTED else None)
