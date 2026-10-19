@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from drugtime.main import create_app
-from drugtime.shared.errors import ServiceUnavailable, TooManyRequests
+from drugtime.shared.errors import Conflict, ServiceUnavailable, TooManyRequests
 
 
 def test_liveness_and_routes_mounted():
@@ -18,7 +18,13 @@ def test_liveness_and_routes_mounted():
         "/doses/batch",
         "/medications",
         "/medications/{id}",
+        "/profile",
+        "/conditions",
+        "/profile/conditions",
+        "/profile/conditions/{id}",
     } <= set(paths)
+    assert {"post"} <= set(paths["/medications"])
+    assert {"get", "patch"} <= set(paths["/medications/{id}"])
 
 
 def test_doses_batch_openapi_uses_contract_shape():
@@ -39,9 +45,6 @@ def test_doses_batch_openapi_uses_contract_shape():
     response_schema_name = response_ref.rsplit("/", maxsplit=1)[-1]
     response_schema = components[response_schema_name]
     assert {"items", "summary"} <= set(response_schema["properties"])
-
-    assert {"post"} <= set(paths["/medications"])
-    assert {"get", "patch"} <= set(paths["/medications/{id}"])
 
 
 def test_register_route_removed():
@@ -77,3 +80,14 @@ def test_rate_limit_and_unavailable_map_to_429_and_503():
     assert (r.status_code, r.json()) == (429, {"detail": "rate_limited"})
     r = client.get("/_test/unavailable")
     assert (r.status_code, r.json()) == (503, {"detail": "auth_provider_unavailable"})
+
+
+def test_conflict_maps_to_409():
+    app = create_app()
+
+    @app.get("/_test/conflict")
+    def _conflict():
+        raise Conflict("version_conflict")
+
+    r = TestClient(app).get("/_test/conflict")
+    assert (r.status_code, r.json()) == (409, {"detail": "version_conflict"})

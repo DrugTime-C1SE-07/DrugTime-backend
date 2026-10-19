@@ -52,6 +52,10 @@ def signed_in():
         ("get", "/catalog/medications?q=amlo", None),
         ("get", "/catalog/medications?q=", None),  # q sai vẫn 401
         ("post", "/doses/batch", []),
+        ("post", "/medications/1/schedules", {"intake_time": "12:00"}),
+        ("patch", "/medications/1/schedules/2", {"reminder_enabled": False}),
+        ("delete", "/medications/1/schedules/2", None),
+        ("get", f"/patients/{uuid4()}/schedules", None),
     ],
 )
 def test_missing_authorization_401(anonymous, method, path, body):
@@ -112,7 +116,6 @@ def test_create_structural_errors_422_array(signed_in, body, loc):
         {"quantity_per_dose": None},
         {"dosing_mode": None},
         {"medication_id": 2},
-        {"days_of_week": [1]},
         {"intake_times": ["07:00", "07:00"]},
     ],
 )
@@ -148,3 +151,50 @@ def test_catalog_search_query_errors_422_array(signed_in, query):
     r = signed_in.get("/catalog/medications" + query)
     assert r.status_code == 422
     assert isinstance(r.json()["detail"], list)
+
+
+# --- task 2.04 -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "method, path, body",
+    [
+        ("post", "/medications/1/schedules", {}),
+        ("post", "/medications/1/schedules", {"intake_time": "24:00"}),
+        ("post", "/medications/1/schedules", {"intake_time": "8:00"}),
+        ("post", "/medications/1/schedules", {"intake_time": None}),
+        ("post", "/medications/1/schedules", {"intake_time": "08:00", "days_of_week": [1]}),
+        ("post", "/medications/1/schedules", {"intake_time": "08:00", "reminder_enabled": "false"}),
+        ("patch", "/medications/1/schedules/2", {}),
+        ("patch", "/medications/1/schedules/2", {"intake_time": "12:60"}),
+        ("patch", "/medications/1/schedules/2", {"intake_time": None}),
+        ("patch", "/medications/1/schedules/2", {"reminder_enabled": None}),
+        ("patch", "/medications/1/schedules/2", {"reminder_enabled": 0}),
+        ("patch", "/medications/1/schedules/2", {"days_of_week": [1, 2]}),
+        ("patch", "/medications/1/schedules/0", {"reminder_enabled": True}),
+        ("delete", "/medications/1/schedules/0", None),
+        ("delete", "/medications/0/schedules/1", None),
+    ],
+)
+def test_schedule_structural_errors_422_array(signed_in, method, path, body):
+    r = signed_in.request(method, path, json=body)
+    assert r.status_code == 422
+    assert isinstance(r.json()["detail"], list)
+
+
+@pytest.mark.parametrize("days", [[], [0], [8], [1, 1], None])
+def test_update_days_of_week_structural_errors(signed_in, days):
+    r = signed_in.patch("/medications/1", json={"days_of_week": days})
+    assert r.status_code == 422
+    assert isinstance(r.json()["detail"], list)
+
+
+def test_patient_id_must_be_uuid(signed_in):
+    r = signed_in.get("/patients/abc/schedules")
+    assert r.status_code == 422 and isinstance(r.json()["detail"], list)
+
+
+@pytest.mark.parametrize("query", ["limit=0", "limit=201", "limit=x", "cursor="])
+def test_limit_and_cursor_bounds_422(signed_in, query):
+    r = signed_in.get(f"/patients/{uuid4()}/schedules?{query}")
+    assert r.status_code == 422 and isinstance(r.json()["detail"], list)

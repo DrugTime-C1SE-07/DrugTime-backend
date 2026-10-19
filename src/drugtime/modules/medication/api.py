@@ -3,19 +3,41 @@
 from datetime import datetime
 from uuid import UUID
 
-from drugtime.modules.medication.adapters.inbound.http import router
+from fastapi import APIRouter
+
+from drugtime.modules.medication.adapters.inbound.http import (
+    patients_router,
+    set_recorded_doses,
+)
+from drugtime.modules.medication.adapters.inbound.http import router as _medications_router
+from drugtime.modules.medication.adapters.inbound.profile_http import router as _profile_router
 from drugtime.modules.medication.adapters.outbound.sql_medication import SqlMedication
+from drugtime.modules.medication.application.ports import RecordedDoses
 from drugtime.modules.medication.domain.schedule import DoseOccurrence
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
     "DoseOccurrence",
+    "RecordedDoses",
+    "configure",
     "eraser",
     "occurrences_between",
     "router",
     "schedule_ids_of",
     "schedule_owner",
 ]
+
+
+# /medications và /patients/{id}/schedules (task 2.04), main.py include một router.
+router = APIRouter()
+router.include_router(_medications_router)
+router.include_router(patients_router)
+router.include_router(_profile_router)
+
+
+def configure(*, recorded_doses: RecordedDoses) -> None:
+    """Composition root nối port mà module khác hiện thực (task 2.04)."""
+    set_recorded_doses(recorded_doses)
 
 
 def schedule_owner(uow: UnitOfWork, schedule_id: int) -> UUID | None:

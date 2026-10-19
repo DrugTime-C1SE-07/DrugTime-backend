@@ -68,3 +68,69 @@ def test_denied_write_appends_denied_and_raises():
         _call(Facts(), log, Action.WRITE)
     assert log.allowed == []
     assert log.denied == [(C, ActorRole.FAMILY, P, Scope.MEDICATIONS, "khong_co_quyen")]
+
+
+def test_unknown_patient_raises_forbidden_without_log():
+    for admin in (False, True):
+        log = Log()
+        with pytest.raises(Forbidden, match="khong_co_quyen"):
+            _call(Facts(patient_exists=False, caller_is_admin=admin), log)
+        assert log.allowed == [] and log.denied == []
+
+
+def test_admin_read_denied_logged__QD32():
+    log = Log()
+    with pytest.raises(Forbidden, match="khong_co_quyen"):
+        _call(Facts(caller_is_admin=True, active_sharing_link=False), log)
+    assert log.allowed == []
+    assert log.denied == [(C, ActorRole.ADMIN, P, Scope.MEDICATIONS, "khong_co_quyen")]
+
+
+@pytest.mark.parametrize("action", [Action.READ, Action.WRITE])
+@pytest.mark.parametrize("consent", [True, False])
+def test_profile_self_audit_and_consent(action, consent):
+    facts = Facts(caller_id=P, purpose_consent=consent)
+    log = Log()
+
+    def call():
+        authorize(
+            object(),
+            facts,
+            log,
+            caller_id=P,
+            caller_is_admin=False,
+            patient_id=P,
+            scope=Scope.HEALTH_PROFILE,
+            action=action,
+        )
+
+    if consent:
+        call()
+        assert log.allowed == [(P, ActorRole.PATIENT, P, Scope.HEALTH_PROFILE)]
+        assert log.denied == []
+    else:
+        with pytest.raises(Forbidden, match="consent_revoked"):
+            call()
+        assert log.allowed == []
+        assert log.denied == [(P, ActorRole.PATIENT, P, Scope.HEALTH_PROFILE, "consent_revoked")]
+
+
+@pytest.mark.parametrize("consent", [True, False])
+def test_profile_self_audit_failure_fails_closed(consent):
+    log = Log(fail_allowed=True)
+    if not consent:
+
+        def fail_denied(*args):
+            raise RuntimeError("audit unavailable")
+
+        log.append_denied = fail_denied
+    with pytest.raises(RuntimeError):
+        authorize(
+            object(),
+            Facts(caller_id=P, purpose_consent=consent),
+            log,
+            caller_id=P,
+            caller_is_admin=False,
+            patient_id=P,
+            scope=Scope.HEALTH_PROFILE,
+        )

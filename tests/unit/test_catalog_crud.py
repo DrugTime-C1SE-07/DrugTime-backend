@@ -74,7 +74,7 @@ def test_admin_endpoints_require_auth_401(anonymous_client, method, path, body):
 def test_admin_endpoints_reject_non_admin_403(non_admin_client, method, path, body):
     r = non_admin_client.request(method, path, json=body)
     assert r.status_code == 403
-    assert r.json() == {"detail": "Admin only"}
+    assert r.json() == {"detail": "admin_only"}
 
 
 # --- 2. Kiểm tra Pydantic Validation (422) ---

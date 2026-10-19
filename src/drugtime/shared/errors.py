@@ -14,6 +14,10 @@ class Forbidden(Exception):
     """Không có quyền (HTTP 403)."""
 
 
+class Conflict(Exception):
+    """Xung đột với trạng thái hiện tại, ví dụ trùng bản ghi hoặc phiên bản cũ (HTTP 409)."""
+
+
 class TooManyRequests(Exception):
     """Gửi quá nhanh hoặc quá nhiều lần (HTTP 429)."""
 

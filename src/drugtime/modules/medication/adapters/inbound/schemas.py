@@ -1,4 +1,5 @@
-"""Request/response của /medications, khớp api_contract/openapi.json (task 2.01).
+"""Request/response của /medications và /patients/{id}/schedules, khớp
+api_contract/openapi.json (task 2.01, 2.04).
 
 Field không cho phép `null` khai báo kiểu không có None nhưng mặc định None: Pydantic không
 kiểm giá trị mặc định, nên "không gửi" được chấp nhận còn "gửi null" bị 422.
@@ -24,6 +25,7 @@ from drugtime.modules.medication.domain.user_medication import (
     IntakeTiming,
     MedicationChanges,
     NewMedication,
+    PatientScheduleView,
     UserMedicationView,
 )
 from drugtime.shared.config import get_settings
@@ -95,12 +97,13 @@ class UserMedicationUpdate(BaseModel):
     quantity_per_dose: QuantityPerDose = None
     dosing_mode: DosingMode = None
     intake_times: IntakeTimes = None
+    days_of_week: DaysOfWeek = None
     max_doses_per_day: MaxDosesPerDay = None
     intake_timing: IntakeTiming | None = None
     stock_quantity: StockQuantity = None
     stopped: StrictBool = None  # "false" dạng chuỗi bị 422, như contract (boolean)
 
-    @field_validator("intake_times")
+    @field_validator("intake_times", "days_of_week")
     @classmethod
     def _no_duplicates(cls, v: list | None) -> list | None:
         return _unique(v)
@@ -125,7 +128,34 @@ class UserMedicationUpdate(BaseModel):
             intake_timing=self.intake_timing,
             stock_quantity=self.stock_quantity,
             stopped=bool(self.stopped),
+            days_of_week=None if self.days_of_week is None else tuple(self.days_of_week),
         )
+
+
+class MedicationScheduleCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intake_time: IntakeTime
+    reminder_enabled: StrictBool = True
+
+    def to_time(self) -> time:
+        return _to_time(self.intake_time)
+
+
+class MedicationScheduleUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"minProperties": 1})
+
+    intake_time: IntakeTime = None
+    reminder_enabled: StrictBool = None
+
+    @model_validator(mode="after")
+    def _not_empty(self) -> "MedicationScheduleUpdate":
+        if not self.model_fields_set:
+            raise ValueError("body must contain at least one field")
+        return self
+
+    def to_time(self) -> time | None:
+        return None if self.intake_time is None else _to_time(self.intake_time)
 
 
 class CatalogMedicationSummary(BaseModel):
@@ -195,3 +225,48 @@ class UserMedicationList(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     items: list[UserMedication]
+
+
+class PatientSchedule(BaseModel):
+    id: int
+    user_medication_id: int
+    medication: CatalogMedicationSummary
+    quantity_per_dose: float
+    doses_per_day: int
+    intake_timing: IntakeTiming | None
+    intake_time: IntakeTime
+    days_of_week: list[DayOfWeek]
+    reminder_enabled: bool
+    effective_from: datetime
+    ended_at: datetime | None
+
+    @classmethod
+    def from_view(cls, view: PatientScheduleView) -> "PatientSchedule":
+        tz = ZoneInfo(get_settings().timezone)
+        r, m = view.record, view.medication
+        return cls(
+            id=r.id,
+            user_medication_id=r.user_medication_id,
+            medication=CatalogMedicationSummary(
+                id=m.id,
+                name=m.name,
+                active_ingredient=m.active_ingredient,
+                strength_text=m.strength_text,
+                dosage_form=m.dosage_form,
+            ),
+            quantity_per_dose=float(r.quantity_per_dose),
+            doses_per_day=r.doses_per_day,
+            intake_timing=r.intake_timing,
+            intake_time=r.intake_time.strftime("%H:%M"),
+            days_of_week=list(r.days_of_week),
+            reminder_enabled=r.reminder_enabled,
+            effective_from=r.effective_from.astimezone(tz),
+            ended_at=None if r.ended_at is None else r.ended_at.astimezone(tz),
+        )
+
+
+class PatientScheduleList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[PatientSchedule]
+    next_cursor: str | None

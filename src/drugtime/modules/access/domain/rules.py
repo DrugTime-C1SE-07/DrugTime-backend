@@ -29,6 +29,7 @@ class Action(StrEnum):
 
 
 class ActorRole(StrEnum):
+    PATIENT = "patient"
     FAMILY = "family"
     ADMIN = "admin"
     NO_ACCESS = "khong_co_quyen"
@@ -42,12 +43,13 @@ class AccessFacts:
     purpose_consent: bool  # consent của patient cho purpose của scope
     active_sharing_link: bool  # link active + sharing_enabled
     family_sharing_consent: bool  # consent family_sharing của patient
+    patient_exists: bool = True  # patient_id có ứng với tài khoản nào không
 
 
 @dataclass(frozen=True)
 class Decision:
     allowed: bool
-    log_role: ActorRole | None  # None = không ghi access_logs (truy cập của chính chủ)
+    log_role: ActorRole | None  # None = scope does not audit self, or patient is missing.
     reason: str | None = None
 
 
@@ -59,12 +61,21 @@ def _role(f: AccessFacts) -> ActorRole:
     return ActorRole.NO_ACCESS
 
 
-def decide(f: AccessFacts, action: Action = Action.READ) -> Decision:
-    """Chính chủ: theo purpose consent, không ghi log. Người khác chỉ được đọc;
-    ghi luôn bị từ chối, log_role vẫn là vai thực tế để nhật ký phân biệt được."""
+def decide(f: AccessFacts, action: Action = Action.READ, *, audit_self: bool = False) -> Decision:
+    """Chính chủ: theo purpose consent, audit khi scope yêu cầu.
+    Chỉ người thân hợp lệ được đọc dữ liệu
+    của người khác; ghi luôn bị từ chối. Admin không đọc dữ liệu y tế (QD-32). log_role là vai
+    thực tế để nhật ký phân biệt được. patient_id không tồn tại: từ chối, không ghi log (không có
+    dòng users để tham chiếu)."""
+    if not f.patient_exists:
+        return Decision(False, None, "khong_co_quyen")
     if f.caller_id == f.patient_id:
-        return Decision(f.purpose_consent, None, None if f.purpose_consent else "consent_revoked")
+        return Decision(
+            f.purpose_consent,
+            ActorRole.PATIENT if audit_self else None,
+            None if f.purpose_consent else "consent_revoked",
+        )
     role = _role(f)
-    if action is Action.READ and role is not ActorRole.NO_ACCESS:
+    if action is Action.READ and role is ActorRole.FAMILY:
         return Decision(True, role)
     return Decision(False, role, "khong_co_quyen")
