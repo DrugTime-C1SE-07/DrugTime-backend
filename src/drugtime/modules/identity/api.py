@@ -14,6 +14,7 @@ from drugtime.modules.identity.domain.user import CurrentUser
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
+    "display_names",
     "ProfileRecord",
     "ProfileUpdateResult",
     "get_profile",
@@ -102,3 +103,8 @@ class _AccountRemover:
 
 eraser = _Eraser()
 account_remover = _AccountRemover()
+
+
+def display_names(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str | None]:
+    """Minimal name projection; missing/erased accounts are omitted."""
+    return SqlUsers(uow).display_names(user_ids)
