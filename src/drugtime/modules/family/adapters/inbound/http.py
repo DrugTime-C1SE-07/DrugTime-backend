@@ -9,7 +9,7 @@ from drugtime.modules.family.application.get_link_code import get_link_code
 from drugtime.modules.identity import api as identity
 from drugtime.shared.db import SqlUnitOfWork, get_uow
 
-router = APIRouter(prefix="/family", tags=["family"])
+router = APIRouter(tags=["family"])
 
 # TODO(3.13): POST /family/link-requests (dùng mã; yêu cầu consent family_sharing của patient qua
 #       consent.api). TODO: PATCH /family/links/{id}/sharing.
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/family", tags=["family"])
 # Mã liên kết của chính người gọi, không phải dữ liệu sức khỏe: không qua PEP, không ghi
 # access_logs. Không log mã (bí mật cấp quyền gửi yêu cầu liên kết).
 @router.get(
-    "/link-code",
+    "/family/link-code",
     response_model=LinkCode,
     responses={
         401: {"model": ErrorDetail, "description": "Chưa xác thực"},

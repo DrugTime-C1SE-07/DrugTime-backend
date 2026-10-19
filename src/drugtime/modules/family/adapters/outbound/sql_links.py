@@ -47,6 +47,7 @@ SET status = 'revoked',
     sharing_enabled = false
 WHERE id = :id
   AND (patient_user_id = :caller_id OR family_user_id = :caller_id)
+  AND status <> 'rejected'
 RETURNING id, patient_user_id, family_user_id, status, sharing_enabled,
           linked_at, revoked_at, rejected_at
 """)

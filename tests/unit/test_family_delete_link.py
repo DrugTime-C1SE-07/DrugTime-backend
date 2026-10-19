@@ -1,4 +1,4 @@
-"""TDD Unit tests for DELETE /family/links/{id} endpoint (SCRUM-134, Backlog 3.26).
+"""TDD Unit tests for DELETE /links/{id} endpoint (SCRUM-134, Backlog 3.26).
 
 Kiểm tra:
 1. Bệnh nhân sở hữu link thu hồi thành công -> 204 No Content.
@@ -151,7 +151,7 @@ def test_http_patient_revokes_active_link_204(test_setup):
     )
 
     client = TestClient(app)
-    res = client.delete("/family/links/1")
+    res = client.delete("/links/1")
 
     assert res.status_code == 204
     assert res.text == ""
@@ -172,7 +172,7 @@ def test_http_family_member_self_leave_204(test_setup):
     )
 
     client = TestClient(app)
-    res = client.delete("/family/links/1")
+    res = client.delete("/links/1")
 
     assert res.status_code == 204
     assert res.text == ""
@@ -193,7 +193,7 @@ def test_http_stranger_cannot_revoke_returns_403(test_setup):
     )
 
     client = TestClient(app)
-    res = client.delete("/family/links/1")
+    res = client.delete("/links/1")
 
     assert res.status_code == 403
     assert res.json() == {"detail": "khong_co_quyen"}
@@ -209,7 +209,7 @@ def test_http_non_existent_link_returns_403(test_setup):
     )
 
     client = TestClient(app)
-    res = client.delete("/family/links/9999")
+    res = client.delete("/links/9999")
 
     assert res.status_code == 403
     assert res.json() == {"detail": "khong_co_quyen"}
@@ -225,7 +225,7 @@ def test_http_pending_link_revoked_204(test_setup):
     )
 
     client = TestClient(app)
-    res = client.delete("/family/links/2")
+    res = client.delete("/links/2")
 
     assert res.status_code == 204
 
@@ -246,7 +246,7 @@ def test_http_already_revoked_is_idempotent_204(test_setup):
     )
 
     client = TestClient(app)
-    res = client.delete("/family/links/3")
+    res = client.delete("/links/3")
 
     assert res.status_code == 204
 
@@ -261,7 +261,7 @@ def test_http_missing_token_returns_401(test_setup):
     # Không override identity.current_user -> gọi logic thật, thiếu Authorization header -> 401
 
     client = TestClient(app)
-    res = client.delete("/family/links/1")
+    res = client.delete("/links/1")
 
     assert res.status_code == 401
     assert res.json() == {"detail": "Missing bearer token"}
@@ -281,8 +281,20 @@ def test_http_rejected_link_returns_422(test_setup):
     )
 
     client = TestClient(app)
-    res = client.delete("/family/links/4")
+    res = client.delete("/links/4")
 
     assert res.status_code == 422
     assert res.json() == {"detail": "cannot transition family link from rejected to revoked"}
 
+
+
+def test_http_old_route_returns_404(test_setup):
+    app = test_setup["app"]
+    patient_id = test_setup["patient_id"]
+    app.dependency_overrides[get_uow] = lambda: object()
+    app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(
+        id=patient_id, is_admin=False
+    )
+    client = TestClient(app)
+    res = client.delete("/family/links/1")
+    assert res.status_code == 404

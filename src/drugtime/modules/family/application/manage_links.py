@@ -1,9 +1,11 @@
+import logging
 from datetime import datetime
 from uuid import UUID
 
 from drugtime.modules.family.application.ports import Links
 from drugtime.modules.family.domain.link import (
     FamilyLink,
+    FamilyLinkError,
     LinkStatus,
     ensure_can_create_link,
     pending_link,
@@ -11,6 +13,9 @@ from drugtime.modules.family.domain.link import (
 )
 from drugtime.shared.errors import Forbidden, NotFound
 from drugtime.shared.uow import UnitOfWork
+
+
+_log = logging.getLogger(__name__)
 
 
 def create_link_request(
@@ -49,19 +54,34 @@ def revoke_link(
     if link.status is LinkStatus.REVOKED:
         return link
 
+    # Domain validates the transition (catches e.g. rejected -> revoked)
     updated = transition_link(link, LinkStatus.REVOKED, now=now)
-    if hasattr(links, "revoke"):
-        persisted = links.revoke(
-            uow,
-            link_id=link_id,
-            caller_id=caller_id or link.patient_user_id,
-            now=now,
-        )
-        if persisted is not None:
-            return persisted
-    return links.update_status(
-        uow, link_id, updated.status, updated.revoked_at, updated.rejected_at
+
+    old_status = link.status.value
+    old_sharing = link.sharing_enabled
+
+    persisted = links.revoke(
+        uow,
+        link_id=link_id,
+        caller_id=caller_id or link.patient_user_id,
+        now=now,
     )
+    if persisted is not None:
+        _log.info("link_revoked link_id=%d caller=%s old_status=%s sharing %s->false",
+                  link_id, caller_id, old_status, old_sharing)
+        return persisted
+
+    # SQL didn't match (race or status guard) -- re-read to determine error.
+    # caller_id was verified above; re-check so strangers always get 403.
+    current = links.get(uow, link_id)
+    if current is not None and caller_id is not None:
+        is_member = caller_id in (current.patient_user_id, current.family_user_id)
+        if is_member and current.status is LinkStatus.REJECTED:
+            raise FamilyLinkError(
+                "invalid_link_transition",
+                f"cannot transition family link from {current.status.value} to revoked",
+            )
+    raise Forbidden("khong_co_quyen")
 
 
 
