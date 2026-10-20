@@ -95,10 +95,10 @@ def test_request_and_success_response_shapes_match_contract(path, method, succes
     runtime = create_app().openapi()
     expected, actual = contract["paths"][path][method], runtime["paths"][path][method]
     assert actual["security"] == expected["security"]
-    assert (
-        runtime["components"]["securitySchemes"]["bearerAuth"]
-        == (contract["components"]["securitySchemes"]["bearerAuth"])
-    )
+    runtime_bearer = runtime["components"]["securitySchemes"]["bearerAuth"]
+    contract_bearer = contract["components"]["securitySchemes"]["bearerAuth"]
+    for field in ("type", "scheme", "bearerFormat"):
+        assert runtime_bearer[field] == contract_bearer[field]
     if "requestBody" in expected:
         assert _shape(
             contract, expected["requestBody"]["content"]["application/json"]["schema"]

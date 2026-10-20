@@ -29,6 +29,7 @@ def get_profile(
         profile.full_name,
         profile.date_of_birth,
         profile.gender,
+        profile.email,
         [
             UserConditionView(
                 link.id, link.condition_id, names[link.condition_id], link.subtype, link.stage
@@ -48,9 +49,16 @@ def update_profile(
     full_name: str,
     date_of_birth: date,
     gender: str,
+    email: str | None = None,
     at: datetime,
-) -> None:
+) -> tuple[str | None, bool]:
     access.authorize_write(uow, user_id, is_admin)
-    profiles.update(
-        uow, user_id, full_name=full_name, date_of_birth=date_of_birth, gender=gender, at=at
+    return profiles.update(
+        uow,
+        user_id,
+        full_name=full_name,
+        date_of_birth=date_of_birth,
+        gender=gender,
+        email=email,
+        at=at,
     )

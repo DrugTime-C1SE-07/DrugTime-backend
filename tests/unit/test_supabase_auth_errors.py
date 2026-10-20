@@ -1,10 +1,13 @@
 """Lỗi Supabase Auth được dịch sang 401/429/503 theo contract, không mang nội dung phản hồi gốc."""
 
+from types import SimpleNamespace
+from uuid import uuid4
+
 import httpx
 import pytest
 
 from drugtime.modules.identity.adapters.outbound.supabase_auth import SupabaseAuth
-from drugtime.shared.errors import ServiceUnavailable, TooManyRequests, Unauthorized
+from drugtime.shared.errors import Conflict, ServiceUnavailable, TooManyRequests, Unauthorized
 
 SECRET_BODY = (
     '{"error":"invalid_grant","error_description":"secret-supabase-detail lan@example.com"}'
@@ -80,3 +83,72 @@ def test_success_passes_response_through():
 
     assert auth.verify_otp(phone=None, email="a@b.vn", token="123456")["user"]["id"]
     assert auth.request_otp(phone=None, email="a@b.vn") is None
+
+
+def test_update_email_uses_server_admin_endpoint_for_given_user(monkeypatch):
+    user_id = uuid4()
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"id": str(user_id), "email": "new@example.com"})
+
+    monkeypatch.setattr(
+        "drugtime.modules.identity.adapters.outbound.supabase_auth.get_settings",
+        lambda: SimpleNamespace(
+            supabase_url="http://supabase.test",
+            supabase_anon_key="anon",
+            supabase_service_key="server-secret",
+        ),
+    )
+    auth = SupabaseAuth(client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    auth.update_email(user_id, "new@example.com")
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "PUT"
+    assert request.url.path == f"/auth/v1/admin/users/{user_id}"
+    assert request.headers["apikey"] == "server-secret"
+    assert request.headers["authorization"] == "Bearer server-secret"
+    assert request.read() == b'{"email":"new@example.com","email_confirm":true}'
+
+
+def test_update_email_duplicate_is_generic_conflict_without_provider_body(monkeypatch):
+    monkeypatch.setattr(
+        "drugtime.modules.identity.adapters.outbound.supabase_auth.get_settings",
+        lambda: SimpleNamespace(
+            supabase_url="http://supabase.test",
+            supabase_anon_key="anon",
+            supabase_service_key="server-secret",
+        ),
+    )
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                422,
+                json={"code": "email_exists", "message": "private@example.com is taken"},
+            )
+        )
+    )
+    auth = SupabaseAuth(client=client)
+
+    with pytest.raises(Conflict, match="email_change_unavailable") as err:
+        auth.update_email(uuid4(), "private@example.com")
+
+    assert "private@example.com" not in str(err.value)
+
+
+def test_update_email_requires_service_key(monkeypatch):
+    monkeypatch.setattr(
+        "drugtime.modules.identity.adapters.outbound.supabase_auth.get_settings",
+        lambda: SimpleNamespace(
+            supabase_url="http://supabase.test",
+            supabase_anon_key="anon",
+            supabase_service_key="",
+        ),
+    )
+    auth = SupabaseAuth(client=httpx.Client(transport=httpx.MockTransport(lambda _: None)))
+
+    with pytest.raises(ServiceUnavailable, match="auth_provider_unavailable"):
+        auth.update_email(uuid4(), "new@example.com")
