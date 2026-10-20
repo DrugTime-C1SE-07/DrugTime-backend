@@ -16,11 +16,12 @@ def authorize(
     patient_id: UUID,
     scope: Scope,
     action: Action = Action.READ,
+    audit_self: bool = False,
 ) -> None:
     decision = decide(
         facts.read(uow, caller_id, caller_is_admin, patient_id, scope),
         action,
-        audit_self=scope is Scope.HEALTH_PROFILE,
+        audit_self=(scope is Scope.HEALTH_PROFILE) or audit_self,
     )
     if decision.allowed:
         if decision.log_role is not None:
