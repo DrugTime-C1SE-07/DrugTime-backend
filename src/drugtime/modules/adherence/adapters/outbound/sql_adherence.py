@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from uuid import UUID
 
 from sqlalchemy import text
@@ -10,6 +10,7 @@ from drugtime.modules.adherence.domain.dose import (
     DoseLogRecord,
     DoseStatus,
 )
+from drugtime.modules.adherence.domain.history import TIMEZONE, VIETNAM, HistoryRange, HistoryRow
 from drugtime.shared.uow import UnitOfWork
 
 _SELECT_BY_CLIENT_UUID = text("""
@@ -42,6 +43,78 @@ VALUES (:schedule_id, :scheduled_at, 'bo_lo')
 ON CONFLICT (medication_schedule_id, scheduled_at) DO NOTHING
 RETURNING id
 """)
+
+# One statement snapshot for both generated occurrences and recorded keys, including closed
+# schedules and soft-deleted medications. Authorization is enforced before this reader.
+_HISTORY = text("""
+WITH patient_schedules AS (
+    SELECT ms.id AS schedule_id, ms.intake_time, ms.days_of_week,
+           ms.effective_from, ms.ended_at, um.medication_id, m.name AS medication_name
+    FROM user_medications um
+    JOIN medication_schedules ms ON ms.user_medication_id = um.id
+    JOIN medications m ON m.id = um.medication_id
+    WHERE um.user_id = :patient_id
+), generated AS (
+    SELECT s.schedule_id, occ.scheduled_at
+    FROM patient_schedules s
+    CROSS JOIN generate_series(0, CAST(:to_date AS date) - CAST(:from_date AS date))
+        AS calendar(day_offset)
+    CROSS JOIN LATERAL (
+        SELECT ((CAST(:from_date AS date) + calendar.day_offset) + s.intake_time)
+               AT TIME ZONE :timezone AS scheduled_at
+    ) occ
+    WHERE EXTRACT(ISODOW FROM CAST(:from_date AS date) + calendar.day_offset)
+          = ANY(s.days_of_week)
+      AND occ.scheduled_at >= s.effective_from
+      AND (s.ended_at IS NULL OR occ.scheduled_at < s.ended_at)
+      AND occ.scheduled_at <= :as_of
+), recorded AS (
+    SELECT dl.medication_schedule_id AS schedule_id, dl.scheduled_at
+    FROM dose_logs dl
+    JOIN patient_schedules s ON s.schedule_id = dl.medication_schedule_id
+    WHERE dl.scheduled_at >= :start_at AND dl.scheduled_at < :end_at
+      AND dl.scheduled_at <= :as_of
+), occurrence_keys AS (
+    SELECT schedule_id, scheduled_at FROM generated
+    UNION
+    SELECT schedule_id, scheduled_at FROM recorded
+)
+SELECT s.medication_id, s.medication_name, k.schedule_id, k.scheduled_at,
+       dl.taken_at, dl.status
+FROM occurrence_keys k
+JOIN patient_schedules s ON s.schedule_id = k.schedule_id
+LEFT JOIN dose_logs dl ON dl.medication_schedule_id = k.schedule_id
+                     AND dl.scheduled_at = k.scheduled_at
+""")
+
+
+class SqlAdherenceHistory:
+    def read(
+        self, uow: UnitOfWork, patient_id: UUID, period: HistoryRange, as_of: datetime
+    ) -> list[HistoryRow]:
+        rows = uow.connection.execute(
+            _HISTORY,
+            {
+                "patient_id": patient_id,
+                "from_date": period.start,
+                "to_date": period.end,
+                "timezone": TIMEZONE,
+                "start_at": datetime.combine(period.start, time.min, VIETNAM),
+                "end_at": datetime.combine(period.end + timedelta(days=1), time.min, VIETNAM),
+                "as_of": as_of,
+            },
+        )
+        return [
+            HistoryRow(
+                medication_id=row.medication_id,
+                medication_name=row.medication_name,
+                schedule_id=row.schedule_id,
+                scheduled_at=row.scheduled_at,
+                taken_at=row.taken_at,
+                status=DoseStatus(row.status) if row.status is not None else None,
+            )
+            for row in rows
+        ]
 
 
 class SqlDoseLogs:

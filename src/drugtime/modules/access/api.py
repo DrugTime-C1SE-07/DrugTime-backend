@@ -20,6 +20,7 @@ def authorize(
     patient_id: UUID,
     scope: Scope,
     action: Action = Action.READ,
+    audit_self: bool = False,
 ) -> None:
     """Raise Forbidden nếu không có quyền; ghi access_logs khi cần.
     action=WRITE: chỉ chính chủ được ghi. Người thân chỉ đọc theo chia sẻ;
@@ -33,6 +34,7 @@ def authorize(
         patient_id=patient_id,
         scope=scope,
         action=action,
+        audit_self=audit_self,
     )
 
 

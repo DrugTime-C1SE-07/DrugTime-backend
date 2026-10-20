@@ -10,6 +10,19 @@ from drugtime.shared.uow import UnitOfWork
 
 
 class AccessGuardAdapter:
+    def authorize_history(
+        self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool, patient_id: UUID
+    ) -> None:
+        access.authorize(
+            uow,
+            caller_id=caller_id,
+            caller_is_admin=caller_is_admin,
+            patient_id=patient_id,
+            scope=access.Scope.ADHERENCE,
+            action=access.Action.READ,
+            audit_self=True,
+        )
+
     def authorize_adherence(
         self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool, patient_id: UUID
     ) -> None:

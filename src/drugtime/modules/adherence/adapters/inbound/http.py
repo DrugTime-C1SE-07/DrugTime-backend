@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel, ConfigDict
 
+from drugtime.modules.adherence.adapters.inbound.history_http import router as history_router
 from drugtime.modules.adherence.adapters.outbound.other_modules import (
     AccessGuardAdapter,
     SchedulesAdapter,
@@ -17,6 +18,7 @@ from drugtime.shared.clock import now
 from drugtime.shared.db import SqlUnitOfWork, get_uow
 
 router = APIRouter(tags=["adherence"])
+router.include_router(history_router)
 
 
 class DoseConfirmationIn(BaseModel):
@@ -108,4 +110,4 @@ def post_doses(
     )
 
 
-# TODO: GET /patients/{patient_id}/adherence (DK1), GET /notifications (DK7)
+# TODO: GET /notifications (DK7)

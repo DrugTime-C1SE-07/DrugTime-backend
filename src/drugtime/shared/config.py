@@ -10,8 +10,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
     celery_broker_url: str = "amqp://guest:guest@127.0.0.1:5672//"
     catalog_dav_drugbank_url: str = (
-        "https://dichvucong.dav.gov.vn/"
-        "api/services/app/soDangKy/GetAllPublicServerPaging"
+        "https://dichvucong.dav.gov.vn/api/services/app/soDangKy/GetAllPublicServerPaging"
     )
 
     supabase_url: str = "http://127.0.0.1:54321"
@@ -36,7 +35,7 @@ class Settings(BaseSettings):
 
     timezone: str = "Asia/Ho_Chi_Minh"
     tick_interval_seconds: int = 300
-    missed_dose_grace_minutes: int = 60
+    missed_dose_grace_minutes: int = 120
     missed_dose_overlap_minutes: int = 30
     heartbeat_max_age_seconds: int = 180
 
