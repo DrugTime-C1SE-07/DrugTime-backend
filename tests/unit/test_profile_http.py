@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 from uuid import uuid4
 
 import pytest
@@ -43,7 +43,9 @@ def test_unauthenticated_all_operations(method, path, body):
 
 
 def test_get_no_store_nullable(client, monkeypatch):
-    monkeypatch.setattr(http, "get_profile", lambda *a, **k: HealthProfile(None, None, None, []))
+    monkeypatch.setattr(
+        http, "get_profile", lambda *a, **k: HealthProfile(None, None, None, None, [])
+    )
     response = client.get("/profile")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -63,9 +65,11 @@ def test_commit_failure_never_acknowledges_or_leaks(client, monkeypatch, method,
 
     monkeypatch.setattr(http, "unit_of_work", fail_commit)
     monkeypatch.setattr(
-        http, "get_profile", lambda *a, **k: HealthProfile("Private", None, None, [])
+        http,
+        "get_profile",
+        lambda *a, **k: HealthProfile("Private", None, None, None, []),
     )
-    monkeypatch.setattr(http, "update_profile", Mock())
+    monkeypatch.setattr(http, "update_profile", Mock(return_value=(None, False)))
     monkeypatch.setattr(
         http,
         "create_condition",
@@ -112,6 +116,82 @@ def test_denied_all_profile_operations(client, monkeypatch, method, path, body):
 )
 def test_invalid_put_422(client, payload):
     assert client.put("/profile", json=payload).status_code == 422
+
+
+def test_put_null_email_is_rejected_but_email_may_be_omitted(client, monkeypatch):
+    base = {"full_name": "Bao", "date_of_birth": "2000-01-01", "gender": "nam"}
+    monkeypatch.setattr(http, "update_profile", Mock(return_value=(None, False)))
+    assert client.put("/profile", json=base).status_code == 204
+    assert client.put("/profile", json={**base, "email": None}).status_code == 422
+
+
+def test_profile_put_declares_email_change_errors(client, monkeypatch):
+    monkeypatch.setattr(http, "update_profile", Mock())
+    schema = client.get("/openapi.json").json()
+    operation = schema["paths"]["/profile"]["put"]
+    assert "409" in operation["responses"]
+    assert "503" in operation["responses"]
+
+
+def test_profile_put_restores_auth_email_when_database_commit_fails(client, monkeypatch):
+    @contextmanager
+    def fail_commit():
+        yield object()
+        raise RuntimeError("private database details")
+
+    monkeypatch.setattr(http, "unit_of_work", fail_commit)
+    monkeypatch.setattr(
+        http,
+        "update_profile",
+        Mock(return_value=("old@example.com", True)),
+    )
+    restore = Mock()
+    monkeypatch.setattr(identity, "restore_profile_email", restore)
+
+    response = client.put(
+        "/profile",
+        json={
+            "full_name": "Bao",
+            "date_of_birth": "2000-01-01",
+            "gender": "nam",
+            "email": "new@example.com",
+        },
+    )
+
+    assert response.status_code == 500
+    restore.assert_called_once_with(ANY, "old@example.com")
+
+
+def test_profile_put_returns_503_if_auth_compensation_fails(client, monkeypatch):
+    @contextmanager
+    def fail_commit():
+        yield object()
+        raise RuntimeError("private database details")
+
+    monkeypatch.setattr(http, "unit_of_work", fail_commit)
+    monkeypatch.setattr(
+        http,
+        "update_profile",
+        Mock(return_value=("old@example.com", True)),
+    )
+    monkeypatch.setattr(
+        identity,
+        "restore_profile_email",
+        Mock(side_effect=RuntimeError("private auth details")),
+    )
+
+    response = client.put(
+        "/profile",
+        json={
+            "full_name": "Bao",
+            "date_of_birth": "2000-01-01",
+            "gender": "nam",
+            "email": "new@example.com",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "private" not in response.text
 
 
 @pytest.mark.parametrize("payload", [{}, {"condition_id": 2}, {"user_id": "other"}])
@@ -201,7 +281,9 @@ def test_commit_precedes_asgi_response_start(monkeypatch, commit_failure):
             raise RuntimeError("commit failed")
 
     monkeypatch.setattr(http, "unit_of_work", transaction)
-    monkeypatch.setattr(http, "get_profile", lambda *a, **k: HealthProfile(None, None, None, []))
+    monkeypatch.setattr(
+        http, "get_profile", lambda *a, **k: HealthProfile(None, None, None, None, [])
+    )
     app = create_app()
     app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(uuid4(), False)
 

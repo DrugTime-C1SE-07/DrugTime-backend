@@ -82,7 +82,12 @@ class HealthProfileAccessAdapter:
 class IdentityProfileAdapter:
     def get(self, uow: UnitOfWork, user_id: UUID) -> PersonalProfile:
         profile = identity.get_profile(uow, user_id)
-        return PersonalProfile(profile.full_name, profile.date_of_birth, profile.gender)
+        return PersonalProfile(
+            profile.full_name,
+            profile.date_of_birth,
+            profile.gender,
+            profile.email,
+        )
 
     def update(
         self,
@@ -92,16 +97,19 @@ class IdentityProfileAdapter:
         full_name: str,
         date_of_birth: date,
         gender: str,
+        email: str | None,
         at: datetime,
-    ) -> None:
-        identity.update_profile(
+    ) -> tuple[str | None, bool]:
+        result = identity.update_profile(
             uow,
             user_id,
             full_name=full_name,
             date_of_birth=date_of_birth,
             gender=gender,
+            email=email,
             at=at,
         )
+        return result.previous_email, result.auth_email_changed
 
 
 class ConditionCatalogAdapter:

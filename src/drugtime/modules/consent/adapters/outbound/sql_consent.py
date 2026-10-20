@@ -9,6 +9,18 @@ from drugtime.shared.uow import UnitOfWork
 
 
 class SqlConsents:
+    def lock_active(self, uow: UnitOfWork, user_id: UUID, purpose: str) -> bool:
+        return (
+            uow.connection.execute(
+                text(
+                    "SELECT 1 FROM user_consents WHERE user_id = :u AND consent_type = :p "
+                    "AND status = 'dong_y' FOR SHARE"
+                ),
+                {"u": user_id, "p": purpose},
+            ).first()
+            is not None
+        )
+
     def has_active(self, uow: UnitOfWork, user_id: UUID, purpose: str) -> bool:
         return (
             uow.connection.execute(

@@ -26,11 +26,31 @@ def _reject_nul(value: str) -> str:
 ConditionText = Annotated[StrictStr, AfterValidator(_reject_nul)]
 
 
+def _health_profile_schema(schema: dict) -> None:
+    schema["properties"]["email"] = {
+        "type": ["string", "null"],
+        "format": "email",
+        "maxLength": 254,
+        "description": "Current login email, null for accounts without an email identifier.",
+    }
+
+
 class ProfileUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     full_name: StrictStr = Field(min_length=1, pattern=r"\S")
     date_of_birth: date
     gender: Literal["nam", "nu", "khac", "male", "female", "other"]
+    # Omission means leave the current login email unchanged; explicit null is invalid.
+    email: StrictStr = Field(
+        default=None,
+        min_length=3,
+        max_length=254,
+        json_schema_extra={"format": "email"},
+        description=(
+            "Optional immediate login email change. Omit to preserve the current email; "
+            "null is invalid."
+        ),
+    )
 
     @field_validator("gender", mode="before")
     @classmethod
@@ -74,10 +94,15 @@ class UserConditionResponse(BaseModel):
 
 
 class HealthProfileResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid", from_attributes=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        from_attributes=True,
+        json_schema_extra=_health_profile_schema,
+    )
     full_name: str | None
     date_of_birth: date | None
     gender: str | None
+    email: str | None
     conditions: list[UserConditionResponse]
 
 
