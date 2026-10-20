@@ -27,6 +27,8 @@ __all__ = [
     "eraser",
     "require_admin",
     "router",
+    "user_name",
+    "user_names",
     "user_emails",
     "user_exists",
 ]
