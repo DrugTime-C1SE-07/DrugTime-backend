@@ -39,7 +39,7 @@ def _api_url() -> str:
 def admin_engine():
     if make_url(ADMIN_URL).host not in _LOCAL_HOSTS:
         pytest.exit("Integration tests only run against a local database", returncode=2)
-    engine = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
+    engine = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 2})
     try:
         with engine.connect() as c:
             # api_role được tạo không có mật khẩu; đặt mật khẩu cho DB local để app đăng nhập.
@@ -133,22 +133,99 @@ class Factory:
             {"u": user_id, "p": purpose},
         )
 
-    def link(self, patient_id: UUID, family_id: UUID, *, sharing: bool = True) -> None:
-        self.db.execute(
+    def link(
+        self,
+        patient_id: UUID,
+        family_id: UUID,
+        *,
+        sharing: bool = True,
+        legacy: bool = False,
+        status: str = "active",
+        document_version: str = "test",
+    ) -> int:
+        if legacy or status != "active":
+            return self.db.execute(
+                text(
+                    "INSERT INTO caregiver_links "
+                    "(patient_user_id, family_user_id, status, sharing_enabled, revoked_at, rejected_at) "
+                    "VALUES (:p, :f, CAST(:st AS link_status), :s, "
+                    "CASE WHEN :is_revoked THEN now() END, "
+                    "CASE WHEN :is_rejected THEN now() END) RETURNING id"
+                ),
+                {
+                    "p": patient_id,
+                    "f": family_id,
+                    "st": status,
+                    "s": sharing,
+                    "is_revoked": (status == "revoked"),
+                    "is_rejected": (status == "rejected"),
+                },
+            ).scalar_one()
+
+        lid = self.db.execute(
             text(
                 "INSERT INTO caregiver_links "
                 "(patient_user_id, family_user_id, status, sharing_enabled) "
-                "VALUES (:p, :f, 'active', :s)"
+                "VALUES (:p, :f, 'pending', :s) RETURNING id"
             ),
             {"p": patient_id, "f": family_id, "s": sharing},
+        ).scalar_one()
+        self.db.execute(
+            text(
+                "INSERT INTO family_link_consent_confirmations "
+                "(link_id, patient_user_id, family_user_id, purpose, document_version) "
+                "VALUES (:lid, :p, :f, 'family_sharing', :v)"
+            ),
+            {"lid": lid, "p": patient_id, "f": family_id, "v": document_version},
         )
+        self.db.execute(
+            text(
+                "UPDATE caregiver_links SET status = 'active', sharing_enabled = :s "
+                "WHERE id = :lid"
+            ),
+            {"lid": lid, "s": sharing},
+        )
+        return lid
 
-    def family_of(self, patient_id: UUID, *, sharing: bool = True) -> UUID:
+    def family_of(self, patient_id: UUID, *, sharing: bool = True, legacy: bool = False) -> UUID:
         """Người thân có link active; người bệnh có đủ consent health_data + family_sharing."""
         self.consent(patient_id, "family_sharing")
         family_id = self.user()
-        self.link(patient_id, family_id, sharing=sharing)
+        self.link(patient_id, family_id, sharing=sharing, legacy=legacy)
         return family_id
+
+    def family_audit_events(
+        self, patient_id: UUID | None = None, actor_id: UUID | None = None
+    ) -> list[dict]:
+        clauses = []
+        params = {}
+        if patient_id is not None:
+            clauses.append("patient_user_id = :p")
+            params["p"] = patient_id
+        if actor_id is not None:
+            clauses.append("actor_user_id = :a")
+            params["a"] = actor_id
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self.db.execute(
+            text(
+                f"SELECT id, actor_user_id, patient_user_id, link_id, operation, "
+                f"result, reason, recorded_at FROM family_link_audit_events {where} ORDER BY id"
+            ),
+            params,
+        )
+        return [dict(r._mapping) for r in rows]
+
+    def consent_confirmations(self, link_id: int | None = None) -> list[dict]:
+        where = "WHERE link_id = :l" if link_id is not None else ""
+        params = {"l": link_id} if link_id is not None else {}
+        rows = self.db.execute(
+            text(
+                f"SELECT id, link_id, patient_user_id, family_user_id, purpose, "
+                f"document_version, confirmed_at FROM family_link_consent_confirmations {where} ORDER BY id"
+            ),
+            params,
+        )
+        return [dict(r._mapping) for r in rows]
 
     def catalog_medication(
         self,

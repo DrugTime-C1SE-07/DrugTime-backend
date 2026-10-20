@@ -68,7 +68,9 @@ def create_app() -> FastAPI:
     for exc_type, status in _STATUS.items():
 
         def handler(_: Request, exc: Exception, status: int = status) -> JSONResponse:
-            return JSONResponse({"detail": str(exc)}, status_code=status)
+            retry_after = getattr(exc, "retry_after", None)
+            headers = None if retry_after is None else {"Retry-After": str(retry_after)}
+            return JSONResponse({"detail": str(exc)}, status_code=status, headers=headers)
 
         app.add_exception_handler(exc_type, handler)
 

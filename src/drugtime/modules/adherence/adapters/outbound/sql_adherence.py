@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from drugtime.modules.adherence.domain.alert import NotificationRecord
 from drugtime.modules.adherence.domain.dose import (
     ClientUuidConflict,
     DoseConfirmation,
@@ -187,8 +188,13 @@ class SqlDoseLogs:
 
 class SqlNotifications:
     def create_missed_alert(
-        self, uow: UnitOfWork, recipient_id: UUID, patient_id: UUID, dedupe_key: str
-    ) -> UUID | None:
+        self,
+        uow: UnitOfWork,
+        recipient_id: UUID,
+        patient_id: UUID,
+        dedupe_key: str,
+        content: str | None = None,
+    ) -> int | None:
         row = uow.connection.execute(
             text("""
             INSERT INTO notifications (user_id, about_patient_user_id, type, content, is_read,
@@ -201,10 +207,122 @@ class SqlNotifications:
                 "r": recipient_id,
                 "p": patient_id,
                 "k": dedupe_key,
-                "content": "Chưa ghi nhận liều thuốc đúng giờ",
+                "content": content or "Chưa ghi nhận liều thuốc đúng giờ",
             },
         ).first()
         return None if row is None else row.id
+
+    def list_for_user(
+        self,
+        uow: UnitOfWork,
+        user_id: UUID,
+        is_read: bool | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[NotificationRecord], int, int]:
+        # 1. Total matching filter
+        if is_read is None:
+            r_tot = uow.connection.execute(
+                text("SELECT count(*) AS total FROM notifications WHERE user_id = :u"),
+                {"u": user_id},
+            ).first()
+        else:
+            r_tot = uow.connection.execute(
+                text("SELECT count(*) AS total FROM notifications WHERE user_id = :u AND is_read = :ir"),
+                {"u": user_id, "ir": is_read},
+            ).first()
+        total = int(getattr(r_tot, "total", None) if hasattr(r_tot, "total") else (r_tot[0] if r_tot else 0))
+
+        # 2. Unread count
+        r_un = uow.connection.execute(
+            text("SELECT count(*) AS unread FROM notifications WHERE user_id = :u AND is_read = false"),
+            {"u": user_id},
+        ).first()
+        unread = int(getattr(r_un, "unread", None) if hasattr(r_un, "unread") else (r_un[0] if r_un else 0))
+
+        # 3. Items
+        if is_read is None:
+            query = text("""
+                SELECT n.id, n.user_id, n.about_patient_user_id, n.type, n.content, n.is_read, n.created_at,
+                       u.full_name AS about_patient_name
+                FROM notifications n
+                LEFT JOIN users u ON u.id = n.about_patient_user_id
+                WHERE n.user_id = :u
+                ORDER BY n.created_at DESC, n.id DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            rows = uow.connection.execute(
+                query,
+                {"u": user_id, "limit": limit, "offset": offset},
+            )
+        else:
+            query = text("""
+                SELECT n.id, n.user_id, n.about_patient_user_id, n.type, n.content, n.is_read, n.created_at,
+                       u.full_name AS about_patient_name
+                FROM notifications n
+                LEFT JOIN users u ON u.id = n.about_patient_user_id
+                WHERE n.user_id = :u AND n.is_read = :ir
+                ORDER BY n.created_at DESC, n.id DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            rows = uow.connection.execute(
+                query,
+                {"u": user_id, "ir": is_read, "limit": limit, "offset": offset},
+            )
+
+        items = [
+            NotificationRecord(
+                id=r.id,
+                user_id=r.user_id,
+                about_patient_user_id=r.about_patient_user_id,
+                type=r.type,
+                content=r.content,
+                is_read=r.is_read,
+                created_at=r.created_at,
+                about_patient_name=getattr(r, "about_patient_name", None),
+            )
+            for r in (rows or [])
+        ]
+        return items, total, unread
+
+    def mark_as_read(
+        self,
+        uow: UnitOfWork,
+        notification_id: int,
+        user_id: UUID,
+        is_read: bool = True,
+    ) -> NotificationRecord | None:
+        row = uow.connection.execute(
+            text("""
+                UPDATE notifications
+                SET is_read = :ir
+                WHERE id = :id AND user_id = :u
+                RETURNING id, user_id, about_patient_user_id, type, content, is_read, created_at
+            """),
+            {"id": notification_id, "u": user_id, "ir": is_read},
+        ).first()
+        if row is None:
+            return None
+
+        name = None
+        if row.about_patient_user_id:
+            user_row = uow.connection.execute(
+                text("SELECT full_name FROM users WHERE id = :p AND erased_at IS NULL"),
+                {"p": row.about_patient_user_id},
+            ).first()
+            if user_row:
+                name = user_row.full_name
+
+        return NotificationRecord(
+            id=row.id,
+            user_id=row.user_id,
+            about_patient_user_id=row.about_patient_user_id,
+            type=row.type,
+            content=row.content,
+            is_read=row.is_read,
+            created_at=row.created_at,
+            about_patient_name=name,
+        )
 
     def erase_for_user(self, uow: UnitOfWork, user_id: UUID) -> None:
         uow.connection.execute(

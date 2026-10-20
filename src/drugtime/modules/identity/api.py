@@ -14,6 +14,7 @@ from drugtime.modules.identity.domain.user import CurrentUser
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
+    "display_names",
     "ProfileRecord",
     "ProfileUpdateResult",
     "get_profile",
@@ -26,6 +27,8 @@ __all__ = [
     "eraser",
     "require_admin",
     "router",
+    "user_name",
+    "user_names",
     "user_emails",
     "user_exists",
 ]
@@ -80,6 +83,14 @@ def android_tokens(uow: UnitOfWork, user_ids: list[UUID]) -> list[tuple[UUID, st
     return SqlUsers(uow).device_tokens(user_ids, "android")
 
 
+def user_name(uow: UnitOfWork, user_id: UUID) -> str | None:
+    return SqlUsers(uow).user_name(user_id)
+
+
+def user_names(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str]:
+    return SqlUsers(uow).user_names(user_ids)
+
+
 class _Eraser:
     name = "identity"
 
@@ -94,3 +105,8 @@ class _AccountRemover:
 
 eraser = _Eraser()
 account_remover = _AccountRemover()
+
+
+def display_names(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str | None]:
+    """Minimal name projection; missing/erased accounts are omitted."""
+    return SqlUsers(uow).display_names(user_ids)

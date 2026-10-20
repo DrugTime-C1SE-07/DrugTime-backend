@@ -13,6 +13,15 @@ class SqlUsers:
     def __init__(self, uow: UnitOfWork) -> None:
         self._c = uow.connection
 
+    def display_names(self, user_ids: list[UUID]) -> dict[UUID, str | None]:
+        if not user_ids:
+            return {}
+        rows = self._c.execute(
+            text("SELECT id, full_name FROM users WHERE id = ANY(:ids) AND erased_at IS NULL"),
+            {"ids": list(set(user_ids))},
+        )
+        return {r.id: (r.full_name.strip() or None) if r.full_name else None for r in rows}
+
     def get(self, user_id: UUID) -> UserRecord | None:
         row = self._c.execute(
             text(
@@ -98,6 +107,22 @@ class SqlUsers:
             {"ids": user_ids, "platform": platform},
         )
         return [(r.user_id, r.fcm_token) for r in rows]
+
+    def user_name(self, user_id: UUID) -> str | None:
+        row = self._c.execute(
+            text("SELECT full_name FROM users WHERE id = :id AND erased_at IS NULL"),
+            {"id": user_id},
+        ).first()
+        return None if row is None else row.full_name
+
+    def user_names(self, user_ids: list[UUID]) -> dict[UUID, str]:
+        if not user_ids:
+            return {}
+        rows = self._c.execute(
+            text("SELECT id, full_name FROM users WHERE id = ANY(:ids) AND erased_at IS NULL"),
+            {"ids": user_ids},
+        )
+        return {r.id: r.full_name for r in rows if r.full_name}
 
     def emails(self, user_ids: list[UUID]) -> dict[UUID, str | None]:
         if not user_ids:

@@ -52,3 +52,10 @@ class SchedulesAdapter:
 class DeviceTokensAdapter:
     def android_tokens(self, uow: UnitOfWork, user_ids: list[UUID]) -> list[tuple[UUID, str]]:
         return identity.android_tokens(uow, user_ids)
+
+
+class PatientNamesAdapter:
+    def get_patient_name(self, uow: UnitOfWork, patient_id: UUID) -> str | None:
+        if uow is None:
+            return None
+        return identity.user_name(uow, patient_id)
