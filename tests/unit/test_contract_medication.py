@@ -5,10 +5,17 @@ Hợp đồng là nguồn chuẩn. Lệch nhau thì sửa code, hoặc sửa h�
 
 import json
 from pathlib import Path
+from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 
 from drugtime.main import create_app
+from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
+from drugtime.modules.catalog.domain.medication import CatalogMedication
+from drugtime.modules.identity import api as identity
+from drugtime.shared.db import get_uow
 
 CONTRACT = Path(__file__).resolve().parents[3] / "api_contract" / "openapi.json"
 OPERATIONS = [
@@ -22,6 +29,7 @@ OPERATIONS = [
     ("delete", "/medications/{id}/schedules/{schedule_id}"),
     ("get", "/patients/{patient_id}/schedules"),
     ("get", "/catalog/medications"),
+    ("get", "/medications/search"),
 ]
 
 pytestmark = pytest.mark.skipif(not CONTRACT.exists(), reason="api_contract chưa checkout")
@@ -105,10 +113,93 @@ def _query_params(op):
 BOUNDS = ("minLength", "maxLength", "pattern", "minimum", "maximum", "default")
 
 
-def test_catalog_search_query_params_match_contract(specs):
+@pytest.mark.parametrize("path", ["/catalog/medications", "/medications/search"])
+def test_catalog_search_query_params_match_contract(specs, path):
     contract, app = specs
-    path = "/catalog/medications"
     assert _query_params(contract["paths"][path]["get"]) == _query_params(app["paths"][path]["get"])
+
+
+def test_catalog_search_operation_ids_match_contract(specs):
+    contract, app = specs
+    paths = ("/catalog/medications", "/medications/search")
+    actual = [app["paths"][path]["get"]["operationId"] for path in paths]
+    assert actual == [contract["paths"][path]["get"]["operationId"] for path in paths]
+    assert len(set(actual)) == len(paths)
+
+
+@pytest.fixture
+def catalog_client():
+    app = create_app()
+    app.dependency_overrides[get_uow] = lambda: object()
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("path", ["/catalog/medications", "/medications/search"])
+def test_catalog_search_requires_auth(catalog_client, path):
+    response = catalog_client.get(path, params={"q": "amlo"})
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Missing bearer token"}
+
+
+def test_catalog_search_alias_returns_same_catalog_without_id_collision(
+    catalog_client, monkeypatch
+):
+    catalog_client.app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(
+        id=uuid4(), is_admin=False
+    )
+    search = Mock(
+        return_value=[
+            CatalogMedication(1, "Amlodipin 5mg", "5 mg", "Viên nén", True, "Amlodipin besilat")
+        ]
+    )
+    monkeypatch.setattr(SqlCatalog, "search", search)
+    responses = [
+        catalog_client.get(path, params={"q": "  amlo  "})
+        for path in ("/catalog/medications", "/medications/search")
+    ]
+    assert all(response.status_code == 200 for response in responses)
+    assert (
+        responses[0].json()
+        == responses[1].json()
+        == {
+            "items": [
+                {
+                    "id": 1,
+                    "name": "Amlodipin 5mg",
+                    "active_ingredient": "Amlodipin besilat",
+                    "strength_text": "5 mg",
+                    "dosage_form": "Viên nén",
+                }
+            ]
+        }
+    )
+    assert search.call_count == 2
+    assert all(call.args[1:] == ("amlo", 20) for call in search.call_args_list)
+
+
+@pytest.mark.parametrize("path", ["/catalog/medications", "/medications/search"])
+@pytest.mark.parametrize(
+    "params",
+    [
+        {},
+        {"q": ""},
+        {"q": "   "},
+        {"q": "a" * 101},
+        {"q": "a", "limit": 0},
+        {"q": "a", "limit": 51},
+        {"q": "a", "limit": "invalid"},
+    ],
+)
+def test_catalog_search_rejects_invalid_query(catalog_client, monkeypatch, path, params):
+    catalog_client.app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(
+        id=uuid4(), is_admin=False
+    )
+    search = Mock(side_effect=AssertionError("Invalid query must not reach the catalog"))
+    monkeypatch.setattr(SqlCatalog, "search", search)
+    response = catalog_client.get(path, params=params)
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], list)
+    search.assert_not_called()
 
 
 def test_patient_schedules_query_params_match_contract(specs):

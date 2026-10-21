@@ -13,7 +13,13 @@ from drugtime.modules.adherence.application.ports import (
     Schedules,
 )
 from drugtime.modules.adherence.domain.alert import Alert, dedupe_key
+from drugtime.modules.adherence.domain.dose import LATE_CONFIRMATION_WINDOW
 from drugtime.shared.uow import UnitOfWork
+
+
+def validate_grace(grace: timedelta) -> None:
+    if grace != LATE_CONFIRMATION_WINDOW:
+        raise ValueError("missed_dose_grace_minutes_must_be_120")
 
 
 def scan(
@@ -31,14 +37,18 @@ def scan(
     patient_names: PatientNames | None = None,
 ) -> list[Alert]:
     """DW1 bước 4–10, 13. Chồng lấn an toàn nhờ UPSERT và dedupe_key."""
-    until = now - grace
-    start = (cursor.get(uow) or until) - overlap
+    validate_grace(grace)
+    until = now - LATE_CONFIRMATION_WINDOW
+    previous = cursor.get(uow)
+    start = min(previous or until, until) - overlap
     if patient_names is None:
         from drugtime.modules.adherence.adapters.outbound.other_modules import PatientNamesAdapter
 
         patient_names = PatientNamesAdapter()
     alerts: list[Alert] = []
     for occ in schedules.occurrences_between(uow, start, until):
+        if now <= occ.scheduled_at + LATE_CONFIRMATION_WINDOW:
+            continue
         dose_log_id = dose_logs.mark_missed(uow, occ.schedule_id, occ.scheduled_at)
         if dose_log_id is None:
             continue  # đã xác nhận, hoặc đã đánh dấu ở lượt quét trước
@@ -74,7 +84,7 @@ def scan(
                     body=alert_body,
                 )
             )
-    cursor.advance(uow, until)
+    cursor.advance(uow, max(previous or until, until))
     return alerts
 
 
@@ -83,6 +93,7 @@ def scan_and_notify(
     notifier: NotificationPort,
     **ports,
 ) -> int:
+    validate_grace(ports["grace"])
     with uow_factory() as uow:
         alerts = scan(uow, **ports)
     notifier.send(alerts)  # best effort, chỉ sau khi notifications đã commit (DW1 bước 11–12)

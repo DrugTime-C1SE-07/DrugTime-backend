@@ -8,6 +8,7 @@ from drugtime.modules.adherence.domain.dose import (
     DoseConfirmationPersistenceResult,
     DoseStatus,
 )
+from drugtime.modules.adherence.domain.history import HistoryRange, HistoryRow
 from drugtime.shared.uow import UnitOfWork
 
 
@@ -78,6 +79,18 @@ class AccessGuard(Protocol):
         self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool, patient_id: UUID
     ) -> None: ...
     def caregivers_of(self, uow: UnitOfWork, patient_id: UUID) -> list[UUID]: ...
+
+
+class HistoryAccess(Protocol):
+    def authorize_history(
+        self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool, patient_id: UUID
+    ) -> None: ...
+
+
+class AdherenceHistoryReader(Protocol):
+    def read(
+        self, uow: UnitOfWork, patient_id: UUID, period: HistoryRange, as_of: datetime
+    ) -> list[HistoryRow]: ...
 
 
 class Schedules(Protocol):
