@@ -2,8 +2,11 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from drugtime.modules.family.adapters.outbound.sql_links import SqlLinks
 from drugtime.modules.family.domain.link import FamilyLink, LinkStatus
+from drugtime.shared.errors import Conflict
 
 
 class FakeResult:
@@ -284,3 +287,52 @@ def test_status_update_clears_new_decision_sharing_without_changing_linked_at():
     update_clause = sql.split("RETURNING")[0]
     assert "THEN false" in update_clause and "ELSE sharing_enabled" in update_clause
     assert "linked_at" not in update_clause
+
+
+# --- adhoc-20261020-family-link-approval --------------------------------------------------
+
+
+def test_list_caregivers_selects_active_with_evidence_left_join_and_order__AC11():
+    patient = uuid4()
+    approved = datetime(2026, 10, 20, tzinfo=UTC)
+    with_evidence = SimpleNamespace(**vars(_row(patient, status="active")), confirmed_at=approved)
+    legacy = SimpleNamespace(**vars(_row(patient, status="active")), confirmed_at=None)
+    uow = FakeUow([[with_evidence, legacy]])
+
+    result = SqlLinks().list_caregivers(uow, patient)
+
+    assert [(link.status, at) for link, at in result] == [
+        (LinkStatus.ACTIVE, approved),
+        (LinkStatus.ACTIVE, None),
+    ]
+    sql = _sql(uow)
+    assert "LEFT JOIN family_link_consent_confirmations AS evidence" in sql
+    assert "evidence.link_id = l.id" in sql
+    assert "evidence.patient_user_id = l.patient_user_id" in sql
+    assert "evidence.family_user_id = l.family_user_id" in sql
+    assert "evidence.purpose = 'family_sharing'" in sql
+    assert "WHERE l.patient_user_id = :p AND l.status = 'active'" in sql
+    assert "ORDER BY evidence.confirmed_at DESC NULLS LAST, l.id DESC" in sql
+    assert "LIMIT" not in sql
+    assert uow.connection.calls[0][1] == {"p": patient}
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_update_sharing_only_updates_active_row__AC12(enabled):
+    row = _row(status="active")
+    row.sharing_enabled = enabled
+    uow = FakeUow([row])
+
+    result = SqlLinks().update_sharing(uow, 77, enabled)
+
+    assert result.sharing_enabled is enabled
+    sql = _sql(uow)
+    assert "SET sharing_enabled = :enabled WHERE id = :id AND status = 'active'" in sql
+    assert uow.connection.calls[0][1] == {"id": 77, "enabled": enabled}
+
+
+def test_update_sharing_on_non_active_row_conflicts__AC10():
+    with pytest.raises(Conflict) as exc:
+        SqlLinks().update_sharing(FakeUow([None]), 77, True)
+
+    assert str(exc.value) == "family_link_not_active"

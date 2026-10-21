@@ -28,3 +28,14 @@ class PendingLink:
     family_user_id: UUID
     family_full_name: str | None
     requested_at: datetime
+
+
+@dataclass(frozen=True)
+class Caregiver:
+    """Liên kết active nhìn từ phía người bệnh; `approved_at` None khi thiếu bằng chứng."""
+
+    link_id: int
+    family_user_id: UUID
+    family_full_name: str | None
+    sharing_enabled: bool
+    approved_at: datetime | None

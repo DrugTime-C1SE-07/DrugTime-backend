@@ -1,4 +1,5 @@
-"""Request/response của /family, khớp api_contract/openapi.json (task 3.10, 3.13)."""
+"""Request/response của /family, khớp api_contract/openapi.json (task 3.10, 3.13, 3.16,
+adhoc-20261020-family-link-approval)."""
 
 import re
 from datetime import datetime
@@ -144,3 +145,35 @@ class FamilyLinkRejection(BaseModel):
     family_user_id: UUID
     status: Literal["rejected"]
     rejected_at: AwareDatetime
+
+
+class Caregiver(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    link_id: PositiveId
+    family_user_id: UUID
+    family_full_name: Annotated[str, Field(min_length=1)] | None
+    status: Literal["active"]
+    sharing_enabled: bool
+    approved_at: AwareDatetime | None
+
+
+class CaregiverList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[Caregiver]
+
+
+class FamilyLinkSharingUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sharing_enabled: StrictBool
+
+
+class FamilyLinkRevocation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    link_id: PositiveId
+    family_user_id: UUID
+    status: Literal["revoked"]
+    revoked_at: AwareDatetime

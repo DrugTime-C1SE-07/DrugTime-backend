@@ -1,6 +1,5 @@
 """Giao diện công khai của family."""
 
-from datetime import datetime
 from uuid import UUID
 
 from drugtime.modules.family.adapters.inbound.http import router
@@ -56,8 +55,22 @@ def approve_link(
     )
 
 
-def revoke_link(uow: UnitOfWork, link_id: int, now: datetime) -> FamilyLink:
-    return manage_links.revoke_link(uow, link_id=link_id, now=now, links=SqlLinks())
+def revoke_link(
+    uow: UnitOfWork,
+    *,
+    link_id: int,
+    actor_id: UUID,
+    is_admin: bool,
+) -> FamilyLink:
+    return manage_links.revoke_link(
+        uow,
+        link_id=link_id,
+        actor_id=actor_id,
+        is_admin=is_admin,
+        links=SqlLinks(),
+        confirmations=SqlConfirmations(),
+        audit=SqlLinkAudit(),
+    )
 
 
 def reject_link(
