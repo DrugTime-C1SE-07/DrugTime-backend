@@ -11,7 +11,14 @@ REGISTRY = {
     ("GET", "/family/links"): ("listPendingFamilyLinks", "metadata_owner_audit"),
     ("POST", "/family/links/{link_id}/approve"): ("approveFamilyLink", "owner_consent_audit"),
     ("POST", "/family/links/{link_id}/reject"): ("rejectFamilyLink", "metadata_owner_audit"),
+    ("GET", "/family/caregivers"): ("listMyCaregivers", "metadata_owner_audit"),
+    ("PATCH", "/family/links/{link_id}/sharing"): (
+        "updateFamilyLinkSharing",
+        "owner_consent_audit",
+    ),
+    ("POST", "/family/links/{link_id}/revoke"): ("revokeFamilyLink", "metadata_owner_audit"),
 }
+MANAGED_PREFIXES = ("/family/links", "/family/caregivers")
 
 
 def dependencies(node):
@@ -23,7 +30,7 @@ def dependencies(node):
 def test_every_family_links_route_is_classified_and_enforced():
     actual = {}
     for route in http.router.routes:
-        if not isinstance(route, APIRoute) or not route.path.startswith("/family/links"):
+        if not isinstance(route, APIRoute) or not route.path.startswith(MANAGED_PREFIXES):
             continue
         for method in route.methods:
             key = (method, route.path)

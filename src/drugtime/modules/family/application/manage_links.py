@@ -1,17 +1,18 @@
-from datetime import datetime
 from uuid import UUID
 
 from drugtime.modules.family.application.ports import (
     Confirmations,
+    DisplayNames,
     LinkAudit,
     Links,
     SharingConsent,
 )
-from drugtime.modules.family.domain.consent_confirmation import LinkApproval
+from drugtime.modules.family.domain.consent_confirmation import Caregiver, LinkApproval
 from drugtime.modules.family.domain.link import (
     FamilyLink,
     LinkStatus,
     ensure_can_create_link,
+    ensure_sharing_changeable,
     pending_link,
     transition_link,
 )
@@ -145,17 +146,83 @@ def reject_link(
     return link
 
 
-def revoke_link(uow: UnitOfWork, *, link_id: int, now: datetime, links: Links) -> FamilyLink:
-    # Existing revoke behavior; caller enforcement for that endpoint is a separate task.
-    link = _get_link(uow, links, link_id)
-    updated = transition_link(link, LinkStatus.REVOKED, now=now)
-    return links.update_status(
-        uow, link_id, updated.status, updated.revoked_at, updated.rejected_at
+def revoke_link(
+    uow: UnitOfWork,
+    *,
+    link_id: int,
+    actor_id: UUID,
+    is_admin: bool,
+    links: Links,
+    confirmations: Confirmations,
+    audit: LinkAudit,
+) -> FamilyLink:
+    link = owned_link(
+        uow,
+        link_id=link_id,
+        actor_id=actor_id,
+        is_admin=is_admin,
+        operation="revoke",
+        links=links,
+        audit=audit,
     )
-
-
-def _get_link(uow: UnitOfWork, links: Links, link_id: int) -> FamilyLink:
-    link = links.get(uow, link_id)
-    if link is None:
-        raise NotFound("family_link_not_found")
+    if link.status is LinkStatus.ACTIVE:
+        # Lịch sử và bằng chứng giữ nguyên; liên kết lại phải qua yêu cầu mới (QD-30).
+        updated = transition_link(link, LinkStatus.REVOKED, now=confirmations.now(uow))
+        link = links.update_status(
+            uow, link_id, updated.status, updated.revoked_at, updated.rejected_at
+        )
+    elif link.status is not LinkStatus.REVOKED:
+        raise Conflict("invalid_link_transition")
+    audit.allowed(uow, actor_id, link.patient_user_id, link.id, "revoke")
     return link
+
+
+def update_sharing(
+    uow: UnitOfWork,
+    *,
+    link_id: int,
+    actor_id: UUID,
+    is_admin: bool,
+    enabled: bool,
+    links: Links,
+    confirmations: Confirmations,
+    consent: SharingConsent,
+    names: DisplayNames,
+    audit: LinkAudit,
+) -> Caregiver:
+    operation = "enable_sharing" if enabled else "disable_sharing"
+    link = owned_link(
+        uow,
+        link_id=link_id,
+        actor_id=actor_id,
+        is_admin=is_admin,
+        operation=operation,
+        links=links,
+        audit=audit,
+    )
+    ensure_sharing_changeable(link)
+    confirmation = confirmations.get(uow, link)
+    # Chỉ bật mới cần consent và bằng chứng; tắt là rút quyền nên luôn được (QD-28).
+    if enabled:
+        if not consent.lock_active(uow, link.patient_user_id):
+            deny(
+                audit,
+                actor_id,
+                operation,
+                patient_id=link.patient_user_id,
+                link_id=link.id,
+                reason="consent_revoked",
+            )
+        if confirmation is None:
+            raise Conflict("consent_confirmation_missing")
+    if link.sharing_enabled is not enabled:
+        link = links.update_sharing(uow, link_id, enabled)
+    audit.allowed(uow, actor_id, link.patient_user_id, link.id, operation)
+    name = names.get(uow, [link.family_user_id]).get(link.family_user_id)
+    return Caregiver(
+        link.id,
+        link.family_user_id,
+        name,
+        link.sharing_enabled,
+        None if confirmation is None else confirmation.confirmed_at,
+    )

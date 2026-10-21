@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import text
 
 from drugtime.modules.family.domain.link import FamilyLink, LinkStatus
+from drugtime.shared.errors import Conflict
 from drugtime.shared.uow import UnitOfWork
 
 _ACTIVE = """status = 'active' AND sharing_enabled = true
@@ -66,6 +67,28 @@ WHERE id = :id
 _INSERT_LINK = text(f"""
 INSERT INTO caregiver_links (patient_user_id, family_user_id, status, sharing_enabled, client_uuid)
 VALUES (:patient_id, :family_id, :status, false, :client_uuid)
+RETURNING {_COLUMNS}
+""")
+
+_LIST_CAREGIVERS = text("""
+SELECT l.id, l.patient_user_id, l.family_user_id, l.status, l.sharing_enabled,
+       l.linked_at, l.revoked_at, l.rejected_at, l.client_uuid,
+       evidence.confirmed_at
+FROM caregiver_links AS l
+LEFT JOIN family_link_consent_confirmations AS evidence
+  ON evidence.link_id = l.id
+ AND evidence.patient_user_id = l.patient_user_id
+ AND evidence.family_user_id = l.family_user_id
+ AND evidence.purpose = 'family_sharing'
+WHERE l.patient_user_id = :p AND l.status = 'active'
+ORDER BY evidence.confirmed_at DESC NULLS LAST, l.id DESC
+""")
+
+# Điều kiện status chặn ghi lên dòng vừa bị hủy bởi transaction khác.
+_UPDATE_SHARING = text(f"""
+UPDATE caregiver_links
+SET sharing_enabled = :enabled
+WHERE id = :id AND status = 'active'
 RETURNING {_COLUMNS}
 """)
 
@@ -134,6 +157,19 @@ class SqlLinks:
             {"p": patient_id},
         )
         return [_record(row) for row in rows]
+
+    def list_caregivers(
+        self, uow: UnitOfWork, patient_id: UUID
+    ) -> list[tuple[FamilyLink, datetime | None]]:
+        rows = uow.connection.execute(_LIST_CAREGIVERS, {"p": patient_id})
+        return [(_record(row), row.confirmed_at) for row in rows]
+
+    def update_sharing(self, uow: UnitOfWork, link_id: int, enabled: bool) -> FamilyLink:
+        row = uow.connection.execute(_UPDATE_SHARING, {"id": link_id, "enabled": enabled}).first()
+        if row is None:
+            # Caller đã khóa dòng FOR UPDATE và kiểm active; tới đây là sai bất biến.
+            raise Conflict("family_link_not_active")
+        return _record(row)
 
     def create(self, uow: UnitOfWork, link: FamilyLink) -> FamilyLink:
         row = uow.connection.execute(

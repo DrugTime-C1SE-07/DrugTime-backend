@@ -7,11 +7,15 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from drugtime.modules.family.adapters.inbound.schemas import (
+    Caregiver,
+    CaregiverList,
     ErrorDetail,
     FamilyLinkApproval,
     FamilyLinkApprovalRequest,
     FamilyLinkConsentConfirmation,
     FamilyLinkRejection,
+    FamilyLinkRevocation,
+    FamilyLinkSharingUpdate,
     LinkCode,
     LinkRequest,
     LinkRequestCreate,
@@ -29,12 +33,19 @@ from drugtime.modules.family.adapters.outbound.sql_link_audit import SqlLinkAudi
 from drugtime.modules.family.adapters.outbound.sql_link_codes import SqlLinkCodes
 from drugtime.modules.family.adapters.outbound.sql_links import SqlLinks
 from drugtime.modules.family.application.get_link_code import get_link_code
+from drugtime.modules.family.application.list_caregivers import list_caregivers
 from drugtime.modules.family.application.list_pending_links import list_pending_links
-from drugtime.modules.family.application.manage_links import approve_link, reject_link
+from drugtime.modules.family.application.manage_links import (
+    approve_link,
+    reject_link,
+    revoke_link,
+    update_sharing,
+)
 from drugtime.modules.family.application.send_link_request import (
     LinkRequestCommand,
     send_link_request,
 )
+from drugtime.modules.family.domain.consent_confirmation import Caregiver as CaregiverRecord
 from drugtime.modules.family.domain.link_request import LinkRequestLimits
 from drugtime.modules.identity import api as identity
 from drugtime.shared import clock
@@ -43,8 +54,6 @@ from drugtime.shared.db import SqlUnitOfWork, get_uow, unit_of_work
 from drugtime.shared.errors import ServiceUnavailable
 
 router = APIRouter(prefix="/family", tags=["family"])
-
-# TODO: PATCH /family/links/{id}/sharing, DELETE /family/links/{id}.
 
 
 # Mã liên kết của chính người gọi, không phải dữ liệu sức khỏe: không qua PEP, không ghi
@@ -162,7 +171,9 @@ LinkId = Annotated[int, Path(ge=1, le=9223372036854775807, json_schema_extra={"f
 async def validate_link_input(request: Request) -> None:
     errors = []
     queries = list(request.query_params.multi_items())
-    if request.method == "GET":
+    path = request.url.path
+    # Chỉ danh sách yêu cầu đang chờ có query (status); mọi route khác không nhận query.
+    if request.method == "GET" and path.endswith("/family/links"):
         for key, value in queries:
             if key != "status":
                 errors.append({"type": "extra_forbidden", "loc": ("query", key), "input": value})
@@ -180,7 +191,7 @@ async def validate_link_input(request: Request) -> None:
             {"type": "extra_forbidden", "loc": ("query", key), "input": value}
             for key, value in queries
         )
-    if request.method == "GET" or request.url.path.endswith("/reject"):
+    if request.method == "GET" or path.endswith(("/reject", "/revoke")):
         if await request.body():
             errors.append({"type": "extra_forbidden", "loc": ("body",), "input": None})
     if errors:
@@ -310,4 +321,95 @@ def reject_family_link(
         family_user_id=link.family_user_id,
         status="rejected",
         rejected_at=link.rejected_at,
+    )
+
+
+def _caregiver(record: CaregiverRecord) -> Caregiver:
+    return Caregiver(
+        link_id=record.link_id,
+        family_user_id=record.family_user_id,
+        family_full_name=record.family_full_name,
+        status="active",
+        sharing_enabled=record.sharing_enabled,
+        approved_at=record.approved_at,
+    )
+
+
+@router.get(
+    "/caregivers",
+    response_model=CaregiverList,
+    operation_id="listMyCaregivers",
+    # Không có tham số nên FastAPI không tự thêm 422; validate_link_input vẫn trả 422.
+    responses={**_LINK_ERRORS, 422: {"description": "Validation Error"}},
+)
+def my_caregivers(
+    user: LinkUser,
+    uow: LinkUow,
+    validated: Annotated[None, Depends(validate_link_input)],
+) -> CaregiverList:
+    records = list_caregivers(
+        uow,
+        actor_id=user.id,
+        is_admin=user.is_admin,
+        links=SqlLinks(),
+        names=DisplayNamesGateway(),
+        audit=SqlLinkAudit(),
+    )
+    return CaregiverList(items=[_caregiver(r) for r in records])
+
+
+@router.patch(
+    "/links/{link_id}/sharing",
+    response_model=Caregiver,
+    operation_id="updateFamilyLinkSharing",
+    responses=_DECISION_ERRORS,
+)
+def update_family_link_sharing(
+    link_id: LinkId,
+    body: FamilyLinkSharingUpdate,
+    user: LinkUser,
+    uow: LinkUow,
+    validated: Annotated[None, Depends(validate_link_input)],
+) -> Caregiver:
+    record = update_sharing(
+        uow,
+        link_id=link_id,
+        actor_id=user.id,
+        is_admin=user.is_admin,
+        enabled=body.sharing_enabled,
+        links=SqlLinks(),
+        confirmations=SqlConfirmations(),
+        consent=SharingConsentGateway(),
+        names=DisplayNamesGateway(),
+        audit=SqlLinkAudit(),
+    )
+    return _caregiver(record)
+
+
+@router.post(
+    "/links/{link_id}/revoke",
+    response_model=FamilyLinkRevocation,
+    operation_id="revokeFamilyLink",
+    responses=_DECISION_ERRORS,
+)
+def revoke_family_link(
+    link_id: LinkId,
+    user: LinkUser,
+    uow: LinkUow,
+    validated: Annotated[None, Depends(validate_link_input)],
+) -> FamilyLinkRevocation:
+    link = revoke_link(
+        uow,
+        link_id=link_id,
+        actor_id=user.id,
+        is_admin=user.is_admin,
+        links=SqlLinks(),
+        confirmations=SqlConfirmations(),
+        audit=SqlLinkAudit(),
+    )
+    return FamilyLinkRevocation(
+        link_id=link.id,
+        family_user_id=link.family_user_id,
+        status="revoked",
+        revoked_at=link.revoked_at,
     )

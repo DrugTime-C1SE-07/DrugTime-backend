@@ -10,6 +10,7 @@ from drugtime.modules.family.application.manage_links import (
     create_link_request,
     reject_link,
     revoke_link,
+    update_sharing,
 )
 from drugtime.modules.family.domain.consent_confirmation import ConsentConfirmation
 from drugtime.modules.family.domain.link import FamilyLink, FamilyLinkError, LinkStatus
@@ -69,6 +70,12 @@ class FakeLinks:
             revoked_at=revoked_at,
             rejected_at=rejected_at,
         )
+        self.links[link_id] = updated
+        self.updated.append(updated)
+        return updated
+
+    def update_sharing(self, uow, link_id, enabled):
+        updated = replace(self.links[link_id], sharing_enabled=enabled)
         self.links[link_id] = updated
         self.updated.append(updated)
         return updated
@@ -173,14 +180,13 @@ def test_approve_link_updates_pending_to_active__AC7():
 
 
 def test_revoke_link_updates_active_to_revoked__AC8():
-    now = datetime(2026, 10, 7, tzinfo=UTC)
     link = FamilyLink(1, uuid4(), uuid4(), LinkStatus.ACTIVE)
     links = FakeLinks([link])
 
-    result = revoke_link(object(), link_id=1, now=now, links=links)
+    result = revoked(links)
 
     assert result.status is LinkStatus.REVOKED
-    assert result.revoked_at == now
+    assert result.revoked_at == NOW
     assert links.updated == [result]
 
 
@@ -223,8 +229,8 @@ def test_invalid_transition_does_not_write__AC10():
     link = FamilyLink(1, uuid4(), uuid4(), LinkStatus.PENDING)
     links = FakeLinks([link])
 
-    with pytest.raises(FamilyLinkError):
-        revoke_link(object(), link_id=1, now=datetime(2026, 10, 7, tzinfo=UTC), links=links)
+    with pytest.raises(Conflict, match="invalid_link_transition"):
+        revoked(links)
 
     assert not links.updated
 
@@ -332,6 +338,46 @@ def rejected(links, **kwargs):
     )
     defaults.update(kwargs)
     return reject_link(object(), **defaults)
+
+
+def revoked(links, **kwargs):
+    link = links.links[1]
+    defaults = dict(
+        link_id=1,
+        actor_id=link.patient_user_id,
+        is_admin=False,
+        links=links,
+        confirmations=FakeConfirmations(),
+        audit=FakeAudit(),
+    )
+    defaults.update(kwargs)
+    return revoke_link(object(), **defaults)
+
+
+class FakeNames:
+    def __init__(self, records=None):
+        self.records = records or {}
+        self.calls = []
+
+    def get(self, uow, ids):
+        self.calls.append(ids)
+        return self.records
+
+
+def shared(c, enabled=True, **kwargs):
+    defaults = dict(
+        link_id=1,
+        actor_id=c.link.patient_user_id,
+        is_admin=False,
+        enabled=enabled,
+        links=c.links,
+        confirmations=c.confirmations,
+        consent=c.consent,
+        names=FakeNames({c.link.family_user_id: "Nguyen An"}),
+        audit=c.audit,
+    )
+    defaults.update(kwargs)
+    return update_sharing(object(), **defaults)
 
 
 def approve_context(c, **kwargs):
@@ -474,3 +520,192 @@ def test_evidence_insert_failure_prevents_status_update_and_allowed_audit():
     with pytest.raises(RuntimeError, match="evidence unavailable"):
         approve_context(c)
     assert not c.links.updated and not c.audit.events
+
+
+# --- adhoc-20261020-family-link-approval: bật/tắt chia sẻ, hủy liên kết ---------------------
+
+
+def active_context(sharing=False, evidence=True):
+    c = context(LinkStatus.ACTIVE, sharing_enabled=sharing)
+    if evidence:
+        c.confirmations.record = ConsentConfirmation(
+            91, 1, c.link.patient_user_id, c.link.family_user_id, "family_sharing", "v1", NOW
+        )
+    return c
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_update_sharing_sets_value_audits_and_returns_caregiver__AC12(enabled):
+    c = active_context(sharing=not enabled)
+
+    result = shared(c, enabled)
+
+    assert c.links.links[1].sharing_enabled is enabled
+    assert (result.link_id, result.family_user_id) == (1, c.link.family_user_id)
+    assert (result.family_full_name, result.sharing_enabled, result.approved_at) == (
+        "Nguyen An",
+        enabled,
+        NOW,
+    )
+    operation = "enable_sharing" if enabled else "disable_sharing"
+    assert c.audit.events == [
+        (
+            "allowed",
+            (c.audit.events[0][1][0], c.link.patient_user_id, c.link.patient_user_id, 1, operation),
+        )
+    ]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_update_sharing_same_value_writes_nothing_but_audits__AC12(enabled):
+    c = active_context(sharing=enabled)
+
+    result = shared(c, enabled)
+
+    assert result.sharing_enabled is enabled
+    assert not c.links.updated
+    assert [kind for kind, _ in c.audit.events] == ["allowed"]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize("actor", ["family", "stranger", "admin"])
+def test_only_patient_may_change_sharing__AC5(enabled, actor):
+    c = active_context()
+    actor_id = c.link.family_user_id if actor == "family" else uuid4()
+
+    with pytest.raises(Forbidden, match="khong_co_quyen"):
+        shared(c, enabled, actor_id=actor_id, is_admin=actor == "admin")
+
+    assert not c.links.updated
+    kind, args = c.audit.events[0]
+    assert kind == "denied" and args[0] == actor_id
+    assert args[1:3] == ((None, None) if actor == "admin" else (c.link.patient_user_id, 1))
+    assert args[3] == ("enable_sharing" if enabled else "disable_sharing")
+
+
+def test_update_sharing_missing_link_is_not_found__AC10():
+    c = active_context()
+    with pytest.raises(NotFound, match="family_link_not_found"):
+        shared(c, link_id=999)
+    assert not c.audit.events
+
+
+@pytest.mark.parametrize("status", [LinkStatus.PENDING, LinkStatus.REJECTED, LinkStatus.REVOKED])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_update_sharing_on_non_active_conflicts_before_consent__AC10(status, enabled):
+    c = context(status)
+    with pytest.raises(Conflict, match="family_link_not_active"):
+        shared(c, enabled)
+    assert not c.consent.checked_patients and not c.links.updated and not c.audit.events
+
+
+def test_enable_without_consent_is_denied_with_reason__AC7_AC10():
+    c = active_context()
+    c.consent.active = False
+
+    with pytest.raises(Forbidden, match="consent_revoked"):
+        shared(c, True)
+
+    assert not c.links.updated
+    kind, args = c.audit.events[0]
+    assert kind == "denied" and args[1:] == (
+        c.link.patient_user_id,
+        1,
+        "enable_sharing",
+        "consent_revoked",
+    )
+
+
+def test_enable_checks_consent_even_when_already_enabled__AC10():
+    c = active_context(sharing=True)
+    c.consent.active = False
+    with pytest.raises(Forbidden, match="consent_revoked"):
+        shared(c, True)
+
+
+def test_disable_needs_no_consent__AC12():
+    c = active_context(sharing=True)
+    c.consent.active = False
+
+    assert shared(c, False).sharing_enabled is False
+    assert not c.consent.checked_patients
+
+
+def test_enable_legacy_link_without_evidence_conflicts__AC10():
+    c = active_context(evidence=False)
+    with pytest.raises(Conflict, match="consent_confirmation_missing"):
+        shared(c, True)
+    assert not c.links.updated and not c.audit.events
+
+
+def test_disable_legacy_link_without_evidence_is_allowed__AC12():
+    c = active_context(sharing=True, evidence=False)
+    result = shared(c, False)
+    assert result.sharing_enabled is False and result.approved_at is None
+
+
+def test_update_sharing_audit_failure_propagates__AC12():
+    c = active_context()
+    c.audit.failure = RuntimeError("audit unavailable")
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        shared(c, True)
+
+
+@pytest.mark.parametrize("actor", ["family", "stranger", "admin"])
+def test_only_patient_may_revoke__AC5(actor):
+    c = active_context(sharing=True)
+    actor_id = c.link.family_user_id if actor == "family" else uuid4()
+
+    with pytest.raises(Forbidden, match="khong_co_quyen"):
+        revoked(c.links, actor_id=actor_id, is_admin=actor == "admin", audit=c.audit)
+
+    assert not c.links.updated
+    kind, args = c.audit.events[0]
+    assert kind == "denied" and args[0] == actor_id and args[3] == "revoke"
+
+
+def test_revoke_admin_denied_before_link_lookup__AC5():
+    c = active_context()
+    c.links.get_for_update = lambda *args: pytest.fail("admin looked up a link")
+    with pytest.raises(Forbidden):
+        revoked(c.links, actor_id=uuid4(), is_admin=True, audit=c.audit)
+
+
+def test_revoke_uses_db_clock_keeps_request_time_and_audits__AC13():
+    c = active_context(sharing=True)
+
+    result = revoked(c.links, confirmations=c.confirmations, audit=c.audit)
+
+    assert result.status is LinkStatus.REVOKED and result.revoked_at == NOW
+    assert result.linked_at == NOW and c.confirmations.clock_calls == 1
+    assert not c.confirmations.inserts
+    kind, args = c.audit.events[0]
+    assert kind == "allowed" and args[1:] == (
+        c.link.patient_user_id,
+        c.link.patient_user_id,
+        1,
+        "revoke",
+    )
+
+
+def test_revoke_replay_returns_first_result_without_writes__AC13():
+    c = active_context()
+    first = revoked(c.links, confirmations=c.confirmations, audit=c.audit)
+    second = revoked(c.links, confirmations=c.confirmations, audit=c.audit)
+
+    assert first == second and c.confirmations.clock_calls == 1
+    assert len(c.links.updated) == 1 and len(c.audit.events) == 2
+
+
+@pytest.mark.parametrize("status", [LinkStatus.PENDING, LinkStatus.REJECTED])
+def test_revoke_pending_or_rejected_conflicts_without_writes__AC10(status):
+    c = context(status)
+    with pytest.raises(Conflict, match="invalid_link_transition"):
+        revoked(c.links, audit=c.audit)
+    assert not c.links.updated and not c.audit.events
+
+
+def test_revoke_missing_link_is_not_found__AC10():
+    c = active_context()
+    with pytest.raises(NotFound, match="family_link_not_found"):
+        revoked(c.links, link_id=999, audit=c.audit)

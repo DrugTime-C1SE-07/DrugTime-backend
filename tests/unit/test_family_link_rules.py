@@ -8,6 +8,7 @@ from drugtime.modules.family.domain.link import (
     FamilyLinkError,
     LinkStatus,
     ensure_can_create_link,
+    ensure_sharing_changeable,
     pending_link,
     transition_link,
 )
@@ -168,3 +169,26 @@ def test_pending_decisions_clear_sharing_but_preserve_request_time(target):
     assert result.sharing_enabled is False
     assert result.linked_at == requested
     assert result.rejected_at == (now if target is LinkStatus.REJECTED else None)
+
+
+# --- adhoc-20261020-family-link-approval --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "status,allowed",
+    [
+        (LinkStatus.ACTIVE, True),
+        (LinkStatus.PENDING, False),
+        (LinkStatus.REJECTED, False),
+        (LinkStatus.REVOKED, False),
+    ],
+)
+def test_sharing_changeable_only_when_active__AC10(status, allowed):
+    link = FamilyLink(1, uuid4(), uuid4(), status)
+
+    if allowed:
+        ensure_sharing_changeable(link)
+        return
+    with pytest.raises(Conflict) as exc:
+        ensure_sharing_changeable(link)
+    assert str(exc.value) == "family_link_not_active"

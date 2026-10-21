@@ -70,6 +70,12 @@ def pending_link(patient_user_id: UUID, family_user_id: UUID) -> FamilyLink:
     )
 
 
+def ensure_sharing_changeable(link: FamilyLink) -> None:
+    """Công tắc chia sẻ chỉ có nghĩa với liên kết đang hoạt động (QD-28)."""
+    if link.status is not LinkStatus.ACTIVE:
+        raise Conflict("family_link_not_active")
+
+
 def transition_link(link: FamilyLink, target: LinkStatus, *, now: datetime) -> FamilyLink:
     if link.status is LinkStatus.PENDING and target is LinkStatus.ACTIVE:
         return FamilyLink(
