@@ -29,7 +29,16 @@ class DoseLogs(Protocol):
     def erase_for_schedules(self, uow: UnitOfWork, schedule_ids: list[int]) -> None: ...
 
 
+# Tách metadata trước PEP và nội dung sau PEP để application kiểm soát thứ tự truy cập.
 class Notifications(Protocol):
+    def metadata(
+        self, uow: UnitOfWork, user_id: UUID, notification_id: int | None = None
+    ) -> list[tuple[int, UUID]]: ...
+
+    def authorized_records(
+        self, uow: UnitOfWork, user_id: UUID, ids: list[int]
+    ) -> list[NotificationRecord]: ...
+
     def create_missed_alert(
         self,
         uow: UnitOfWork,
@@ -37,19 +46,11 @@ class Notifications(Protocol):
         patient_id: UUID,
         dedupe_key: str,
         content: str | None = None,
+        *,
+        medication_name: str,
+        scheduled_at: datetime,
     ) -> int | None:
         """ON CONFLICT (dedupe_key) DO NOTHING; None nếu đã có."""
-        ...
-
-    def list_for_user(
-        self,
-        uow: UnitOfWork,
-        user_id: UUID,
-        is_read: bool | None,
-        limit: int,
-        offset: int,
-    ) -> tuple[list[NotificationRecord], int, int]:
-        """(items, total, unread_count)."""
         ...
 
     def mark_as_read(
@@ -93,7 +94,10 @@ class AdherenceHistoryReader(Protocol):
     ) -> list[HistoryRow]: ...
 
 
+# Context lấy tên thuốc; thời điểm snapshot vẫn phải lấy từ occurrence đang quét.
 class Schedules(Protocol):
+    def alert_context(self, uow: UnitOfWork, schedule_id: int, patient_id: UUID) -> str | None: ...
+
     def owner(self, uow: UnitOfWork, schedule_id: int) -> UUID | None: ...
     def ids_of(self, uow: UnitOfWork, user_id: UUID) -> list[int]: ...
     def occurrences_between(self, uow: UnitOfWork, start: datetime, end: datetime) -> list: ...

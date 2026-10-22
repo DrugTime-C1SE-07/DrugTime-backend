@@ -39,6 +39,10 @@ class AccessGuardAdapter:
 
 
 class SchedulesAdapter:
+    # Lấy context qua public API của medication để giữ ranh giới sở hữu dữ liệu.
+    def alert_context(self, uow: UnitOfWork, schedule_id: int, patient_id: UUID) -> str | None:
+        return medication.alert_context(uow, schedule_id, patient_id)
+
     def owner(self, uow: UnitOfWork, schedule_id: int) -> UUID | None:
         return medication.schedule_owner(uow, schedule_id)
 
@@ -54,6 +58,7 @@ class DeviceTokensAdapter:
         return identity.android_tokens(uow, user_ids)
 
 
+# Application chỉ gọi adapter lấy tên sau khi PEP đã cho phép đọc patient tương ứng.
 class PatientNamesAdapter:
     def get_patient_name(self, uow: UnitOfWork, patient_id: UUID) -> str | None:
         if uow is None:

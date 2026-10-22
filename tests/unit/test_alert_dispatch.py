@@ -2,9 +2,11 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from drugtime.modules.adherence.application.scan_missed_doses import scan
 from drugtime.modules.adherence.domain.alert import Alert
-from drugtime.notification_gateway.fcm import build_fcm_payload
+from drugtime.notification_gateway.fcm import FcmGateway, build_fcm_payload
 
 
 class FakeSchedules:
@@ -13,6 +15,30 @@ class FakeSchedules:
 
     def occurrences_between(self, uow, start, until):
         return self.occurrences
+
+    def alert_context(self, uow, schedule_id, patient_id):
+        assert any(
+            o.schedule_id == schedule_id and o.patient_id == patient_id for o in self.occurrences
+        )
+        return "Test medication"
+
+
+def test_gateway_privacy_in_payload_and_failure_log(caplog, monkeypatch):
+    gateway = FcmGateway("test-project")
+    secret = "unit-sensitive-device-token"
+    alert = Alert(7, uuid4(), secret)
+
+    def fail_send(_):
+        raise RuntimeError(secret + " medication-name scheduled-time")
+
+    monkeypatch.setattr(gateway, "_send_one", fail_send)
+    gateway.send([alert])
+    assert "notification 7" in caplog.text
+    for value in (secret, "medication-name", "scheduled-time"):
+        assert value not in caplog.text
+    message = build_fcm_payload(alert)["message"]
+    assert message["data"] == {"notification_id": "7"}
+    assert message["android"]["notification"]["visibility"] == "PRIVATE"
 
 
 class FakeDoseLogs:
@@ -49,8 +75,20 @@ class FakeNotifications:
         self.created = []
         self.next_id = 100
 
-    def create_missed_alert(self, uow, recipient_id, patient_id, dedupe_key, content=None):
-        for r_id, p_id, k, c, nid in self.created:
+    def create_missed_alert(
+        self,
+        uow,
+        recipient_id,
+        patient_id,
+        dedupe_key,
+        content=None,
+        *,
+        medication_name,
+        scheduled_at,
+    ):
+        assert medication_name == "Test medication"
+        assert scheduled_at.utcoffset() is not None
+        for _r_id, _p_id, k, _c, _nid in self.created:
             if k == dedupe_key:
                 return None  # conflict / already exists
         self.next_id += 1
@@ -79,7 +117,7 @@ class FakePatientNames:
 
 
 def test_dispatch_creates_alert_for_android_caregiver():
-    # AC1: Bệnh nhân bỏ lỡ liều, người thân có liên kết & token Android -> tạo notification & gửi push Alert
+    # AC1: Bỏ lỡ liều, người thân có liên kết và token Android -> notification và Alert.
     patient_id = uuid4()
     caregiver_id = uuid4()
     scheduled_at = datetime(2026, 10, 13, 8, 0, tzinfo=UTC)
@@ -112,7 +150,7 @@ def test_dispatch_creates_alert_for_android_caregiver():
 
 
 def test_dispatch_skips_push_for_ios_caregiver_but_creates_notification_row():
-    # AC2: Người thân chỉ dùng iOS (không có token trong android_tokens) -> có dòng notifications, KHÔNG có Alert push
+    # AC2: Người thân iOS có dòng notifications nhưng không có Alert push.
     patient_id = uuid4()
     caregiver_id = uuid4()
     scheduled_at = datetime(2026, 10, 13, 8, 0, tzinfo=UTC)
@@ -151,7 +189,9 @@ def test_dispatch_deduplicates_repeated_missed_dose_scans():
     occ = SimpleNamespace(patient_id=patient_id, schedule_id=1, scheduled_at=scheduled_at)
     notifications = FakeNotifications()
     # Giả sử đã có một bản ghi với dedupe_key này
-    notifications.created.append((caregiver_id, patient_id, "bo_lo:999:" + str(caregiver_id), "content", 101))
+    notifications.created.append(
+        (caregiver_id, patient_id, "bo_lo:999:" + str(caregiver_id), "content", 101)
+    )
 
     alerts = scan(
         None,
@@ -173,7 +213,7 @@ def test_dispatch_deduplicates_repeated_missed_dose_scans():
 
 
 def test_dispatch_respects_revoked_consent_and_sharing_switch():
-    # AC4: Người thân đã bị thu hồi quyền hoặc rút consent -> access.caregivers_of trả rỗng -> không tạo notification hay alert
+    # AC4: Thu hồi quyền/consent -> caregivers_of rỗng -> không notification/Alert.
     patient_id = uuid4()
     scheduled_at = datetime(2026, 10, 13, 8, 0, tzinfo=UTC)
 
@@ -199,7 +239,7 @@ def test_dispatch_respects_revoked_consent_and_sharing_switch():
 
 
 def test_alert_payload_hides_medication_details_and_names_patient():
-    # AC5: Nội dung push tuyệt đối không có tên thuốc, liều lượng, giờ uống cụ thể (CD6, QD-26), chỉ nêu tên bệnh nhân
+    # AC5: Push không có thuốc/liều lượng/giờ (CD6, QD-26), chỉ nêu tên bệnh nhân.
     alert = Alert(
         notification_id=105,
         recipient_id=uuid4(),
@@ -212,7 +252,10 @@ def test_alert_payload_hides_medication_details_and_names_patient():
 
     assert payload["message"]["token"] == "fcm_token_xyz"
     assert payload["message"]["notification"]["title"] == "DrugTime"
-    assert payload["message"]["notification"]["body"] == "Bác Nguyễn Văn A chưa ghi nhận liều thuốc đúng giờ"
+    assert (
+        payload["message"]["notification"]["body"]
+        == "Bác Nguyễn Văn A chưa ghi nhận liều thuốc đúng giờ"
+    )
     assert payload["message"]["data"]["notification_id"] == "105"
 
     # Không lộ thông tin y tế nhạy cảm
@@ -271,6 +314,8 @@ def test_sql_notifications_create_missed_alert():
         patient_id,
         "bo_lo:1:u1",
         "Bác An chưa uống thuốc",
+        medication_name="Test medication",
+        scheduled_at=datetime(2026, 10, 13, 8, tzinfo=UTC),
     )
 
     assert nid == 101
@@ -290,6 +335,8 @@ def test_sql_notifications_create_missed_alert_conflict_returns_none():
         user_id,
         patient_id,
         "bo_lo:1:u1",
+        medication_name="Test medication",
+        scheduled_at=datetime(2026, 10, 13, 8, tzinfo=UTC),
     )
 
     assert nid is None
@@ -311,27 +358,20 @@ def test_sql_notifications_list_for_user():
         is_read=False,
         created_at=created_at,
         about_patient_name="Bình",
+        medication_name="Test medication",
+        scheduled_at=created_at,
     )
 
-    connection = FakeConnection([
-        SimpleNamespace(total=1),
-        SimpleNamespace(unread=1),
-        [item_row],
-    ])
-
-    items, total, unread = SqlNotifications().list_for_user(
-        FakeUow(connection),
-        user_id,
-        is_read=None,
-        limit=20,
-        offset=0,
-    )
-
-    assert total == 1
-    assert unread == 1
+    connection = FakeConnection([[item_row], [item_row]])
+    repo = SqlNotifications()
+    metadata = repo.metadata(FakeUow(connection), user_id)
+    assert metadata == [(202, patient_id)]
+    items = repo.authorized_records(FakeUow(connection), user_id, [202])
     assert len(items) == 1
     assert items[0].id == 202
-    assert items[0].about_patient_name == "Bình"
+    assert items[0].about_patient_name is None  # identity lookup runs after PEP in the service
+    assert items[0].medication_name == "Test medication"
+    assert connection.calls[1][1] == {"u": user_id, "ids": [202]}
 
 
 def test_sql_notifications_mark_as_read():
@@ -349,13 +389,17 @@ def test_sql_notifications_mark_as_read():
         content="Bác Cường chưa uống thuốc",
         is_read=True,
         created_at=created_at,
+        medication_name=None,
+        scheduled_at=None,
     )
     user_row = SimpleNamespace(full_name="Cường")
 
-    connection = FakeConnection([
-        updated_row,
-        user_row,
-    ])
+    connection = FakeConnection(
+        [
+            updated_row,
+            user_row,
+        ]
+    )
 
     rec = SqlNotifications().mark_as_read(
         FakeUow(connection),
@@ -367,7 +411,7 @@ def test_sql_notifications_mark_as_read():
     assert rec is not None
     assert rec.id == 303
     assert rec.is_read is True
-    assert rec.about_patient_name == "Cường"
+    assert rec.about_patient_name is None  # no cross-module SQL name lookup
 
 
 def test_sql_notifications_mark_as_read_not_found():
@@ -384,3 +428,29 @@ def test_sql_notifications_mark_as_read_not_found():
     )
 
     assert rec is None
+
+
+@pytest.mark.parametrize("name", [None, "", "   ", 42])
+def test_missing_snapshot_fails_before_notification_insert(name):
+    from unittest.mock import Mock
+
+    patient, recipient = uuid4(), uuid4()
+    at = datetime(2026, 10, 22, 8, tzinfo=UTC)
+    schedules = FakeSchedules([SimpleNamespace(schedule_id=1, patient_id=patient, scheduled_at=at)])
+    schedules.alert_context = lambda *a: name
+    notifications = Mock()
+    with pytest.raises(ValueError, match="snapshot unavailable"):
+        scan(
+            None,
+            now=at + timedelta(hours=3),
+            grace=timedelta(minutes=120),
+            overlap=timedelta(minutes=30),
+            cursor=FakeScanCursor(),
+            schedules=schedules,
+            dose_logs=FakeDoseLogs({(1, at): 99}),
+            access=FakeAccessGuard({patient: [recipient]}),
+            tokens=FakeTokens(),
+            notifications=notifications,
+            patient_names=FakePatientNames(),
+        )
+    notifications.create_missed_alert.assert_not_called()

@@ -53,7 +53,18 @@ def scan(
         if dose_log_id is None:
             continue  # đã xác nhận, hoặc đã đánh dấu ở lượt quét trước
 
-        patient_name = patient_names.get_patient_name(uow, occ.patient_id) if patient_names else None
+        # Snapshot gắn với occurrence gây cảnh báo, không dùng giờ tạo notification.
+        medication_name = schedules.alert_context(uow, occ.schedule_id, occ.patient_id)
+        if (
+            not isinstance(medication_name, str)
+            or not medication_name.strip()
+            or occ.scheduled_at.utcoffset() is None
+        ):
+            # Ném lỗi để UoW rollback cả liều bỏ lỡ, notification và cursor của lượt quét.
+            raise ValueError("notification event snapshot unavailable")
+        patient_name = (
+            patient_names.get_patient_name(uow, occ.patient_id) if patient_names else None
+        )
         if patient_name:
             content = f"Bác {patient_name} chưa ghi nhận liều thuốc đúng giờ"
             alert_body = f"Bác {patient_name} chưa ghi nhận liều thuốc đúng giờ"
@@ -69,11 +80,13 @@ def scan(
                 occ.patient_id,
                 dedupe_key(dose_log_id, recipient_id),
                 content=content,
+                medication_name=medication_name,
+                scheduled_at=occ.scheduled_at,
             )
             if nid is not None:
                 created[recipient_id] = nid
 
-        # Người thân chỉ dùng iOS vẫn có dòng notifications và thấy khi mở app (DM3, C-06, C-07, BS-03).
+        # iOS vẫn có dòng notifications khi mở app (DM3, C-06, C-07, BS-03).
         for recipient_id, token in tokens.android_tokens(uow, list(created)):
             alerts.append(
                 Alert(

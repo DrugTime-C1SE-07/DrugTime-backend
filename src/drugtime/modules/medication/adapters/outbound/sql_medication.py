@@ -50,6 +50,20 @@ _UPDATABLE = {
 
 
 class SqlMedication:
+    # Ràng buộc schedule với patient ngay khi lấy ID thuốc dùng cho snapshot cảnh báo.
+    def alert_medication_id(
+        self, uow: UnitOfWork, schedule_id: int, patient_id: UUID
+    ) -> int | None:
+        row = uow.connection.execute(
+            text(
+                "SELECT um.medication_id FROM medication_schedules ms "
+                "JOIN user_medications um ON um.id = ms.user_medication_id "
+                "WHERE ms.id = :s AND um.user_id = :p"
+            ),
+            {"s": schedule_id, "p": patient_id},
+        ).first()
+        return None if row is None else row.medication_id
+
     def schedule_owner(self, uow: UnitOfWork, schedule_id: int) -> UUID | None:
         row = uow.connection.execute(
             text(
@@ -350,8 +364,7 @@ class SqlMedication:
     def mark_deleted(self, uow: UnitOfWork, user_medication_id: int, at: datetime) -> None:
         uow.connection.execute(
             text(
-                "UPDATE user_medications SET deleted_at = :at "
-                "WHERE id = :id AND deleted_at IS NULL"
+                "UPDATE user_medications SET deleted_at = :at WHERE id = :id AND deleted_at IS NULL"
             ),
             {"id": user_medication_id, "at": at},
         )

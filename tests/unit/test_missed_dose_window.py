@@ -21,11 +21,15 @@ def ports(occurrences=(), previous=None):
         grace=LATE_CONFIRMATION_WINDOW,
         overlap=timedelta(minutes=30),
         cursor=Mock(get=Mock(return_value=previous)),
-        schedules=Mock(occurrences_between=Mock(return_value=list(occurrences))),
+        schedules=Mock(
+            occurrences_between=Mock(return_value=list(occurrences)),
+            alert_context=Mock(return_value="Test medication"),
+        ),
         dose_logs=Mock(mark_missed=Mock(return_value=1)),
         access=Mock(caregivers_of=Mock(return_value=[FAMILY])),
         tokens=Mock(android_tokens=Mock(return_value=[(FAMILY, "unit-device-token")])),
         notifications=Mock(create_missed_alert=Mock(return_value=uuid4())),
+        patient_names=Mock(get_patient_name=Mock(return_value="Test patient")),
     )
 
 

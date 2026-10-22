@@ -1,4 +1,4 @@
-"""Đối chiếu OpenAPI sinh từ app với hợp đồng api_contract/openapi.json cho /notifications (task 3.20).
+"""Đối chiếu OpenAPI sinh từ app với contract cho /notifications (3.21).
 
 Hợp đồng là nguồn chuẩn. Lệch nhau thì sửa code, hoặc sửa hợp đồng kèm lý do.
 """
@@ -12,6 +12,7 @@ from tests.unit.test_contract_medication import CONTRACT, _object, _request, _re
 
 OPERATIONS = [
     ("get", "/notifications"),
+    ("get", "/notifications/{id}"),
     ("patch", "/notifications/{id}"),
 ]
 
@@ -51,6 +52,7 @@ def test_notification_query_params_match_contract(specs):
     c_params = {p["name"]: p for p in contract["paths"]["/notifications"]["get"]["parameters"]}
     a_params = {p["name"]: p for p in app["paths"]["/notifications"]["get"]["parameters"]}
 
+    assert set(c_params) <= set(a_params)
     assert "is_read" in a_params
     assert "limit" in a_params
     assert "offset" in a_params
