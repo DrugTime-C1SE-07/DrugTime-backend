@@ -5,6 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Header, Path, Query
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict
@@ -158,7 +159,7 @@ def get_notification_uow() -> Iterator[SqlUnitOfWork]:
     try:
         with unit_of_work() as uow:
             yield uow
-    except (Forbidden, NotFound, Unauthorized):
+    except (Forbidden, NotFound, Unauthorized, RequestValidationError):
         raise
     except Exception as exc:
         raise ServiceUnavailable("notification_access_unavailable") from exc
