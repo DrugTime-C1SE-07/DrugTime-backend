@@ -720,3 +720,38 @@ def test_denied_audit_writer_failure_fails_closed__AC18(db, make, auth, monkeypa
         text("SELECT status FROM caregiver_links WHERE id = :id"), {"id": link_id}
     ).scalar_one() == "pending"
     assert not make.family_audit_events(patient_id=patient)
+
+
+# ==============================================================================
+# adhoc-20261020-family-link-approval: reject chỉ dành cho đúng patient (AC5)
+# ==============================================================================
+
+
+def test_reject_denied_caller_matrix__AC5(client, make, auth, admin_auth):
+    """Người thân của link, người lạ và admin từ chối thay → 403, link vẫn pending, mỗi lượt
+    đúng một audit denied với actor là người gọi; patient từ chối được (cặp allowed)."""
+    patient = make.user(consents=("family_sharing",))
+    family, stranger = make.user(), make.user()
+    admin_id, admin_header = admin_auth
+    link_id = make.pending_link(patient, family)
+
+    assert client.post(f"/family/links/{link_id}/reject").status_code == 401
+    for actor, headers in (
+        (family, auth(family)),
+        (stranger, auth(stranger)),
+        (admin_id, admin_header),
+    ):
+        r = client.post(f"/family/links/{link_id}/reject", headers=headers)
+        assert r.status_code == 403 and r.json() == {"detail": "khong_co_quyen"}
+        denied = make.family_audit_events(actor_id=actor)
+        assert [(a["operation"], a["result"], a["reason"]) for a in denied] == [
+            ("reject", "denied", "khong_co_quyen")
+        ]
+        # Admin bị chặn trước khi tra cứu link nên không ghi patient/link.
+        expected_scope = (None, None) if actor == admin_id else (patient, link_id)
+        assert (denied[0]["patient_user_id"], denied[0]["link_id"]) == expected_scope
+        assert make.link_row(link_id)["status"] == "pending"
+
+    r = client.post(f"/family/links/{link_id}/reject", headers=auth(patient))
+    assert r.status_code == 200 and r.json()["status"] == "rejected"
+    assert make.link_row(link_id)["status"] == "rejected"

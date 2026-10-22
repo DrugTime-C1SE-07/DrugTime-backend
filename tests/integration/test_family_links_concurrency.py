@@ -223,3 +223,54 @@ def test_consent_revocation_committed_before_approve_causes_403__AC7_AC10(
     ).scalar_one()
     assert status == "pending"
     assert len(make.consent_confirmations(link_id)) == 0
+
+
+# ==============================================================================
+# adhoc-20261020-family-link-approval: hủy liên kết chạy đua với bật chia sẻ (AC15)
+# ==============================================================================
+
+
+def test_concurrent_revoke_and_enable_sharing_ends_revoked__AC15(
+    admin_engine, client, db, make, auth, wait_for_lock_waiters
+):
+    """Hai request cùng chờ khóa dòng liên kết rồi chạy theo thứ tự bất kỳ: trạng thái cuối luôn
+    là revoked, người thân bị 403 ở request kế tiếp. Hủy luôn 200; bật chia sẻ 200 (chạy trước)
+    hoặc 409 family_link_not_active (chạy sau)."""
+    from tests.integration.test_family_links_access import _create_user_medication
+
+    patient = make.user(consents=("health_data", "family_sharing"))
+    family = make.user()
+    link_id = make.link(patient, family, status="active", sharing=False)
+    user_med_id = _create_user_medication(db, patient, make.catalog_medication())
+    app = create_app()
+
+    def enable():
+        return TestClient(app).patch(
+            f"/family/links/{link_id}/sharing",
+            json={"sharing_enabled": True},
+            headers=auth(patient),
+        )
+
+    def revoke():
+        return TestClient(app).post(f"/family/links/{link_id}/revoke", headers=auth(patient))
+
+    with admin_engine.execution_options(isolation_level="READ COMMITTED").connect() as holder:
+        tx = holder.begin()
+        holder.execute(
+            text("SELECT id FROM caregiver_links WHERE id = :id FOR UPDATE"), {"id": link_id}
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            f_enable, f_revoke = executor.submit(enable), executor.submit(revoke)
+            wait_for_lock_waiters(2)
+            tx.rollback()
+            r_enable, r_revoke = f_enable.result(), f_revoke.result()
+
+    assert r_revoke.status_code == 200, r_revoke.text
+    assert r_enable.status_code in (200, 409), r_enable.text
+    if r_enable.status_code == 409:
+        assert r_enable.json() == {"detail": "family_link_not_active"}
+    assert make.link_row(link_id)["status"] == "revoked"
+
+    r = client.get(f"/medications/{user_med_id}", headers=auth(family))
+    assert r.status_code == 403
+    assert make.access_logs(patient)[-1]["result"] == "denied"

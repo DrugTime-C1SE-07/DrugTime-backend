@@ -746,3 +746,83 @@ def test_consent_revoked_takes_effect_next_request__AC34(client, db, make, auth,
     assert r.status_code == 404
     assert r.json() == {"detail": "link_code_not_found"}
     assert _links(db, patient, f2) == []
+
+
+# --- BS-04 end-to-end qua endpoint thật (adhoc-20261020-family-link-approval, AC9) -------------
+#
+# Các test BS-04 ở trên chèn dòng `rejected` trực tiếp. Ở đây mọi lần từ chối, chấp thuận và hủy
+# đi qua endpoint thật. `rejected_at` do DB ghi theo giờ thật, còn cooldown so với `clock.now()`
+# của app, nên mốc 24 giờ được dựng từ `rejected_at` đọc lại trong DB.
+
+
+def _send_and_reject(client, auth, patient, family, code):
+    r = _send(client, auth, family, code)
+    assert r.status_code == 201, r.text
+    link_id = r.json()["id"]
+    rejected = client.post(f"/family/links/{link_id}/reject", headers=auth(patient))
+    assert rejected.status_code == 200, rejected.text
+    return link_id
+
+
+def test_five_rejections_via_endpoint_block_24h_others_unaffected__AC9(
+    client, db, make, auth, patient_code, frozen_clock
+):
+    patient, code = patient_code()
+    family, other = make.user(), make.user()
+    for _ in range(4):
+        _send_and_reject(client, auth, patient, family, code)
+    # Bị từ chối 4 lần: vẫn gửi được (BS-04 chỉ chặn từ lần thứ 5).
+    fifth = _send_and_reject(client, auth, patient, family, code)
+    fifth_rejected_at = db.execute(
+        text("SELECT rejected_at FROM caregiver_links WHERE id = :id"), {"id": fifth}
+    ).scalar_one()
+    before = _links(db, patient, family)
+
+    blocked = _send(client, auth, family, code)
+
+    assert blocked.status_code == 429
+    assert blocked.json() == {"detail": "link_request_cooldown"}
+    assert 0 < int(blocked.headers["Retry-After"]) <= 24 * 3600
+    assert _links(db, patient, family) == before
+    # (c) Người thân khác của cùng patient không bị ảnh hưởng.
+    assert _send(client, auth, other, code).status_code == 201
+
+    frozen_clock(fifth_rejected_at + timedelta(hours=23, minutes=59))
+    assert _send(client, auth, family, code).status_code == 429
+    frozen_clock(fifth_rejected_at + timedelta(hours=24))
+    assert _send(client, auth, family, code).status_code == 201
+
+
+def test_approval_then_revoke_resets_streak_via_endpoints__AC9(
+    client, db, make, auth, patient_code
+):
+    """Từ chối 4, chấp thuận, hủy liên kết, từ chối thêm 4: lần gửi kế tiếp vẫn được, vì chấp
+    thuận đưa bộ đếm về 0 và hủy liên kết không tính là từ chối."""
+    patient, code = patient_code()
+    family = make.user()
+    for _ in range(4):
+        _send_and_reject(client, auth, patient, family, code)
+
+    r = _send(client, auth, family, code)
+    assert r.status_code == 201, r.text
+    approved = r.json()["id"]
+    approve = client.post(
+        f"/family/links/{approved}/approve",
+        json={
+            "family_user_id": str(family),
+            "consent_confirmed": True,
+            "document_version": "2026-10-v1",
+        },
+        headers=auth(patient),
+    )
+    assert approve.status_code == 200, approve.text
+    assert client.post(f"/family/links/{approved}/revoke", headers=auth(patient)).status_code == 200
+
+    for _ in range(4):
+        _send_and_reject(client, auth, patient, family, code)
+
+    # Lần gửi thứ 10 trong ngày: vẫn dưới giới hạn 10 yêu cầu/ngày (đếm 9 yêu cầu đã tạo).
+    r = _send(client, auth, family, code)
+    assert r.status_code == 201, r.text
+    statuses = [link["status"] for link in _links(db, patient, family)]
+    assert statuses == ["rejected"] * 4 + ["revoked"] + ["rejected"] * 4 + ["pending"]
