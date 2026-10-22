@@ -14,6 +14,14 @@ def build_fcm_payload(alert: Alert) -> dict:
                 "title": alert.title,
                 "body": alert.body,
             },
+            "android": {
+                "notification": {
+                    "visibility": "PRIVATE",
+                    "channel_id": "family_alerts",
+                    "tag": "family_alert_" + str(alert.notification_id),
+                }
+            },
+            # App dùng ID gọi API có kiểm quyền; không đưa snapshot thuốc/giờ vào data.
             "data": {
                 "notification_id": str(alert.notification_id),
             },
@@ -33,11 +41,13 @@ class FcmGateway:
             try:
                 self._send_one(alert)
             except Exception:
-                log.exception("FCM send failed for notification %s", alert.notification_id)
+                # Provider exception text can contain a token or the request payload.
+                log.error("FCM send failed for notification %s", alert.notification_id)
 
+    # Điểm gửi hiện còn stub: dựng payload và ghi log, chưa thực hiện HTTP tới FCM.
     def _send_one(self, alert: Alert) -> None:
-        payload = build_fcm_payload(alert)
+        build_fcm_payload(alert)
         if not self._project_id:
-            log.info("FCM simulated send (no project_id): token=%s", alert.device_token)
+            log.info("FCM simulated send (no project_id)")
             return
-        log.info("FCM dispatching to %s: %s", alert.device_token, payload)
+        log.info("FCM dispatch requested for notification %s", alert.notification_id)

@@ -16,6 +16,12 @@ class FakeSchedules:
     def occurrences_between(self, uow, start, until):
         return self.occurrences
 
+    def alert_context(self, uow, schedule_id, patient_id):
+        assert any(
+            o.schedule_id == schedule_id and o.patient_id == patient_id for o in self.occurrences
+        )
+        return "Test medication"
+
 
 class FakeDoseLogs:
     def __init__(self, missed_ids=None):
@@ -51,8 +57,20 @@ class FakeNotifications:
         self.created = []
         self.next_id = 100
 
-    def create_missed_alert(self, uow, recipient_id, patient_id, dedupe_key, content=None):
-        for r_id, p_id, k, c, nid in self.created:
+    def create_missed_alert(
+        self,
+        uow,
+        recipient_id,
+        patient_id,
+        dedupe_key,
+        content=None,
+        *,
+        medication_name,
+        scheduled_at,
+    ):
+        assert medication_name == "Test medication"
+        assert scheduled_at.utcoffset() is not None
+        for _r_id, _p_id, k, _c, _nid in self.created:
             if k == dedupe_key:
                 return None  # conflict / already exists
         self.next_id += 1
@@ -97,7 +115,7 @@ def dummy_uow():
 
 
 def test_alert_timing_under_2_seconds_batch_sizes():
-    """AC1: Toàn trình quét và phát sinh thông báo đạt SLO p95 < 2s (QD-25, NFR05) cho các kích thước mẻ (1, 10, 50 liều)."""
+    """Benchmark nội bộ mẻ 1/10/50 liều với notifier giả; không chứng minh SLO FCM."""
     batch_sizes = [1, 10, 50]
     now = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
     scheduled_at = datetime(2026, 10, 14, 9, 0, tzinfo=UTC)
@@ -115,7 +133,9 @@ def test_alert_timing_under_2_seconds_batch_sizes():
             p_id = uuid4()
             c_id = uuid4()
             sch_id = i + 1
-            occurrences.append(SimpleNamespace(patient_id=p_id, schedule_id=sch_id, scheduled_at=scheduled_at))
+            occurrences.append(
+                SimpleNamespace(patient_id=p_id, schedule_id=sch_id, scheduled_at=scheduled_at)
+            )
             missed_map[(sch_id, scheduled_at)] = 1000 + i
             caregivers_map[p_id] = [c_id]
             tokens_map[c_id] = [f"token_android_{i}"]
@@ -155,11 +175,14 @@ def test_alert_timing_under_2_seconds_batch_sizes():
         assert elapsed < 2.0, f"Batch size {size} took {elapsed:.4f}s, exceeding 2.0s SLO threshold"
 
     # Log kết quả benchmark
-    print(f"\n[BENCHMARK] Timing results: 1 item = {timing_results[1]:.5f}s, 10 items = {timing_results[10]:.5f}s, 50 items = {timing_results[50]:.5f}s")
+    print(
+        f"\n[BENCHMARK] 1 item = {timing_results[1]:.5f}s, "
+        f"10 items = {timing_results[10]:.5f}s, 50 items = {timing_results[50]:.5f}s"
+    )
 
 
 def test_alert_explicitly_names_patient_vietnamese():
-    """AC2: Alert phải nêu đích danh tên bệnh nhân theo mẫu 'Bác [Tên] chưa ghi nhận liều thuốc đúng giờ' (PB20)."""
+    """AC2: Alert nêu tên bệnh nhân theo mẫu đã duyệt (PB20)."""
     vietnamese_names = [
         "Nguyễn Văn An",
         "Trần Thị Mai",
@@ -206,7 +229,7 @@ def test_alert_explicitly_names_patient_vietnamese():
 
 
 def test_alert_fallback_when_patient_name_empty_or_none():
-    """AC3: Khi tên bệnh nhân là None hoặc rỗng, fallback về nội dung chung an toàn, không ném exception hay hiện 'Bác None'."""
+    """AC3: Tên None/rỗng dùng câu chung an toàn, không hiện 'Bác None'."""
     test_cases = [None, ""]
 
     for name in test_cases:
@@ -243,7 +266,7 @@ def test_alert_fallback_when_patient_name_empty_or_none():
 
 
 def test_alert_payload_negative_check_health_privacy_cd6():
-    """AC4: Quét phủ định kiểm soát rò rỉ dữ liệu y tế (CD6, QD-26): không chứa tên thuốc, hàm lượng, dạng dùng hay giờ uống cụ thể."""
+    """AC4: Không lộ tên thuốc, hàm lượng, dạng dùng hay giờ uống (CD6, QD-26)."""
     patient_id = uuid4()
     caregiver_id = uuid4()
     scheduled_at = datetime(2026, 10, 14, 8, 0, tzinfo=UTC)
@@ -269,15 +292,34 @@ def test_alert_payload_negative_check_health_privacy_cd6():
 
     # Tập các từ khóa y tế nhạy cảm tuyệt đối cấm xuất hiện trong push
     forbidden_terms = [
-        "paracetamol", "panadol", "metformin", "amlodipine", "aspirin", "insulin",
-        "viên", "gói", "mg", "ml", "mcg", "ui", "liều lượng", "uống lúc", "8:00", "08:00",
-        "phác đồ", "toa thuốc", "đơn thuốc", "bệnh án", "chẩn đoán"
+        "paracetamol",
+        "panadol",
+        "metformin",
+        "amlodipine",
+        "aspirin",
+        "insulin",
+        "viên",
+        "gói",
+        "mg",
+        "ml",
+        "mcg",
+        "ui",
+        "liều lượng",
+        "uống lúc",
+        "8:00",
+        "08:00",
+        "phác đồ",
+        "toa thuốc",
+        "đơn thuốc",
+        "bệnh án",
+        "chẩn đoán",
     ]
 
     all_text = (
         f"{alert.title} {alert.body} "
         f"{notifications.created[0][3]} "
-        f"{payload['message']['notification']['title']} {payload['message']['notification']['body']} "
+        f"{payload['message']['notification']['title']} "
+        f"{payload['message']['notification']['body']} "
         f"{str(payload['message']['data'])}"
     ).lower()
 
@@ -286,7 +328,7 @@ def test_alert_payload_negative_check_health_privacy_cd6():
 
 
 def test_alert_platform_routing_android_push_ios_db_only():
-    """AC5, AC6: Phân luồng chính xác theo nền tảng: Android nhận push FCM, iOS không push APNs nhưng nhận thông báo DB (C-06, C-07, BS-03)."""
+    """AC5/6: Android push FCM; iOS chỉ có inbox DB (C-06, C-07, BS-03)."""
     patient_id = uuid4()
     android_user = uuid4()
     ios_user = uuid4()
@@ -334,7 +376,7 @@ def test_alert_platform_routing_android_push_ios_db_only():
 
 
 def test_alert_no_false_alerts_if_dose_already_confirmed():
-    """AC7: Chống cảnh báo sai (false alert): nếu bệnh nhân đã xác nhận liều trước khi quét, không gửi cảnh báo cho người thân."""
+    """AC7: Liều đã xác nhận trước khi quét không tạo cảnh báo sai."""
     patient_id = uuid4()
     caregiver_id = uuid4()
     scheduled_at = datetime(2026, 10, 14, 8, 0, tzinfo=UTC)
