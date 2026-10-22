@@ -86,6 +86,36 @@ def test_admin_read_denied_logged__QD32():
     assert log.denied == [(C, ActorRole.ADMIN, P, Scope.MEDICATIONS, "khong_co_quyen")]
 
 
+def test_admin_self_denied_audited_and_audit_failure_fails_closed__QD32():
+    for scope in (Scope.ADHERENCE, Scope.HEALTH_PROFILE):
+        access_facts = Facts(caller_id=P, caller_is_admin=True)
+        log = Log()
+
+        def call(access_facts=access_facts, log=log, scope=scope):
+            authorize(
+                object(),
+                access_facts,
+                log,
+                caller_id=P,
+                caller_is_admin=True,
+                patient_id=P,
+                scope=scope,
+                audit_self=True,
+            )
+
+        with pytest.raises(Forbidden, match="khong_co_quyen"):
+            call()
+        assert log.allowed == []
+        assert log.denied == [(P, ActorRole.ADMIN, P, scope, "khong_co_quyen")]
+
+        def fail_denied(*args):
+            raise RuntimeError("audit unavailable")
+
+        log.append_denied = fail_denied
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            call()
+
+
 @pytest.mark.parametrize("action", [Action.READ, Action.WRITE])
 @pytest.mark.parametrize("consent", [True, False])
 def test_profile_self_audit_and_consent(action, consent):
