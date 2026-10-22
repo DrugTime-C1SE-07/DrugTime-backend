@@ -1,10 +1,11 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from socket import create_connection
 from time import perf_counter
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -122,6 +123,7 @@ def test_integration_missed_dose_alert_dispatch_and_inbox_fetch__AC1_AC2_AC6(cli
     """AC1/AC2/AC6: Dispatch cảnh báo bỏ lỡ vào notifications và người thân đọc qua GET /notifications."""
     patient_id, caregiver_id = _seed_patient_caregiver_pair(admin_engine, caregiver_platform="android")
     dose_log_id = 998877
+    scheduled_at = datetime(2026, 10, 19, 8, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
 
     notifications = SqlNotifications()
     with _admin_uow(admin_engine) as uow:
@@ -131,6 +133,8 @@ def test_integration_missed_dose_alert_dispatch_and_inbox_fetch__AC1_AC2_AC6(cli
             patient_id=patient_id,
             dedupe_key=dedupe_key(dose_log_id, caregiver_id),
             content="Bác Nguyễn Văn Bệnh Nhân chưa ghi nhận liều thuốc đúng giờ",
+            medication_name="Integration medicine",
+            scheduled_at=scheduled_at,
         )
         assert nid is not None
 
@@ -164,6 +168,7 @@ def test_integration_patch_notification_marks_as_read__AC7(client_as, admin_engi
     """AC7: PATCH /notifications/{id} cập nhật is_read=true."""
     patient_id, caregiver_id = _seed_patient_caregiver_pair(admin_engine)
     dose_log_id = 998878
+    scheduled_at = datetime(2026, 10, 19, 9, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
 
     notifications = SqlNotifications()
     with _admin_uow(admin_engine) as uow:
@@ -173,6 +178,8 @@ def test_integration_patch_notification_marks_as_read__AC7(client_as, admin_engi
             patient_id=patient_id,
             dedupe_key=dedupe_key(dose_log_id, caregiver_id),
             content="Cảnh báo kiểm tra",
+            medication_name="Integration medicine",
+            scheduled_at=scheduled_at,
         )
         assert nid is not None
 
@@ -191,6 +198,7 @@ def test_integration_alert_timing_and_naming_flow(client_as, admin_engine):
     """AC8 / QD-25 / NFR05: Đo thời gian dispatch và truy vấn trên Postgres thật < 2s, kiểm tra tên bệnh nhân."""
     patient_id, caregiver_id = _seed_patient_caregiver_pair(admin_engine, caregiver_platform="android")
     dose_log_id = 998879
+    scheduled_at = datetime(2026, 10, 19, 10, tzinfo=ZoneInfo("Asia/Ho_Chi_Minh"))
 
     start_time = perf_counter()
 
@@ -202,6 +210,8 @@ def test_integration_alert_timing_and_naming_flow(client_as, admin_engine):
             patient_id=patient_id,
             dedupe_key=dedupe_key(dose_log_id, caregiver_id),
             content="Bác Nguyễn Văn Bệnh Nhân chưa ghi nhận liều thuốc đúng giờ",
+            medication_name="Integration medicine",
+            scheduled_at=scheduled_at,
         )
         assert nid is not None
 

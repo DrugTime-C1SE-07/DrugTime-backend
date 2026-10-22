@@ -451,14 +451,24 @@ def test_occurrence_effective_bounds_and_weekdays__AC18(
 
 
 def scanner_ports(data, occurrences):
-    # Only occurrence generation/cursor/devices are controlled; permission facts,
+    # Occurrences/context/cursor/devices are controlled; permission facts,
     # transactions, unique constraints, dose writes and notification writes are real.
+    context = {
+        (occ.schedule_id, occ.patient_id): "Integration medicine" for occ in occurrences
+    }
+
+    def alert_context(uow, schedule_id, patient_id):
+        return context.get((schedule_id, patient_id))
+
     return dict(
         now=data.now,
         grace=timedelta(minutes=120),
         overlap=timedelta(minutes=30),
         cursor=Mock(get=Mock(return_value=None)),
-        schedules=Mock(occurrences_between=Mock(return_value=occurrences)),
+        schedules=Mock(
+            occurrences_between=Mock(return_value=occurrences),
+            alert_context=Mock(side_effect=alert_context),
+        ),
         dose_logs=SqlDoseLogs(),
         access=AccessGuardAdapter(),
         tokens=Mock(android_tokens=Mock(return_value=[])),
