@@ -187,6 +187,27 @@ class Factory:
         )
         return lid
 
+    def pending_link(self, patient_id: UUID, family_id: UUID) -> int:
+        """Yêu cầu liên kết đang chờ, chưa có bằng chứng đồng ý."""
+        return self.db.execute(
+            text(
+                "INSERT INTO caregiver_links "
+                "(patient_user_id, family_user_id, status, sharing_enabled) "
+                "VALUES (:p, :f, 'pending', false) RETURNING id"
+            ),
+            {"p": patient_id, "f": family_id},
+        ).scalar_one()
+
+    def link_row(self, link_id: int) -> dict:
+        row = self.db.execute(
+            text(
+                "SELECT status::text AS status, sharing_enabled, revoked_at, rejected_at "
+                "FROM caregiver_links WHERE id = :id"
+            ),
+            {"id": link_id},
+        ).one()
+        return dict(row._mapping)
+
     def family_of(self, patient_id: UUID, *, sharing: bool = True, legacy: bool = False) -> UUID:
         """Người thân có link active; người bệnh có đủ consent health_data + family_sharing."""
         self.consent(patient_id, "family_sharing")
