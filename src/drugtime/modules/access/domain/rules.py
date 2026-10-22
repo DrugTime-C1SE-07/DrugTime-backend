@@ -56,8 +56,6 @@ class Decision:
 def _role(f: AccessFacts) -> ActorRole:
     if f.active_sharing_link and f.family_sharing_consent and f.purpose_consent:
         return ActorRole.FAMILY
-    if f.caller_is_admin:
-        return ActorRole.ADMIN
     return ActorRole.NO_ACCESS
 
 
@@ -69,6 +67,8 @@ def decide(f: AccessFacts, action: Action = Action.READ, *, audit_self: bool = F
     dòng users để tham chiếu)."""
     if not f.patient_exists:
         return Decision(False, None, "khong_co_quyen")
+    if f.caller_is_admin:
+        return Decision(False, ActorRole.ADMIN, "khong_co_quyen")
     if f.caller_id == f.patient_id:
         return Decision(
             f.purpose_consent,

@@ -60,9 +60,26 @@ def test_admin_denied_every_scope_and_action__QD32():
         assert (d.allowed, d.log_role, d.reason) == (False, ActorRole.ADMIN, "khong_co_quyen")
 
 
-def test_admin_who_is_valid_family_reads_as_family():
+def test_admin_self_and_linked_denied_every_action__QD32():
+    for is_self, linked, consent, action, audit_self in product(
+        (False, True), (False, True), (False, True), Action, (False, True)
+    ):
+        d = decide(
+            facts(
+                caller_id=P if is_self else C,
+                caller_is_admin=True,
+                active_sharing_link=linked,
+                purpose_consent=consent,
+            ),
+            action,
+            audit_self=audit_self,
+        )
+        assert (d.allowed, d.log_role, d.reason) == (False, ActorRole.ADMIN, "khong_co_quyen")
+
+
+def test_admin_who_is_valid_family_is_denied_as_admin():
     d = decide(facts(caller_is_admin=True))
-    assert d.allowed and d.log_role is ActorRole.FAMILY
+    assert (d.allowed, d.log_role, d.reason) == (False, ActorRole.ADMIN, "khong_co_quyen")
 
 
 def test_unknown_patient_denied_without_log():
@@ -83,11 +100,10 @@ def _old_decide(f):
 
 
 def _expected_read(f):
-    """_old_decide với một thay đổi duy nhất của task 2.04: admin không phải người thân hợp lệ
-    bị từ chối (QD-32). Mọi trường hợp khác giữ nguyên."""
-    allowed, role, reason = _old_decide(f)
-    if role is ActorRole.ADMIN:
+    """Giữ ma trận cũ cho patient/family, từ chối admin ở mọi nhánh (QD-32)."""
+    if f.caller_is_admin:
         return (False, ActorRole.ADMIN, "khong_co_quyen")
+    allowed, role, reason = _old_decide(f)
     return (allowed, role, reason)
 
 

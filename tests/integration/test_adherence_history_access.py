@@ -92,6 +92,28 @@ def test_unlinked_missing_consents_sharing_off_admin_denied_and_audited__AC11(hi
     assert data.snapshot() == before
 
 
+@pytest.mark.parametrize("access", ["self", "linked"])
+def test_admin_self_and_linked_history_denied_and_audited__AC3_AC6_AC7(history_data, access):
+    data = history_data
+    admin = data.make.user(admin=True)
+    if access == "self":
+        data.patient = admin
+    else:
+        data.make.consent(data.patient, "family_sharing")
+        data.make.link(data.patient, admin)
+    data.log(data.schedule(), "da_uong")
+    before = data.snapshot()
+
+    response = read_as(data, admin)
+
+    assert response.status_code == 403 and response.json() == {"detail": "khong_co_quyen"}
+    assert response.headers["cache-control"] == "no-store"
+    assert data.make.access_logs(data.patient) == [
+        audit(admin, "admin", "denied", "khong_co_quyen")
+    ]
+    assert data.snapshot() == before
+
+
 def test_family_patient_selector_tamper_does_not_read_other_patient__AC11(history_data):
     data = history_data
     family = data.make.family_of(data.patient)
