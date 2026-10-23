@@ -144,3 +144,22 @@ def test_rejected_cannot_be_approved_directly():
         transition_link(link, LinkStatus.ACTIVE, now=datetime(2026, 10, 8, tzinfo=UTC))
 
     assert exc.value.code == "invalid_link_transition"
+
+
+def test_revoked_to_revoked_with_sharing_enabled_clears_sharing():
+    first_now = datetime(2026, 10, 7, 8, 0, tzinfo=UTC)
+    second_now = datetime(2026, 10, 7, 9, 0, tzinfo=UTC)
+    link = FamilyLink(
+        id=1,
+        patient_user_id=uuid4(),
+        family_user_id=uuid4(),
+        status=LinkStatus.REVOKED,
+        revoked_at=first_now,
+        sharing_enabled=True,
+    )
+
+    updated = transition_link(link, LinkStatus.REVOKED, now=second_now)
+
+    assert updated.status is LinkStatus.REVOKED
+    assert updated.revoked_at == first_now
+    assert updated.sharing_enabled is False

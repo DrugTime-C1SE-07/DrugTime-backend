@@ -298,3 +298,35 @@ def test_http_old_route_returns_404(test_setup):
     client = TestClient(app)
     res = client.delete("/family/links/1")
     assert res.status_code == 404
+
+
+def test_http_already_revoked_with_sharing_enabled_true_clears_sharing_204(test_setup):
+    app = test_setup["app"]
+    patient_id = test_setup["patient_id"]
+    family_id = test_setup["family_id"]
+    initial_revoked_at = test_setup["initial_revoked_at"]
+
+    link_revoked_sharing = FamilyLink(
+        5,
+        patient_id,
+        family_id,
+        LinkStatus.REVOKED,
+        sharing_enabled=True,
+        revoked_at=initial_revoked_at,
+    )
+    test_setup["fake_links"].links[5] = link_revoked_sharing
+
+    app.dependency_overrides[get_uow] = lambda: object()
+    app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(
+        id=patient_id, is_admin=False
+    )
+
+    client = TestClient(app)
+    res = client.delete("/links/5")
+
+    assert res.status_code == 204
+
+    link = test_setup["fake_links"].links[5]
+    assert link.status is LinkStatus.REVOKED
+    assert link.sharing_enabled is False
+    assert link.revoked_at == initial_revoked_at

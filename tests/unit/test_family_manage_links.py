@@ -366,3 +366,23 @@ def test_invalid_transition_does_not_write__AC10():
     assert not links.updated
 
 
+
+
+def test_revoke_already_revoked_link_with_sharing_enabled_true_clears_sharing():
+    first_now = datetime(2026, 10, 7, 10, 0, tzinfo=UTC)
+    second_now = datetime(2026, 10, 7, 11, 0, tzinfo=UTC)
+    patient_id = uuid4()
+    family_id = uuid4()
+    link = FamilyLink(
+        1, patient_id, family_id, LinkStatus.REVOKED, sharing_enabled=True, revoked_at=first_now
+    )
+    links = FakeLinks([link])
+
+    result = revoke_link(object(), link_id=1, caller_id=patient_id, now=second_now, links=links)
+
+    assert result.status is LinkStatus.REVOKED
+    assert result.revoked_at == first_now
+    assert result.sharing_enabled is False
+    assert len(links.updated) == 1
+    assert links.updated[0].sharing_enabled is False
+    assert links.updated[0].revoked_at == first_now

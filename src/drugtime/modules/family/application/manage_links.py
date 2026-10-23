@@ -14,7 +14,6 @@ from drugtime.modules.family.domain.link import (
 from drugtime.shared.errors import Forbidden, NotFound
 from drugtime.shared.uow import UnitOfWork
 
-
 _log = logging.getLogger(__name__)
 
 
@@ -50,12 +49,12 @@ def revoke_link(
         if caller_id != link.patient_user_id and caller_id != link.family_user_id:
             raise Forbidden("khong_co_quyen")
 
-    # Idempotent: nếu link đã revoked trước đó thì giữ nguyên mốc thời gian ban đầu, không ghi đè
-    if link.status is LinkStatus.REVOKED:
+    # Idempotent: nếu link đã revoked và sharing_enabled đã tắt thì giữ nguyên
+    if link.status is LinkStatus.REVOKED and not link.sharing_enabled:
         return link
 
     # Domain validates the transition (catches e.g. rejected -> revoked)
-    updated = transition_link(link, LinkStatus.REVOKED, now=now)
+    transition_link(link, LinkStatus.REVOKED, now=now)
 
     old_status = link.status.value
     old_sharing = link.sharing_enabled

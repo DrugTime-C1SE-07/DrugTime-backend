@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Response, status
 
 from drugtime.modules.family.adapters.inbound.schemas import ErrorDetail, LinkCode
@@ -39,9 +40,18 @@ def get_my_link_code(
     "/links/{id}",
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
-        204: {"description": "Thu hồi hoặc tự rời liên kết thành công, hoặc đã thu hồi từ trước"},
+        204: {
+            "description": "Thu hồi hoặc tự rời liên kết thành công, hoặc đã thu hồi từ trước",
+        },
         401: {"model": ErrorDetail, "description": "Chưa xác thực hoặc token không hợp lệ"},
-        403: {"model": ErrorDetail, "description": "khong_co_quyen: link không tồn tại hoặc không thuộc người gọi"},
+        403: {
+            "model": ErrorDetail,
+            "description": "khong_co_quyen: link không tồn tại hoặc không thuộc người gọi",
+        },
+        422: {
+            "model": ErrorDetail,
+            "description": "invalid_link_transition: link đã bị từ chối (rejected)",
+        },
     },
     operation_id="revokeLink",
 )
