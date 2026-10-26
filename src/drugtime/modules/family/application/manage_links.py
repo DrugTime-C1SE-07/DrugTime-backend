@@ -1,3 +1,5 @@
+import logging
+from datetime import datetime
 from uuid import UUID
 
 from drugtime.modules.family.application.ports import (
@@ -10,6 +12,7 @@ from drugtime.modules.family.application.ports import (
 from drugtime.modules.family.domain.consent_confirmation import Caregiver, LinkApproval
 from drugtime.modules.family.domain.link import (
     FamilyLink,
+    FamilyLinkError,
     LinkStatus,
     ensure_can_create_link,
     ensure_sharing_changeable,
@@ -226,3 +229,61 @@ def update_sharing(
         link.sharing_enabled,
         None if confirmation is None else confirmation.confirmed_at,
     )
+
+
+_log = logging.getLogger(__name__)
+
+
+def revoke_link_as_member(
+    uow: UnitOfWork,
+    *,
+    link_id: int,
+    caller_id: UUID | None = None,
+    now: datetime,
+    links: Links,
+) -> FamilyLink:
+    link = links.get(uow, link_id)
+    if link is None:
+        raise Forbidden("khong_co_quyen")
+
+    if caller_id is not None:
+        if caller_id != link.patient_user_id and caller_id != link.family_user_id:
+            raise Forbidden("khong_co_quyen")
+
+    # Idempotent: nếu link đã revoked và sharing_enabled đã tắt thì giữ nguyên
+    if link.status is LinkStatus.REVOKED and not link.sharing_enabled:
+        return link
+
+    # Domain validates the transition (catches e.g. rejected -> revoked)
+    transition_link(link, LinkStatus.REVOKED, now=now)
+
+    old_status = link.status.value
+    old_sharing = link.sharing_enabled
+
+    persisted = links.revoke(
+        uow,
+        link_id=link_id,
+        caller_id=caller_id or link.patient_user_id,
+        now=now,
+    )
+    if persisted is not None:
+        _log.info(
+            "link_revoked link_id=%d caller=%s old_status=%s sharing %s->false",
+            link_id,
+            caller_id,
+            old_status,
+            old_sharing,
+        )
+        return persisted
+
+    # SQL didn't match (race or status guard) -- re-read to determine error.
+    # caller_id was verified above; re-check so strangers always get 403.
+    current = links.get(uow, link_id)
+    if current is not None and caller_id is not None:
+        is_member = caller_id in (current.patient_user_id, current.family_user_id)
+        if is_member and current.status is LinkStatus.REJECTED:
+            raise FamilyLinkError(
+                "invalid_link_transition",
+                f"cannot transition family link from {current.status.value} to revoked",
+            )
+    raise Forbidden("khong_co_quyen")

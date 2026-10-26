@@ -58,7 +58,7 @@ def test_active_to_revoked_sets_revoked_at__AC8():
 
     assert updated.status is LinkStatus.REVOKED
     assert updated.revoked_at == now
-    assert updated.sharing_enabled is True
+    assert updated.sharing_enabled is False
 
 
 def test_pending_to_rejected_sets_rejected_at():
@@ -88,7 +88,7 @@ def test_revoked_cannot_be_approved_directly__AC9():
 
 
 def test_invalid_transition_is_rejected__AC10():
-    link = pending_link(uuid4(), uuid4())
+    link = FamilyLink(1, uuid4(), uuid4(), LinkStatus.REJECTED)
 
     with pytest.raises(FamilyLinkError) as exc:
         transition_link(link, LinkStatus.REVOKED, now=datetime(2026, 10, 7, tzinfo=UTC))
@@ -192,3 +192,55 @@ def test_sharing_changeable_only_when_active__AC10(status, allowed):
     with pytest.raises(Conflict) as exc:
         ensure_sharing_changeable(link)
     assert str(exc.value) == "family_link_not_active"
+
+
+def test_pending_to_revoked_is_allowed():
+    now = datetime(2026, 10, 7, 8, 45, tzinfo=UTC)
+    link = pending_link(uuid4(), uuid4())
+
+    updated = transition_link(link, LinkStatus.REVOKED, now=now)
+
+    assert updated.status is LinkStatus.REVOKED
+    assert updated.revoked_at == now
+    assert updated.sharing_enabled is False
+
+
+def test_revoked_to_revoked_is_idempotent():
+    first_now = datetime(2026, 10, 7, 8, 0, tzinfo=UTC)
+    second_now = datetime(2026, 10, 7, 9, 0, tzinfo=UTC)
+    link = FamilyLink(
+        id=1,
+        patient_user_id=uuid4(),
+        family_user_id=uuid4(),
+        status=LinkStatus.REVOKED,
+        revoked_at=first_now,
+        sharing_enabled=False,
+    )
+
+    updated = transition_link(link, LinkStatus.REVOKED, now=second_now)
+
+    assert updated.status is LinkStatus.REVOKED
+    assert updated.revoked_at == first_now
+    assert updated.sharing_enabled is False
+
+
+def test_revoked_to_revoked_with_sharing_enabled_clears_sharing():
+    first_now = datetime(2026, 10, 7, 8, 0, tzinfo=UTC)
+    second_now = datetime(2026, 10, 7, 9, 0, tzinfo=UTC)
+    client_uuid = uuid4()
+    link = FamilyLink(
+        id=1,
+        patient_user_id=uuid4(),
+        family_user_id=uuid4(),
+        status=LinkStatus.REVOKED,
+        revoked_at=first_now,
+        sharing_enabled=True,
+        client_uuid=client_uuid,
+    )
+
+    updated = transition_link(link, LinkStatus.REVOKED, now=second_now)
+
+    assert updated.status is LinkStatus.REVOKED
+    assert updated.revoked_at == first_now
+    assert updated.sharing_enabled is False
+    assert updated.client_uuid == client_uuid

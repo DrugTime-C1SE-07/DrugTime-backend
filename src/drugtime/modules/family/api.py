@@ -1,5 +1,6 @@
 """Giao diện công khai của family."""
 
+from datetime import datetime
 from uuid import UUID
 
 from drugtime.modules.family.adapters.inbound.http import router
@@ -19,6 +20,7 @@ __all__ = [
     "has_active_sharing_link",
     "reject_link",
     "revoke_link",
+    "revoke_link_as_member",
     "router",
     "sharing_family_ids",
 ]
@@ -107,3 +109,11 @@ class _Eraser:
 
 
 eraser = _Eraser()
+
+
+def revoke_link_as_member(
+    uow: UnitOfWork, link_id: int, now: datetime, *, caller_id: UUID | None = None
+) -> FamilyLink:
+    return manage_links.revoke_link_as_member(
+        uow, link_id=link_id, caller_id=caller_id, now=now, links=SqlLinks()
+    )

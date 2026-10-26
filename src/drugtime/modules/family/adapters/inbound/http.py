@@ -1,8 +1,8 @@
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Path, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -32,6 +32,7 @@ from drugtime.modules.family.adapters.outbound.sql_link_attempts import SqlLinkA
 from drugtime.modules.family.adapters.outbound.sql_link_audit import SqlLinkAudit
 from drugtime.modules.family.adapters.outbound.sql_link_codes import SqlLinkCodes
 from drugtime.modules.family.adapters.outbound.sql_links import SqlLinks
+from drugtime.modules.family.application import manage_links
 from drugtime.modules.family.application.get_link_code import get_link_code
 from drugtime.modules.family.application.list_caregivers import list_caregivers
 from drugtime.modules.family.application.list_pending_links import list_pending_links
@@ -53,13 +54,13 @@ from drugtime.shared.config import get_settings
 from drugtime.shared.db import SqlUnitOfWork, get_uow, unit_of_work
 from drugtime.shared.errors import ServiceUnavailable
 
-router = APIRouter(prefix="/family", tags=["family"])
+router = APIRouter(tags=["family"])
 
 
 # Mã liên kết của chính người gọi, không phải dữ liệu sức khỏe: không qua PEP, không ghi
 # access_logs. Không log mã (bí mật cấp quyền gửi yêu cầu liên kết).
 @router.get(
-    "/link-code",
+    "/family/link-code",
     response_model=LinkCode,
     responses={
         401: {"model": ErrorDetail, "description": "Chưa xác thực"},
@@ -100,7 +101,7 @@ def _limits() -> LinkRequestLimits:
 
 # Không chạm dữ liệu sức khỏe: không qua PEP, không ghi access_logs. Không log mã.
 @router.post(
-    "/link-requests",
+    "/family/link-requests",
     status_code=201,
     response_model=LinkRequest,
     responses={
@@ -207,7 +208,7 @@ _DECISION_ERRORS = {**_LINK_ERRORS, 404: {"model": ErrorDetail}, 409: {"model": 
 
 
 @router.get(
-    "/links",
+    "/family/links",
     response_model=PendingFamilyLinkList,
     operation_id="listPendingFamilyLinks",
     responses=_LINK_ERRORS,
@@ -241,7 +242,7 @@ def pending_family_links(
 
 
 @router.post(
-    "/links/{link_id}/approve",
+    "/family/links/{link_id}/approve",
     response_model=FamilyLinkApproval,
     operation_id="approveFamilyLink",
     responses={
@@ -296,7 +297,7 @@ def approve_family_link(
 
 
 @router.post(
-    "/links/{link_id}/reject",
+    "/family/links/{link_id}/reject",
     response_model=FamilyLinkRejection,
     operation_id="rejectFamilyLink",
     responses=_DECISION_ERRORS,
@@ -336,7 +337,7 @@ def _caregiver(record: CaregiverRecord) -> Caregiver:
 
 
 @router.get(
-    "/caregivers",
+    "/family/caregivers",
     response_model=CaregiverList,
     operation_id="listMyCaregivers",
     # Không có tham số nên FastAPI không tự thêm 422; validate_link_input vẫn trả 422.
@@ -359,7 +360,7 @@ def my_caregivers(
 
 
 @router.patch(
-    "/links/{link_id}/sharing",
+    "/family/links/{link_id}/sharing",
     response_model=Caregiver,
     operation_id="updateFamilyLinkSharing",
     responses=_DECISION_ERRORS,
@@ -387,7 +388,7 @@ def update_family_link_sharing(
 
 
 @router.post(
-    "/links/{link_id}/revoke",
+    "/family/links/{link_id}/revoke",
     response_model=FamilyLinkRevocation,
     operation_id="revokeFamilyLink",
     responses=_DECISION_ERRORS,
@@ -413,3 +414,37 @@ def revoke_family_link(
         status="revoked",
         revoked_at=link.revoked_at,
     )
+
+
+@router.delete(
+    "/links/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        204: {
+            "description": "Thu hồi hoặc tự rời liên kết thành công, hoặc đã thu hồi từ trước",
+        },
+        401: {"model": ErrorDetail, "description": "Chưa xác thực hoặc token không hợp lệ"},
+        403: {
+            "model": ErrorDetail,
+            "description": "khong_co_quyen: link không tồn tại hoặc không thuộc người gọi",
+        },
+        422: {
+            "model": ErrorDetail,
+            "description": "invalid_link_transition: link đã bị từ chối (rejected)",
+        },
+    },
+    operation_id="revokeLink",
+)
+def delete_link(
+    id: int,
+    uow: SqlUnitOfWork = Depends(get_uow),
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> Response:
+    manage_links.revoke_link_as_member(
+        uow,
+        link_id=id,
+        caller_id=user.id,
+        now=datetime.now(UTC),
+        links=SqlLinks(),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -336,3 +336,47 @@ def test_update_sharing_on_non_active_row_conflicts__AC10():
         SqlLinks().update_sharing(FakeUow([None]), 77, True)
 
     assert str(exc.value) == "family_link_not_active"
+
+
+def test_sql_find_pair_uses_patient_and_family_roles__AC6():
+    patient_id = uuid4()
+    family_id = uuid4()
+    uow = FakeUow([_row(patient_id, family_id)])
+
+    result = SqlLinks().find_open_by_pair(uow, patient_id, family_id)
+
+    assert result is not None
+    assert result.patient_user_id == patient_id
+    assert result.family_user_id == family_id
+    params = uow.connection.calls[0][1]
+    assert params == {"patient_id": patient_id, "family_id": family_id}
+
+
+def test_sql_revoke_executes_coalesce_and_ownership():
+    patient_id = uuid4()
+    client_uuid = uuid4()
+    now = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
+    uow = FakeUow(
+        [_row(patient_id=patient_id, status="revoked", revoked_at=now, client_uuid=client_uuid)]
+    )
+
+    result = SqlLinks().revoke(uow, link_id=77, caller_id=patient_id, now=now)
+
+    assert result is not None
+    assert result.status is LinkStatus.REVOKED
+    assert result.client_uuid == client_uuid
+    sql, params = uow.connection.calls[0]
+    assert "COALESCE(revoked_at, :revoked_at)" in sql
+    assert "patient_user_id = :caller_id OR family_user_id = :caller_id" in sql
+    assert "client_uuid" in sql.split("RETURNING")[1]
+    assert params == {"id": 77, "caller_id": patient_id, "revoked_at": now}
+
+
+def test_sql_revoke_returns_none_when_no_match():
+    patient_id = uuid4()
+    now = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
+    uow = FakeUow([None])
+
+    result = SqlLinks().revoke(uow, link_id=999, caller_id=patient_id, now=now)
+
+    assert result is None
