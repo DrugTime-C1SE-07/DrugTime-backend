@@ -453,9 +453,7 @@ def test_occurrence_effective_bounds_and_weekdays__AC18(
 def scanner_ports(data, occurrences):
     # Occurrences/context/cursor/devices are controlled; permission facts,
     # transactions, unique constraints, dose writes and notification writes are real.
-    context = {
-        (occ.schedule_id, occ.patient_id): "Integration medicine" for occ in occurrences
-    }
+    context = {(occ.schedule_id, occ.patient_id): "Integration medicine" for occ in occurrences}
 
     def alert_context(uow, schedule_id, patient_id):
         return context.get((schedule_id, patient_id))
@@ -660,3 +658,152 @@ def test_single_history_select_is_consistent_during_committed_updates__AC3_AC4_A
     assert {d["status"] for d in all_doses(before)} == {"bo_lo"}
     after = assert_contract(data.day())
     assert after["summary"]["taken"] == 2 and after["summary"]["adherence_rate"] == 100
+
+
+@pytest.mark.parametrize("group_by", ["date", "medication"])
+def test_family_history_rate_transitions__AC1_AC2_AC3(history_data, group_by):
+    """A family read counts a valid confirmation immediately and pending only after +120."""
+    data = history_data
+    family = data.make.family_of(data.patient)
+    confirmed = data.schedule()
+    data.schedule()
+    data.now = confirmed.scheduled_at + timedelta(minutes=10)
+    data.confirm(confirmed, data.now)
+    before = data.snapshot()
+    headers = data.auth(family)
+
+    def read():
+        return assert_contract(
+            data.client.get(
+                "/adherence",
+                params={
+                    "patient_id": str(data.patient),
+                    "from": DAY.date().isoformat(),
+                    "to": DAY.date().isoformat(),
+                    "group_by": group_by,
+                },
+                headers=headers,
+            )
+        )
+
+    immediate = read()
+    assert immediate["summary"] == dict(
+        total=2, taken=1, late=0, missed=0, pending=1, counted=1, adherence_rate=100
+    )
+    data.now = confirmed.scheduled_at + timedelta(minutes=120)
+    assert read()["summary"] == immediate["summary"]
+    data.now += timedelta(microseconds=1)
+    assert read()["summary"] == dict(
+        total=2, taken=1, late=0, missed=1, pending=0, counted=2, adherence_rate=50
+    )
+    assert data.snapshot() == before
+    logs = [
+        row
+        for row in data.make.access_logs(data.patient)
+        if row["data_scope"] == "lich_su_tuan_thu"
+    ]
+    assert len(logs) == 3
+    assert all(
+        row["actor_user_id"] == family
+        and row["actor_role"] == "family"
+        and row["result"] == "allowed"
+        for row in logs
+    )
+
+
+@pytest.mark.parametrize("group_by", ["date", "medication"])
+def test_family_early_confirmation_counts_immediately__AC3(history_data, group_by):
+    """AC3 requires an accepted -30-minute confirmation to be visible immediately."""
+    data = history_data
+    family = data.make.family_of(data.patient)
+    occurrence = data.schedule()
+    data.now = occurrence.scheduled_at - timedelta(minutes=30)
+    data.confirm(occurrence, data.now)
+    before = data.snapshot()
+    body = assert_contract(
+        data.client.get(
+            "/adherence",
+            params={
+                "patient_id": str(data.patient),
+                "from": DAY.date().isoformat(),
+                "to": DAY.date().isoformat(),
+                "group_by": group_by,
+            },
+            headers=data.auth(family),
+        )
+    )
+    assert data.snapshot() == before
+    logs = [
+        row
+        for row in data.make.access_logs(data.patient)
+        if row["data_scope"] == "lich_su_tuan_thu"
+    ]
+    assert len(logs) == 1 and logs[0]["actor_user_id"] == family
+    assert logs[0]["result"] == "allowed"
+    assert body["summary"] == dict(
+        total=1, taken=1, late=0, missed=0, pending=0, counted=1, adherence_rate=100
+    )
+    assert len(all_doses(body)) == 1
+
+
+@pytest.mark.parametrize("group_by", ["date", "medication"])
+@pytest.mark.parametrize(
+    "delay,accepted",
+    [
+        (timedelta(minutes=-30, microseconds=-1), False),
+        (timedelta(minutes=30, microseconds=-1), True),
+    ],
+    ids=["before-early-window", "before-on-time-deadline"],
+)
+def test_family_confirmation_adjacent_boundaries__AC2_AC3(history_data, group_by, delay, accepted):
+    data = history_data
+    family = data.make.family_of(data.patient)
+    occurrence = data.schedule()
+    data.now = occurrence.scheduled_at + delay
+    response = data.client.post(
+        "/doses/batch",
+        json=[
+            {
+                "client_uuid": str(uuid4()),
+                "schedule_id": occurrence.schedule_id,
+                "scheduled_at": occurrence.scheduled_at.isoformat(),
+                "taken_at": data.now.isoformat(),
+            }
+        ],
+        headers=data.auth(data.patient),
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"]["failed"] == (0 if accepted else 1)
+    if not accepted:
+        assert response.json()["items"][0]["error"]["code"] == "taken_at_too_early"
+        assert data.snapshot() == []
+    before = data.snapshot()
+    body = assert_contract(
+        data.client.get(
+            "/adherence",
+            params={
+                "patient_id": str(data.patient),
+                "from": DAY.date().isoformat(),
+                "to": DAY.date().isoformat(),
+                "group_by": group_by,
+            },
+            headers=data.auth(family),
+        )
+    )
+    assert body["summary"] == dict(
+        total=int(accepted),
+        taken=int(accepted),
+        late=0,
+        missed=0,
+        pending=0,
+        counted=int(accepted),
+        adherence_rate=100 if accepted else None,
+    )
+    assert data.snapshot() == before
+    logs = [
+        row
+        for row in data.make.access_logs(data.patient)
+        if row["data_scope"] == "lich_su_tuan_thu"
+    ]
+    assert len(logs) == 1 and logs[0]["actor_user_id"] == family
+    assert logs[0]["result"] == "allowed"
