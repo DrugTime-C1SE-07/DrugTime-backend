@@ -1,4 +1,5 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import uuid4
@@ -8,8 +9,18 @@ from sqlalchemy.dialects import postgresql
 
 from drugtime.modules.adherence.adapters.outbound.sql_adherence import SqlAdherenceHistory
 from drugtime.modules.adherence.application.get_adherence_history import get_adherence_history
-from drugtime.modules.adherence.domain.dose import DoseStatus
-from drugtime.modules.adherence.domain.history import VIETNAM, GroupBy, HistoryRange, HistoryRow
+from drugtime.modules.adherence.domain.dose import (
+    DoseConfirmation,
+    DoseStatus,
+    status_for_confirmation,
+)
+from drugtime.modules.adherence.domain.history import (
+    VIETNAM,
+    GroupBy,
+    HistoryRange,
+    HistoryRow,
+    Summary,
+)
 from drugtime.shared.errors import Forbidden
 
 NOW = datetime(2026, 10, 19, 12, tzinfo=VIETNAM)
@@ -144,3 +155,119 @@ def test_no_authorization_cache():
         call(access, reader)
     assert access.authorize_history.call_count == 2
     assert reader.read.call_count == 1
+
+
+def history_snapshot(rows, as_of, group_by):
+    """Use the application entry point with one fixed clock and an authorized family caller."""
+    return get_adherence_history(
+        object(),
+        caller_id=CALLER,
+        caller_is_admin=False,
+        patient_id=PATIENT,
+        start=as_of.date(),
+        end=as_of.date(),
+        group_by=group_by,
+        as_of=as_of,
+        access=Mock(),
+        reader=Mock(read=Mock(return_value=rows)),
+    )
+
+
+@pytest.mark.parametrize("group_by", list(GroupBy))
+@pytest.mark.parametrize(
+    "delay,status,counts",
+    [
+        (timedelta(minutes=-30), DoseStatus.TAKEN, (1, 0)),
+        (timedelta(0), DoseStatus.TAKEN, (1, 0)),
+        (timedelta(minutes=30), DoseStatus.TAKEN, (1, 0)),
+        (timedelta(minutes=30, microseconds=1), DoseStatus.LATE, (0, 1)),
+        (timedelta(minutes=119, seconds=59), DoseStatus.LATE, (0, 1)),
+        (timedelta(minutes=120), DoseStatus.LATE, (0, 1)),
+    ],
+)
+def test_confirmed_before_deadline_counts_immediately__AC3(group_by, delay, status, counts):
+    # 3.25 requirement AC3: confirmed doses count before the 120-minute deadline.
+    scheduled = NOW.replace(hour=8)
+    taken = scheduled + delay
+    result = history_snapshot(
+        [HistoryRow(1, "Medicine", 1, scheduled, taken, status)], taken, group_by
+    )
+    expected = Summary(1, *counts, 0, 0, 1, Decimal("100.00"))
+    assert result.patient_id == PATIENT
+    assert result.summary == expected
+    assert len(result.groups) == 1
+    assert result.groups[0].summary == expected
+    (dose,) = result.groups[0].doses
+    assert (dose.status, dose.status_source, dose.taken_at) == (status.value, "recorded", taken)
+
+
+@pytest.mark.parametrize("group_by", list(GroupBy))
+@pytest.mark.parametrize("stored_status", [None, DoseStatus.MISSED])
+def test_unconfirmed_pending_at_deadline_then_missed__AC3(group_by, stored_status):
+    scheduled = NOW.replace(hour=8)
+    rows = [
+        HistoryRow(1, "Medicine", 1, scheduled, scheduled, DoseStatus.TAKEN),
+        HistoryRow(1, "Medicine", 2, scheduled, None, stored_status),
+    ]
+    deadline = scheduled + timedelta(minutes=120)
+    at_deadline = history_snapshot(rows, deadline, group_by)
+    after_deadline = history_snapshot(rows, deadline + timedelta(microseconds=1), group_by)
+    for result, expected, status in (
+        (at_deadline, Summary(2, 1, 0, 0, 1, 1, Decimal("100.00")), "cho_xac_nhan"),
+        (after_deadline, Summary(2, 1, 0, 1, 0, 2, Decimal("50.00")), "bo_lo"),
+    ):
+        assert result.summary == result.groups[0].summary == expected
+        doses = result.groups[0].doses
+        assert [dose.schedule_id for dose in doses] == [1, 2]
+        assert doses[1].status == status
+
+
+@pytest.mark.parametrize("group_by", list(GroupBy))
+@pytest.mark.parametrize("has_pending", [False, True])
+def test_no_eligible_dose_has_null_rate__AC3(group_by, has_pending):
+    scheduled = NOW.replace(hour=8)
+    rows = [HistoryRow(1, "Medicine", 1, scheduled, None, None)] if has_pending else []
+    result = history_snapshot(rows, scheduled + timedelta(minutes=120), group_by)
+    assert result.summary == Summary(int(has_pending), 0, 0, 0, int(has_pending), 0, None)
+    if has_pending:
+        assert result.groups[0].summary == result.summary
+        assert result.groups[0].doses[0].status == "cho_xac_nhan"
+    else:
+        assert result.groups == ()
+
+
+@pytest.mark.parametrize("group_by", list(GroupBy))
+def test_after_deadline_confirmation_does_not_raise_rate__AC3(group_by):
+    scheduled = NOW.replace(hour=8)
+    action_at = scheduled + timedelta(minutes=120, microseconds=1)
+    confirmation = DoseConfirmation(uuid4(), 1, scheduled, action_at)
+    status = status_for_confirmation(confirmation, action_at)
+    assert status is DoseStatus.MISSED  # QD-10: actually taken after the deadline.
+    before = history_snapshot(
+        [HistoryRow(1, "Medicine", 1, scheduled, None, None)], action_at, group_by
+    )
+    after = history_snapshot(
+        [HistoryRow(1, "Medicine", 1, scheduled, action_at, status)], action_at, group_by
+    )
+    expected = Summary(1, 0, 0, 1, 0, 1, Decimal("0.00"))
+    assert before.summary == after.summary == after.groups[0].summary == expected
+    (dose,) = after.groups[0].doses
+    assert dose.status == "bo_lo"
+
+
+@pytest.mark.parametrize("group_by", list(GroupBy))
+def test_valid_confirmation_synced_after_deadline_still_counts__AC3(group_by):
+    # Distinguish a valid earlier taking time from an actual taking after +120 (QD-10).
+    scheduled = NOW.replace(hour=8)
+    taken = scheduled + timedelta(minutes=90)
+    synced = scheduled + timedelta(minutes=121)
+    confirmation = DoseConfirmation(uuid4(), 1, scheduled, taken)
+    status = status_for_confirmation(confirmation, synced)
+    assert status is DoseStatus.LATE
+    result = history_snapshot(
+        [HistoryRow(1, "Medicine", 1, scheduled, taken, status)], synced, group_by
+    )
+    assert (
+        result.summary == result.groups[0].summary == Summary(1, 0, 1, 0, 0, 1, Decimal("100.00"))
+    )
+    assert result.groups[0].doses[0].taken_at == taken
