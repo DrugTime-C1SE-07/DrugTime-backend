@@ -5,19 +5,20 @@ tests against a real Postgres database.
 """
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
 
 from drugtime.modules.family.adapters.outbound.sql_links import SqlLinks
-from drugtime.modules.family.application.manage_links import revoke_link
+from drugtime.modules.family.application.manage_links import (
+    revoke_link_as_member as revoke_link,
+)
 from drugtime.modules.family.domain.link import FamilyLinkError, LinkStatus
 from drugtime.shared.db import SqlUnitOfWork
 from drugtime.shared.errors import Forbidden
 
-
 # ---- helpers ----
+
 
 def _insert_link(db, patient_id, family_id, **kw):
     defaults = dict(status="active", sharing_enabled=True, revoked_at=None, rejected_at=None)
@@ -28,20 +29,29 @@ def _insert_link(db, patient_id, family_id, **kw):
             " (patient_user_id, family_user_id, status, sharing_enabled, revoked_at, rejected_at)"
             " VALUES (:p, :f, CAST(:s AS link_status), :se, :ra, :reja) RETURNING id"
         ),
-        dict(p=patient_id, f=family_id, s=defaults["status"], se=defaults["sharing_enabled"],
-             ra=defaults["revoked_at"], reja=defaults["rejected_at"]),
+        dict(
+            p=patient_id,
+            f=family_id,
+            s=defaults["status"],
+            se=defaults["sharing_enabled"],
+            ra=defaults["revoked_at"],
+            reja=defaults["rejected_at"],
+        ),
     ).scalar_one()
 
 
 def _link_row(db, link_id):
     return db.execute(
-        text("SELECT status, revoked_at, rejected_at, sharing_enabled"
-             " FROM caregiver_links WHERE id = :id"),
+        text(
+            "SELECT status, revoked_at, rejected_at, sharing_enabled"
+            " FROM caregiver_links WHERE id = :id"
+        ),
         dict(id=link_id),
     ).one()
 
 
 # ---- adapter-level tests (SqlLinks.revoke) ----
+
 
 def test_sql_revoke_idempotent_preserves_revoked_at(db, make):
     patient_id = make.user()
@@ -78,8 +88,12 @@ def test_sql_revoke_stranger_cannot_modify(db, make):
 
     repo = SqlLinks()
     uow = SqlUnitOfWork(db)
-    res = repo.revoke(uow, link_id=link_id, caller_id=stranger_id,
-                      now=datetime(2026, 10, 15, 8, 30, 0, tzinfo=UTC))
+    res = repo.revoke(
+        uow,
+        link_id=link_id,
+        caller_id=stranger_id,
+        now=datetime(2026, 10, 15, 8, 30, 0, tzinfo=UTC),
+    )
     assert res is None
 
     row = _link_row(db, link_id)
@@ -92,13 +106,15 @@ def test_sql_revoke_rejected_link_returns_none(db, make):
     patient_id = make.user()
     family_id = make.user()
     rejected_at = datetime(2026, 10, 14, 12, 0, 0, tzinfo=UTC)
-    link_id = _insert_link(db, patient_id, family_id, status="rejected",
-                           sharing_enabled=False, rejected_at=rejected_at)
+    link_id = _insert_link(
+        db, patient_id, family_id, status="rejected", sharing_enabled=False, rejected_at=rejected_at
+    )
 
     repo = SqlLinks()
     uow = SqlUnitOfWork(db)
-    res = repo.revoke(uow, link_id=link_id, caller_id=patient_id,
-                      now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC))
+    res = repo.revoke(
+        uow, link_id=link_id, caller_id=patient_id, now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC)
+    )
     assert res is None
 
     row = _link_row(db, link_id)
@@ -108,6 +124,7 @@ def test_sql_revoke_rejected_link_returns_none(db, make):
 
 
 # ---- use-case-level tests (revoke_link) ----
+
 
 def test_revoke_active_link_sets_revoked_and_clears_sharing(db, make):
     """Revoke active -> 204-equivalent, status=revoked, sharing_enabled=false, rejected_at NULL."""
@@ -156,13 +173,19 @@ def test_stranger_revoke_rejected_link_gets_403(db, make):
     family_id = make.user()
     stranger_id = make.user()
     rejected_at = datetime(2026, 10, 14, 12, 0, 0, tzinfo=UTC)
-    link_id = _insert_link(db, patient_id, family_id, status="rejected",
-                           sharing_enabled=False, rejected_at=rejected_at)
+    link_id = _insert_link(
+        db, patient_id, family_id, status="rejected", sharing_enabled=False, rejected_at=rejected_at
+    )
 
     uow = SqlUnitOfWork(db)
     with pytest.raises(Forbidden, match="khong_co_quyen"):
-        revoke_link(uow, link_id=link_id, caller_id=stranger_id,
-                    now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC), links=SqlLinks())
+        revoke_link(
+            uow,
+            link_id=link_id,
+            caller_id=stranger_id,
+            now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC),
+            links=SqlLinks(),
+        )
 
 
 def test_stranger_revoke_nonexistent_link_gets_403(db, make):
@@ -170,8 +193,13 @@ def test_stranger_revoke_nonexistent_link_gets_403(db, make):
     stranger_id = make.user()
     uow = SqlUnitOfWork(db)
     with pytest.raises(Forbidden, match="khong_co_quyen"):
-        revoke_link(uow, link_id=999999, caller_id=stranger_id,
-                    now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC), links=SqlLinks())
+        revoke_link(
+            uow,
+            link_id=999999,
+            caller_id=stranger_id,
+            now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC),
+            links=SqlLinks(),
+        )
 
 
 def test_owner_revoke_rejected_link_gets_422(db, make):
@@ -179,14 +207,19 @@ def test_owner_revoke_rejected_link_gets_422(db, make):
     patient_id = make.user()
     family_id = make.user()
     rejected_at = datetime(2026, 10, 14, 12, 0, 0, tzinfo=UTC)
-    link_id = _insert_link(db, patient_id, family_id, status="rejected",
-                           sharing_enabled=False, rejected_at=rejected_at)
+    link_id = _insert_link(
+        db, patient_id, family_id, status="rejected", sharing_enabled=False, rejected_at=rejected_at
+    )
 
     uow = SqlUnitOfWork(db)
-    with pytest.raises(FamilyLinkError, match="cannot transition family link from rejected to revoked"):
-        revoke_link(uow, link_id=link_id, caller_id=patient_id,
-                    now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC), links=SqlLinks())
-
+    with pytest.raises(FamilyLinkError, match="invalid_link_transition"):
+        revoke_link(
+            uow,
+            link_id=link_id,
+            caller_id=patient_id,
+            now=datetime(2026, 10, 15, 9, 0, 0, tzinfo=UTC),
+            links=SqlLinks(),
+        )
 
 
 def test_revoke_already_revoked_with_sharing_enabled_true_clears_sharing_db(db, make):
@@ -361,6 +394,7 @@ def test_worker_alert_suppressed_after_revoke_link(db, make):
 
     from drugtime.modules.adherence.adapters.outbound.other_modules import AccessGuardAdapter
     from drugtime.modules.adherence.application.scan_missed_doses import scan_and_notify
+    from drugtime.modules.adherence.domain.dose import LATE_CONFIRMATION_WINDOW
 
     patient_id = make.user()
     family_id = make.family_of(patient_id)
@@ -384,6 +418,9 @@ def test_worker_alert_suppressed_after_revoke_link(db, make):
         def occurrences_between(self, uow, start, end):
             return self.occurrences
 
+        def alert_context(self, uow, schedule_id, patient_id):
+            return "Test medication"
+
     class FakeDoseLogs:
         def __init__(self):
             self.missed = []
@@ -400,8 +437,18 @@ def test_worker_alert_suppressed_after_revoke_link(db, make):
         def __init__(self):
             self.created = []
 
-        def create_missed_alert(self, uow, recipient_id, patient_id, dedupe_key):
-            nid = uuid4()
+        def create_missed_alert(
+            self,
+            uow,
+            recipient_id,
+            patient_id,
+            dedupe_key,
+            content=None,
+            *,
+            medication_name,
+            scheduled_at,
+        ):
+            nid = len(self.created) + 1
             self.created.append((nid, recipient_id, patient_id, dedupe_key))
             return nid
 
@@ -429,8 +476,8 @@ def test_worker_alert_suppressed_after_revoke_link(db, make):
     count1 = scan_and_notify(
         uow_factory=uow_factory,
         notifier=notifier1,
-        now=datetime(2026, 10, 15, 8, 30, tzinfo=UTC),
-        grace=timedelta(minutes=30),
+        now=datetime(2026, 10, 15, 10, 0, tzinfo=UTC),
+        grace=LATE_CONFIRMATION_WINDOW,
         overlap=timedelta(minutes=5),
         cursor=FakeCursor(),
         schedules=FakeSchedules([occ1]),
@@ -449,22 +496,22 @@ def test_worker_alert_suppressed_after_revoke_link(db, make):
         uow,
         link_id=link_id,
         caller_id=patient_id,
-        now=datetime(2026, 10, 15, 9, 0, tzinfo=UTC),
+        now=datetime(2026, 10, 15, 10, 30, tzinfo=UTC),
         links=SqlLinks(),
     )
 
     # 3. QUÉT LẠI: Liều bỏ lỡ tiếp theo KHÔNG gửi cho Family nữa
     occ2 = SimpleNamespace(
         schedule_id=2,
-        scheduled_at=datetime(2026, 10, 15, 9, 30, tzinfo=UTC),
+        scheduled_at=datetime(2026, 10, 15, 11, 0, tzinfo=UTC),
         patient_id=patient_id,
     )
     notifier2 = FakeNotifier()
     count2 = scan_and_notify(
         uow_factory=uow_factory,
         notifier=notifier2,
-        now=datetime(2026, 10, 15, 10, 30, tzinfo=UTC),
-        grace=timedelta(minutes=30),
+        now=datetime(2026, 10, 15, 13, 30, tzinfo=UTC),
+        grace=LATE_CONFIRMATION_WINDOW,
         overlap=timedelta(minutes=5),
         cursor=FakeCursor(),
         schedules=FakeSchedules([occ2]),

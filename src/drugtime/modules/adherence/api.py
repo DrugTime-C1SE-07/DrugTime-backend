@@ -30,11 +30,13 @@ recorded_doses = SqlDoseLogs()
 
 def scan_missed_doses(uow_factory, *, notifier: NotificationPort) -> int:
     s = get_settings()
+    grace = timedelta(minutes=s.missed_dose_grace_minutes)
+    _scan.validate_grace(grace)
     return _scan.scan_and_notify(
         uow_factory,
         notifier,
         now=now(),
-        grace=timedelta(minutes=s.missed_dose_grace_minutes),
+        grace=grace,
         overlap=timedelta(minutes=s.missed_dose_overlap_minutes),
         cursor=SqlScanCursor(),
         schedules=SchedulesAdapter(),

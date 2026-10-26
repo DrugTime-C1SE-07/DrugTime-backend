@@ -9,26 +9,9 @@ Kiểm tra:
 6. Gỡ lặp lại (idempotent) -> 204 No Content, giữ nguyên revoked_at ban đầu.
 7. Thiếu hoặc sai token xác thực -> 401 Unauthorized.
 """
-import sys
+
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 from uuid import UUID, uuid4
-
-if "sqlalchemy" not in sys.modules:
-    mock_sa = MagicMock()
-    mock_sa.text = lambda sql: sql
-    sys.modules["sqlalchemy"] = mock_sa
-
-if "jwt" not in sys.modules:
-    sys.modules["jwt"] = MagicMock()
-
-if "pydantic_settings" not in sys.modules:
-    mock_ps = MagicMock()
-    mock_ps.BaseSettings = object
-    mock_ps.SettingsConfigDict = dict
-    sys.modules["pydantic_settings"] = mock_ps
-
-
 
 import pytest
 from fastapi import FastAPI, Request
@@ -36,7 +19,6 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from drugtime.modules.family.adapters.inbound.http import router as family_router
-
 from drugtime.modules.family.domain.link import FamilyLink, LinkStatus
 from drugtime.modules.identity import api as identity
 from drugtime.shared.db import get_uow
@@ -97,7 +79,12 @@ def test_setup():
     link_pending = FamilyLink(2, patient_id, family_id, LinkStatus.PENDING, sharing_enabled=False)
     initial_revoked_at = datetime(2026, 10, 7, 10, 0, tzinfo=UTC)
     link_revoked = FamilyLink(
-        3, patient_id, family_id, LinkStatus.REVOKED, sharing_enabled=False, revoked_at=initial_revoked_at
+        3,
+        patient_id,
+        family_id,
+        LinkStatus.REVOKED,
+        sharing_enabled=False,
+        revoked_at=initial_revoked_at,
     )
 
     fake_links = MockFakeLinks([link1, link_pending, link_revoked])
@@ -121,7 +108,6 @@ def test_setup():
     @app.exception_handler(DomainError)
     def domain_error_handler(_: Request, exc: DomainError):
         return JSONResponse({"detail": str(exc)}, status_code=422)
-
 
     # Mock SqlLinks() inside http.py using monkeypatch or fake_links
     import drugtime.modules.family.adapters.inbound.http as http_module
@@ -284,8 +270,7 @@ def test_http_rejected_link_returns_422(test_setup):
     res = client.delete("/links/4")
 
     assert res.status_code == 422
-    assert res.json() == {"detail": "cannot transition family link from rejected to revoked"}
-
+    assert res.json() == {"detail": "invalid_link_transition"}
 
 
 def test_http_old_route_returns_404(test_setup):

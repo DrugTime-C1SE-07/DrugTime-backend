@@ -68,7 +68,9 @@ def create_app() -> FastAPI:
     for exc_type, status in _STATUS.items():
 
         def handler(_: Request, exc: Exception, status: int = status) -> JSONResponse:
-            return JSONResponse({"detail": str(exc)}, status_code=status)
+            retry_after = getattr(exc, "retry_after", None)
+            headers = None if retry_after is None else {"Retry-After": str(retry_after)}
+            return JSONResponse({"detail": str(exc)}, status_code=status, headers=headers)
 
         app.add_exception_handler(exc_type, handler)
 
@@ -76,6 +78,20 @@ def create_app() -> FastAPI:
         return JSONResponse({"detail": "Internal server error"}, status_code=500)
 
     app.add_exception_handler(Exception, internal_error)
+
+    @app.middleware("http")
+    async def adherence_no_store(request: Request, call_next):
+        if request.method != "GET" or request.url.path != "/adherence":
+            return await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            # Handle infrastructure/serialization failures here so ServerErrorMiddleware
+            # never sends a health error without no-store or logs a sensitive exception.
+            response = internal_error(request, exc)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     return app
 
 

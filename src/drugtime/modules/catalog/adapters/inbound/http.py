@@ -19,8 +19,8 @@ from drugtime.modules.catalog.adapters.outbound.sql_sync_runs import SqlSyncRuns
 from drugtime.modules.catalog.application.list_active_ingredients import list_active_ingredients
 from drugtime.modules.catalog.application.list_sync_runs import list_sync_runs
 from drugtime.modules.catalog.application.search_medications import search_medications
-from drugtime.modules.catalog.domain.sync_run import CatalogSyncSource, CatalogSyncStatus
 from drugtime.modules.catalog.application.service import CatalogService
+from drugtime.modules.catalog.domain.sync_run import CatalogSyncSource, CatalogSyncStatus
 from drugtime.modules.identity import api as identity
 from drugtime.shared.db import SqlUnitOfWork, get_uow
 
@@ -41,6 +41,12 @@ class ErrorDetail(BaseModel):
 # ============================================================================
 
 
+@router.get(
+    "/medications/search",
+    response_model=CatalogMedicationList,
+    responses={401: {"model": ErrorDetail, "description": "Chưa xác thực"}},
+    operation_id="searchMedications",
+)
 @router.get(
     "/catalog/medications",
     response_model=CatalogMedicationList,

@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from drugtime.shared.errors import DomainError
+from drugtime.shared.errors import Conflict, DomainError
 
 
 class LinkStatus(StrEnum):
@@ -14,10 +14,13 @@ class LinkStatus(StrEnum):
 
 
 class FamilyLinkError(DomainError):
-    def __init__(self, code: str, detail: str) -> None:
-        super().__init__(detail)
+    """Vi phạm quy tắc liên kết (422). `detail` trả cho client là mã ổn định `code`;
+    `message` chỉ để đọc khi debug."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(code)
         self.code = code
-        self.detail = detail
+        self.message = message
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,7 @@ class FamilyLink:
     linked_at: datetime | None = None
     revoked_at: datetime | None = None
     rejected_at: datetime | None = None
+    client_uuid: UUID | None = None
 
 
 def ensure_distinct_users(patient_user_id: UUID, family_user_id: UUID) -> None:
@@ -41,14 +45,19 @@ def ensure_distinct_users(patient_user_id: UUID, family_user_id: UUID) -> None:
 
 
 def ensure_can_create_link(
-    patient_user_id: UUID, family_user_id: UUID, existing: FamilyLink | None
+    patient_user_id: UUID, family_user_id: UUID, open_link: FamilyLink | None
 ) -> None:
+    """Mỗi cặp (người bệnh, người thân) có tối đa một dòng pending/active (QD-34 (f)).
+
+    `open_link` là dòng pending/active của cặp, nếu có. Dòng rejected/revoked không chặn:
+    gửi lại tạo yêu cầu mới (QD-30, BS-04).
+    """
     ensure_distinct_users(patient_user_id, family_user_id)
-    if existing is not None:
-        raise FamilyLinkError(
-            "link_already_exists",
-            "patient-family link already exists for this role pair",
-        )
+    if open_link is None:
+        return
+    if open_link.status is LinkStatus.PENDING:
+        raise Conflict("link_request_pending")
+    raise Conflict("already_linked")
 
 
 def pending_link(patient_user_id: UUID, family_user_id: UUID) -> FamilyLink:
@@ -61,6 +70,12 @@ def pending_link(patient_user_id: UUID, family_user_id: UUID) -> FamilyLink:
     )
 
 
+def ensure_sharing_changeable(link: FamilyLink) -> None:
+    """Công tắc chia sẻ chỉ có nghĩa với liên kết đang hoạt động (QD-28)."""
+    if link.status is not LinkStatus.ACTIVE:
+        raise Conflict("family_link_not_active")
+
+
 def transition_link(link: FamilyLink, target: LinkStatus, *, now: datetime) -> FamilyLink:
     if link.status is LinkStatus.PENDING and target is LinkStatus.ACTIVE:
         return FamilyLink(
@@ -68,10 +83,11 @@ def transition_link(link: FamilyLink, target: LinkStatus, *, now: datetime) -> F
             patient_user_id=link.patient_user_id,
             family_user_id=link.family_user_id,
             status=LinkStatus.ACTIVE,
-            sharing_enabled=link.sharing_enabled,
+            sharing_enabled=False,
             linked_at=link.linked_at,
             revoked_at=None,
             rejected_at=None,
+            client_uuid=link.client_uuid,
         )
     if link.status is LinkStatus.PENDING and target is LinkStatus.REJECTED:
         return FamilyLink(
@@ -79,10 +95,11 @@ def transition_link(link: FamilyLink, target: LinkStatus, *, now: datetime) -> F
             patient_user_id=link.patient_user_id,
             family_user_id=link.family_user_id,
             status=LinkStatus.REJECTED,
-            sharing_enabled=link.sharing_enabled,
+            sharing_enabled=False,
             linked_at=link.linked_at,
             revoked_at=None,
             rejected_at=now,
+            client_uuid=link.client_uuid,
         )
     if link.status in (LinkStatus.ACTIVE, LinkStatus.PENDING) and target is LinkStatus.REVOKED:
         return FamilyLink(
@@ -94,6 +111,7 @@ def transition_link(link: FamilyLink, target: LinkStatus, *, now: datetime) -> F
             linked_at=link.linked_at,
             revoked_at=now,
             rejected_at=None,
+            client_uuid=link.client_uuid,
         )
     if link.status is LinkStatus.REVOKED and target is LinkStatus.REVOKED:
         if link.sharing_enabled:
@@ -106,6 +124,7 @@ def transition_link(link: FamilyLink, target: LinkStatus, *, now: datetime) -> F
                 linked_at=link.linked_at,
                 revoked_at=link.revoked_at,
                 rejected_at=link.rejected_at,
+                client_uuid=link.client_uuid,
             )
         return link
     raise FamilyLinkError(

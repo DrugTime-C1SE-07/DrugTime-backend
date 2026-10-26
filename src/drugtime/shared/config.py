@@ -10,8 +10,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
     celery_broker_url: str = "amqp://guest:guest@127.0.0.1:5672//"
     catalog_dav_drugbank_url: str = (
-        "https://dichvucong.dav.gov.vn/"
-        "api/services/app/soDangKy/GetAllPublicServerPaging"
+        "https://dichvucong.dav.gov.vn/api/services/app/soDangKy/GetAllPublicServerPaging"
     )
 
     supabase_url: str = "http://127.0.0.1:54321"
@@ -34,9 +33,18 @@ class Settings(BaseSettings):
     # Rỗng = không bật CORS. Admin Web gọi qua route handler phía server nên không cần.
     cors_allowed_origins: str = ""
 
+    # Gửi yêu cầu liên kết (task 3.13): khóa tài khoản nhập sai mã (QD-34 (c)),
+    # giới hạn ngày (QD-34 (e)), chặn sau nhiều lần bị từ chối (BS-04).
+    link_fail_window_minutes: int = 15
+    link_fail_account_limit: int = 5
+    link_lock_minutes: int = 15
+    link_daily_request_limit: int = 10
+    link_reject_streak_limit: int = 5
+    link_reject_cooldown_hours: int = 24
+
     timezone: str = "Asia/Ho_Chi_Minh"
     tick_interval_seconds: int = 300
-    missed_dose_grace_minutes: int = 60
+    missed_dose_grace_minutes: int = 120
     missed_dose_overlap_minutes: int = 30
     heartbeat_max_age_seconds: int = 180
 

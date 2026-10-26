@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from uuid import UUID
 
-from drugtime.modules.family.application.ports import LinkCodes
+from drugtime.modules.family.application.ports import Consents, LinkCodes
 from drugtime.modules.family.domain.link_code import LinkCode, generate_code
 from drugtime.shared.errors import Forbidden, ServiceUnavailable
 from drugtime.shared.uow import UnitOfWork
@@ -15,6 +15,7 @@ def get_link_code(
     user_id: UUID,
     is_admin: bool,
     codes: LinkCodes,
+    consents: Consents,
     generate: Callable[[], str] = generate_code,
     max_attempts: int = MAX_ATTEMPTS,
 ) -> LinkCode:
@@ -22,6 +23,9 @@ def get_link_code(
     if is_admin:
         # Tài khoản admin tách khỏi tài khoản cá nhân (QD-44).
         raise Forbidden("khong_co_quyen")
+    if not consents.has_family_sharing(uow, user_id):
+        # BS-05: chưa đồng ý (hoặc đã rút) family_sharing thì không lấy, không sinh mã.
+        raise Forbidden("family_sharing_consent_required")
     existing = codes.find_by_patient(uow, user_id)
     if existing is not None:
         return LinkCode(patient_user_id=user_id, code=existing)

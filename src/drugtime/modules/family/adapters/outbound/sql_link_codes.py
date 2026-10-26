@@ -5,6 +5,7 @@ from sqlalchemy import text
 from drugtime.shared.uow import UnitOfWork
 
 _SELECT_BY_PATIENT = text("SELECT code FROM link_codes WHERE patient_user_id = :patient_id")
+_SELECT_OWNER = text("SELECT patient_user_id FROM link_codes WHERE code = :code")
 
 # Không chỉ định cột xung đột: bao cả UNIQUE (patient_user_id) và UNIQUE (code).
 # Request đồng thời cho cùng user chờ bên kia commit rồi không ghi gì (READ COMMITTED).
@@ -19,6 +20,9 @@ RETURNING code
 class SqlLinkCodes:
     def find_by_patient(self, uow: UnitOfWork, patient_id: UUID) -> str | None:
         return uow.connection.execute(_SELECT_BY_PATIENT, {"patient_id": patient_id}).scalar()
+
+    def find_owner(self, uow: UnitOfWork, code: str) -> UUID | None:
+        return uow.connection.execute(_SELECT_OWNER, {"code": code}).scalar()
 
     def insert_if_absent(self, uow: UnitOfWork, patient_id: UUID, code: str) -> str | None:
         inserted = uow.connection.execute(

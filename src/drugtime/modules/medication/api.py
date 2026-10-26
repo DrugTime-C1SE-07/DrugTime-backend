@@ -11,12 +11,14 @@ from drugtime.modules.medication.adapters.inbound.http import (
 )
 from drugtime.modules.medication.adapters.inbound.http import router as _medications_router
 from drugtime.modules.medication.adapters.inbound.profile_http import router as _profile_router
+from drugtime.modules.medication.adapters.outbound.other_modules import CatalogAdapter
 from drugtime.modules.medication.adapters.outbound.sql_medication import SqlMedication
 from drugtime.modules.medication.application.ports import RecordedDoses
 from drugtime.modules.medication.domain.schedule import DoseOccurrence
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
+    "alert_context",
     "DoseOccurrence",
     "RecordedDoses",
     "configure",
@@ -38,6 +40,16 @@ router.include_router(_profile_router)
 def configure(*, recorded_doses: RecordedDoses) -> None:
     """Composition root nối port mà module khác hiện thực (task 2.04)."""
     set_recorded_doses(recorded_doses)
+
+
+def alert_context(uow: UnitOfWork, schedule_id: int, patient_id: UUID) -> str | None:
+    """Medication name for an occurrence owned by this patient; no guessed fallback."""
+    medication_id = SqlMedication().alert_medication_id(uow, schedule_id, patient_id)
+    if medication_id is None:
+        return None
+    # Lịch cũ vẫn cần tên thuốc đã soft-delete; đọc catalog qua adapter của module.
+    medication = CatalogAdapter().get_medication(uow, medication_id, include_deleted=True)
+    return None if medication is None else medication.name
 
 
 def schedule_owner(uow: UnitOfWork, schedule_id: int) -> UUID | None:
