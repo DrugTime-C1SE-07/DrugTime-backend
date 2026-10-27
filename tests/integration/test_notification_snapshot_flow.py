@@ -16,8 +16,14 @@ from drugtime.modules.adherence.adapters.outbound.other_modules import (
     PatientNamesAdapter,
     SchedulesAdapter,
 )
-from drugtime.modules.adherence.adapters.outbound.sql_adherence import SqlDoseLogs, SqlNotifications
+from drugtime.modules.adherence.adapters.outbound.sql_adherence import (
+    SqlDoseLogs,
+    SqlNotifications,
+    SqlPendingVerifications,
+    SqlSyncCheckpoints,
+)
 from drugtime.modules.adherence.application.scan_missed_doses import scan
+from drugtime.modules.adherence.domain.dose import LATE_CONFIRMATION_WINDOW
 from drugtime.shared.db import SqlUnitOfWork, unit_of_work
 
 
@@ -28,6 +34,7 @@ def test_scan_snapshot_survives_catalog_schedule_edit_and_replay__AC2_AC3_AC4(
     family = make.family_of(patient)  # No Android token: iOS still gets inbox rows.
     data = HistoryData(db, make, client, auth, patient)
     occurrence = data.schedule(at=AT)
+    data.sync(AT + LATE_CONFIRMATION_WINDOW)  # 3.19: patient đã đồng bộ sau hạn chót
     schedules = Mock(wraps=SchedulesAdapter())
     schedules.occurrences_between.return_value = [occurrence]
     ports = dict(
@@ -41,11 +48,13 @@ def test_scan_snapshot_survives_catalog_schedule_edit_and_replay__AC2_AC3_AC4(
         tokens=DeviceTokensAdapter(),
         notifications=SqlNotifications(),
         patient_names=PatientNamesAdapter(),
+        checkpoints=SqlSyncCheckpoints(),
+        pending=SqlPendingVerifications(LATE_CONFIRMATION_WINDOW),
     )
     ports["cursor"].get.return_value = None
     for _ in range(2):
         with role_engines["worker_role"].begin() as connection:
-            assert scan(SqlUnitOfWork(connection), **ports) == []
+            assert scan(SqlUnitOfWork(connection), **ports).alerts == []
     headers = auth(family)
     response = client.get("/notifications", headers=headers)
     assert response.status_code == 200
@@ -135,4 +144,6 @@ def test_worker_database_race_never_overwrites_confirmation__AC3(
     if confirmed:
         assert result is None
     rows = data.snapshot()
-    assert len(rows) == 1 and rows[0].status == ("da_uong" if confirmed else "uong_tre")
+    # 3.19 Q3: xác nhận đến sau bo_lo tính theo taken_at (AT + 30' là da_uong),
+    # không còn mặc định uong_tre.
+    assert len(rows) == 1 and rows[0].status == "da_uong"

@@ -452,6 +452,24 @@ def test_worker_alert_suppressed_after_revoke_link(db, make):
             self.created.append((nid, recipient_id, patient_id, dedupe_key))
             return nid
 
+    # 3.19: patient đã đồng bộ sau hạn chót nên liều được xác minh ngay; hàng chờ không dùng.
+    class SyncedCheckpoints:
+        def get_many(self, uow, user_ids):
+            return {uid: datetime(2100, 1, 1, tzinfo=UTC) for uid in user_ids}
+
+    class NoPending:
+        def add(self, uow, occ):
+            return False
+
+        def verified(self, uow, now):
+            return []
+
+        def remove(self, uow, occ):
+            pass
+
+        def purge_recorded(self, uow):
+            pass
+
     class FakeNotifier:
         def __init__(self):
             self.sent_alerts = []
@@ -485,6 +503,8 @@ def test_worker_alert_suppressed_after_revoke_link(db, make):
         access=AccessGuardAdapter(),
         tokens=FakeDeviceTokens(),
         notifications=FakeNotifications(),
+        checkpoints=SyncedCheckpoints(),
+        pending=NoPending(),
     )
     assert count1 == 1
     assert len(notifier1.sent_alerts) == 1
@@ -519,6 +539,8 @@ def test_worker_alert_suppressed_after_revoke_link(db, make):
         access=AccessGuardAdapter(),
         tokens=FakeDeviceTokens(),
         notifications=FakeNotifications(),
+        checkpoints=SyncedCheckpoints(),
+        pending=NoPending(),
     )
     assert count2 == 0
     assert len(notifier2.sent_alerts) == 0

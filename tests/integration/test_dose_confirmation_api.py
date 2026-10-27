@@ -1,5 +1,6 @@
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from socket import create_connection
 from time import perf_counter
 from urllib.parse import urlparse
@@ -8,12 +9,16 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from test_adherence_history_api import DAY
+from test_adherence_history_api import history_data as history_data
+from test_missed_dose_verification import World
 
 from drugtime.main import create_app
+from drugtime.modules.adherence.adapters.outbound.sql_adherence import SqlDoseLogs
 from drugtime.modules.identity import api as identity
 from drugtime.modules.identity.domain.user import CurrentUser
 from drugtime.shared.config import get_settings
-from drugtime.shared.db import unit_of_work
+from drugtime.shared.db import SqlUnitOfWork, unit_of_work
 
 
 def _require_db() -> None:
@@ -434,3 +439,116 @@ def test_post_doses_batch_p95_under_two_seconds_for_small_batches__AC17(client_a
     elapsed.sort()
     p95 = elapsed[int(len(elapsed) * 0.95) - 1]
     assert p95 < 2
+
+
+# --- Task 3.19: Q3 (theo taken_at), chạy đua với Worker, Q2 (người thân không ghi) ---------------
+
+L = DAY + timedelta(hours=8)
+D = L + timedelta(minutes=120)
+
+
+def _logs(data, schedule):
+    return data.db.execute(
+        text(
+            "SELECT status::text AS status, taken_at, client_uuid FROM dose_logs "
+            "WHERE medication_schedule_id = :s AND scheduled_at = :at"
+        ),
+        {"s": schedule.schedule_id, "at": schedule.scheduled_at},
+    ).all()
+
+
+def test_worker_race_late_confirmation_by_taken_at__AC25(
+    history_data, role_engines, wait_for_lock_waiters
+):
+    data = history_data
+    occ = data.schedule(L)
+    data.now = D + timedelta(minutes=30)
+    with role_engines["worker_role"].connect() as worker:
+        tx = worker.begin()
+        assert SqlDoseLogs().mark_missed(SqlUnitOfWork(worker), occ.schedule_id, L) is not None
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(data.confirm, occ, L + timedelta(minutes=10))
+            try:
+                wait_for_lock_waiters(1)  # POST /doses/batch đang chờ khóa dòng của Worker
+            finally:
+                tx.commit()
+            future.result(timeout=20)
+    rows = _logs(data, occ)
+    assert [(r.status, r.taken_at) for r in rows] == [("da_uong", L + timedelta(minutes=10))]
+
+
+def test_confirmation_first_then_worker_no_alert__AC25(history_data, role_engines):
+    data = history_data
+    data.unsync()
+    w = World(data, role_engines["worker_role"])
+    family = w.make.family_of(data.patient)
+    occ = data.schedule(L)
+    data.now = D + timedelta(minutes=30)
+    data.confirm(occ, L + timedelta(minutes=10))
+    w.checkpoint(D + timedelta(minutes=30))
+    w.run(D + timedelta(minutes=31))
+    assert [r.status for r in _logs(data, occ)] == ["da_uong"]
+    assert w.notifications(family) == []
+
+
+@pytest.mark.parametrize(
+    "delay,expected",
+    [
+        (timedelta(minutes=-30), "da_uong"),
+        (timedelta(minutes=10), "da_uong"),
+        (timedelta(minutes=30), "da_uong"),
+        (timedelta(minutes=30, microseconds=1), "uong_tre"),
+        (timedelta(minutes=90), "uong_tre"),
+        (timedelta(minutes=150), "bo_lo"),
+    ],
+)
+def test_confirmation_after_missed_by_taken_at__AC26(history_data, delay, expected):
+    data = history_data
+    occ = data.schedule(L)
+    data.log(occ)  # bo_lo do Worker ghi, client_uuid NULL
+    data.now = L + timedelta(hours=3)
+    cid = uuid4()
+    item = {
+        "client_uuid": str(cid),
+        "schedule_id": occ.schedule_id,
+        "scheduled_at": L.isoformat(),
+        "taken_at": (L + delay).isoformat(),
+    }
+    first = data.client.post("/doses/batch", json=[item], headers=data.auth(data.patient))
+    assert first.status_code == 200
+    result = first.json()["items"][0]
+    assert result["result"] == "synced" and result["dose_status"] == expected
+    rows = _logs(data, occ)
+    assert len(rows) == 1 and rows[0].status == expected
+    if expected == "bo_lo":
+        assert rows[0].taken_at is None
+    else:
+        assert rows[0].taken_at == L + delay
+    replay = data.client.post("/doses/batch", json=[item], headers=data.auth(data.patient))
+    assert replay.status_code == 200
+    assert replay.json()["items"][0]["dose_status"] == expected
+    assert replay.json()["items"][0]["dose_log_id"] == result["dose_log_id"]
+    assert len(_logs(data, occ)) == 1
+
+
+def test_family_cannot_confirm_logs_denied__Q2(history_data):
+    data = history_data
+    family = data.make.family_of(data.patient)
+    occ = data.schedule(L)
+    data.now = L + timedelta(minutes=10)
+    item = {
+        "client_uuid": str(uuid4()),
+        "schedule_id": occ.schedule_id,
+        "scheduled_at": L.isoformat(),
+        "taken_at": (L + timedelta(minutes=5)).isoformat(),
+    }
+    response = data.client.post("/doses/batch", json=[item], headers=data.auth(family))
+    assert response.status_code == 200
+    result = response.json()["items"][0]
+    assert result["result"] == "failed"
+    assert (result["error"]["code"], result["error"]["http_status"]) == ("forbidden_schedule", 403)
+    assert _logs(data, occ) == []
+    denied = [log for log in data.make.access_logs(data.patient) if log["actor_user_id"] == family]
+    assert [(d["actor_role"], d["result"], d["rejection_reason"]) for d in denied] == [
+        ("family", "denied", "khong_co_quyen")
+    ]
