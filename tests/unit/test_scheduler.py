@@ -8,7 +8,19 @@ from drugtime.modules.catalog import tasks as catalog_tasks
 from drugtime.runtime import job_runner
 
 
-def test_tick_is_registered_in_celery_beat(monkeypatch):
+@pytest.fixture
+def mock_channel(monkeypatch):
+    # .env của máy dev có thể đặt NOTIFICATION_CHANNEL=fcm; test không dùng credential thật.
+    from drugtime.shared.config import get_settings
+
+    monkeypatch.setenv("NOTIFICATION_CHANNEL", "mock")
+    monkeypatch.setattr(job_runner, "_notifier", None)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_tick_is_registered_in_celery_beat(monkeypatch, mock_channel):
     monkeypatch.setenv("CELERY_BROKER_URL", "memory://")
 
     import drugtime.worker as worker
@@ -116,3 +128,51 @@ def test_tick_continues_after_each_step_failure(monkeypatch):
     job_runner.tick()
 
     assert calls == ["scan", "sync", "erase"]
+
+
+def test_default_tick_interval_900__AC44(monkeypatch):
+    from drugtime.shared.config import Settings
+
+    monkeypatch.delenv("TICK_INTERVAL_SECONDS", raising=False)
+    assert Settings(_env_file=None).tick_interval_seconds == 900
+
+
+def test_heartbeat_calls_health_once__AC45(monkeypatch):
+    calls = []
+    monkeypatch.setattr(job_runner.health, "record_heartbeat", calls.append)
+
+    job_runner.record_worker_heartbeat("x")
+
+    assert calls == ["x"]
+
+
+def test_worker_import_validates_notification_config__AC42(monkeypatch, mock_channel):
+    from drugtime.notification_gateway import NotificationConfigError
+
+    monkeypatch.setenv("CELERY_BROKER_URL", "memory://")
+    monkeypatch.setenv("NOTIFICATION_CHANNEL", "fcm")
+    monkeypatch.setenv("FCM_CREDENTIALS_FILE", "")
+    import drugtime.worker as worker
+
+    with pytest.raises(NotificationConfigError, match="FCM_CREDENTIALS_FILE"):
+        importlib.reload(worker)
+
+    # Nạp lại bản dùng được để các test sau không thấy module worker dở dang.
+    from drugtime.shared.config import get_settings
+
+    monkeypatch.setenv("NOTIFICATION_CHANNEL", "mock")
+    get_settings.cache_clear()
+    importlib.reload(worker)
+
+
+def test_gateway_is_built_once_and_reused(monkeypatch, mock_channel):
+    built = []
+    monkeypatch.setattr(
+        job_runner.notification_gateway, "build", lambda settings: built.append(1) or object()
+    )
+    monkeypatch.setattr(job_runner.adherence, "scan_missed_doses", lambda uow, notifier: 0)
+
+    job_runner._scan()
+    job_runner._scan()
+
+    assert built == [1]
