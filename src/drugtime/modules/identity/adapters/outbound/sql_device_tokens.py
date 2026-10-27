@@ -45,3 +45,12 @@ class SqlDeviceTokens:
             text("DELETE FROM device_tokens WHERE user_id = :u AND fcm_token = :t"),
             {"u": user_id, "t": token},
         )
+
+    def remove_tokens(self, uow, tokens):
+        """Xóa theo fcm_token (token FCM báo UNREGISTERED); khóa như register để không đua."""
+        if not tokens:
+            return
+        self._lock(uow, tokens)
+        uow.connection.execute(
+            text("DELETE FROM device_tokens WHERE fcm_token = ANY(:t)"), {"t": sorted(set(tokens))}
+        )

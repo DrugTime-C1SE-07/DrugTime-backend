@@ -12,17 +12,28 @@ from drugtime.modules.adherence.adapters.outbound.other_modules import (
 from drugtime.modules.adherence.adapters.outbound.sql_adherence import (
     SqlDoseLogs,
     SqlNotifications,
+    SqlPendingVerifications,
     SqlScanCursor,
+    SqlSyncCheckpoints,
 )
 from drugtime.modules.adherence.application import erase_user as _erase
 from drugtime.modules.adherence.application import scan_missed_doses as _scan
 from drugtime.modules.adherence.application.ports import NotificationPort
-from drugtime.modules.adherence.domain.alert import Alert
+from drugtime.modules.adherence.domain.alert import Alert, SyncRequest
+from drugtime.modules.adherence.domain.dose import LATE_CONFIRMATION_WINDOW
 from drugtime.shared.clock import now
 from drugtime.shared.config import get_settings
 from drugtime.shared.uow import UnitOfWork
 
-__all__ = ["Alert", "NotificationPort", "eraser", "recorded_doses", "router", "scan_missed_doses"]
+__all__ = [
+    "Alert",
+    "NotificationPort",
+    "SyncRequest",
+    "eraser",
+    "recorded_doses",
+    "router",
+    "scan_missed_doses",
+]
 
 # Liều đã ghi, cho medication tính mốc hiệu lực khi sửa lịch; main.py nối vào medication.
 recorded_doses = SqlDoseLogs()
@@ -44,6 +55,8 @@ def scan_missed_doses(uow_factory, *, notifier: NotificationPort) -> int:
         access=AccessGuardAdapter(),
         tokens=DeviceTokensAdapter(),
         notifications=SqlNotifications(),
+        checkpoints=SqlSyncCheckpoints(),
+        pending=SqlPendingVerifications(LATE_CONFIRMATION_WINDOW),
     )
 
 
@@ -57,6 +70,8 @@ class _Eraser:
             schedules=SchedulesAdapter(),
             dose_logs=SqlDoseLogs(),
             notifications=SqlNotifications(),
+            checkpoints=SqlSyncCheckpoints(),
+            pending=SqlPendingVerifications(LATE_CONFIRMATION_WINDOW),
         )
 
 

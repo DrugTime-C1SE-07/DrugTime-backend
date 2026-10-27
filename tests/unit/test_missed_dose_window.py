@@ -30,6 +30,9 @@ def ports(occurrences=(), previous=None):
         tokens=Mock(android_tokens=Mock(return_value=[(FAMILY, "unit-device-token")])),
         notifications=Mock(create_missed_alert=Mock(return_value=uuid4())),
         patient_names=Mock(get_patient_name=Mock(return_value="Test patient")),
+        # Patient đã đồng bộ sau hạn chót: nhánh đã xác minh như 3.20 (3.19).
+        checkpoints=Mock(get_many=Mock(return_value={PATIENT: NOW})),
+        pending=Mock(add=Mock(return_value=True), verified=Mock(return_value=[])),
     )
 
 
@@ -80,7 +83,7 @@ def test_scan_rejects_wrong_grace_before_ports(minutes):
 def test_scan_skips_occurrences_through_exact_120_and_marks_only_after():
     expired = occurrence(120, 1, 4)
     args = ports([occurrence(30), occurrence(60), occurrence(120), expired])
-    alerts = scan(object(), **args)
+    alerts = scan(object(), **args).alerts
     assert len(alerts) == 1
     assert args["dose_logs"].mark_missed.call_count == 1
     assert args["dose_logs"].mark_missed.call_args.args[1:] == (4, expired.scheduled_at)
@@ -89,7 +92,7 @@ def test_scan_skips_occurrences_through_exact_120_and_marks_only_after():
 
 def test_scan_only_pending_occurrences_does_not_create_alerts():
     args = ports([occurrence(120)])
-    assert scan(object(), **args) == []
+    assert scan(object(), **args).alerts == []
     args["dose_logs"].mark_missed.assert_not_called()
     args["access"].caregivers_of.assert_not_called()
     args["notifications"].create_missed_alert.assert_not_called()
@@ -110,14 +113,14 @@ def test_ahead_cursor_does_not_invert_window_or_move_back(offset):
 def test_worker_does_not_overwrite_confirmed_or_duplicate_notifications():
     args = ports([occurrence(121)])
     args["dose_logs"].mark_missed.return_value = None  # SQL port reports existing confirmed/missed.
-    assert scan(object(), **args) == []
+    assert scan(object(), **args).alerts == []
     args["notifications"].create_missed_alert.assert_not_called()
     assert not args["dose_logs"].upsert_confirmation.called
 
     args = ports([occurrence(121)])
     args["notifications"].create_missed_alert.return_value = None
     args["tokens"].android_tokens.return_value = []
-    assert scan(object(), **args) == []
+    assert scan(object(), **args).alerts == []
     assert args["tokens"].android_tokens.call_args.args[1] == []
 
 

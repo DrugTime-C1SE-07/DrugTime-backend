@@ -23,7 +23,7 @@ class FakeAccess:
         self.calls = []
         self.forbidden_patients = set(forbidden_patients or [])
 
-    def authorize_adherence(self, uow, caller_id, caller_is_admin, patient_id):
+    def authorize_dose_write(self, uow, caller_id, caller_is_admin, patient_id):
         self.calls.append((caller_id, caller_is_admin, patient_id))
         if patient_id in self.forbidden_patients:
             raise Forbidden("forbidden")

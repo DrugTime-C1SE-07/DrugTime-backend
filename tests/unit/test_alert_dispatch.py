@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -24,7 +25,7 @@ class FakeSchedules:
 
 
 def test_gateway_privacy_in_payload_and_failure_log(caplog, monkeypatch):
-    gateway = FcmGateway("test-project")
+    gateway = FcmGateway("test-project", Mock(), Mock())
     secret = "unit-sensitive-device-token"
     alert = Alert(7, uuid4(), secret)
 
@@ -116,6 +117,35 @@ class FakePatientNames:
         return self.names.get(patient_id)
 
 
+class SyncedCheckpoints:
+    """Mọi patient đã đồng bộ sau hạn chót: lượt quét đi nhánh đã xác minh (3.19)."""
+
+    def get_many(self, uow, user_ids):
+        return {u: datetime(9999, 1, 1, tzinfo=UTC) for u in user_ids}
+
+
+class FakePending:
+    def __init__(self):
+        self.added = []
+
+    def add(self, uow, occ):
+        self.added.append(occ)
+        return True
+
+    def verified(self, uow, now):
+        return []
+
+    def remove(self, uow, occ):
+        pass
+
+    def purge_recorded(self, uow):
+        pass
+
+
+def scan_alerts(*args, **kwargs):
+    return scan(*args, **kwargs).alerts
+
+
 def test_dispatch_creates_alert_for_android_caregiver():
     # AC1: Bỏ lỡ liều, người thân có liên kết và token Android -> notification và Alert.
     patient_id = uuid4()
@@ -125,7 +155,7 @@ def test_dispatch_creates_alert_for_android_caregiver():
     occ = SimpleNamespace(patient_id=patient_id, schedule_id=1, scheduled_at=scheduled_at)
     notifications = FakeNotifications()
 
-    alerts = scan(
+    alerts = scan_alerts(
         None,
         now=datetime(2026, 10, 13, 11, 0, tzinfo=UTC),
         grace=timedelta(minutes=120),
@@ -136,6 +166,8 @@ def test_dispatch_creates_alert_for_android_caregiver():
         access=FakeAccessGuard({patient_id: [caregiver_id]}),
         tokens=FakeTokens({caregiver_id: ["token_android_123"]}),
         notifications=notifications,
+        checkpoints=SyncedCheckpoints(),
+        pending=FakePending(),
         patient_names=FakePatientNames({patient_id: "Nguyễn Văn A"}),
     )
 
@@ -146,7 +178,9 @@ def test_dispatch_creates_alert_for_android_caregiver():
     assert len(alerts) == 1
     assert alerts[0].recipient_id == caregiver_id
     assert alerts[0].device_token == "token_android_123"
-    assert "Nguyễn Văn A" in alerts[0].body
+    # 3.19 Q10 (QD-26): thân push là câu chung; tên patient chỉ có trong hộp thư.
+    assert alerts[0].body == "Bạn có cảnh báo mới về người thân"
+    assert "Nguyễn Văn A" not in alerts[0].body
 
 
 def test_dispatch_skips_push_for_ios_caregiver_but_creates_notification_row():
@@ -158,7 +192,7 @@ def test_dispatch_skips_push_for_ios_caregiver_but_creates_notification_row():
     occ = SimpleNamespace(patient_id=patient_id, schedule_id=1, scheduled_at=scheduled_at)
     notifications = FakeNotifications()
 
-    alerts = scan(
+    alerts = scan_alerts(
         None,
         now=datetime(2026, 10, 13, 11, 0, tzinfo=UTC),
         grace=timedelta(minutes=120),
@@ -169,6 +203,8 @@ def test_dispatch_skips_push_for_ios_caregiver_but_creates_notification_row():
         access=FakeAccessGuard({patient_id: [caregiver_id]}),
         tokens=FakeTokens({}),  # iOS token bị filter ra, không có trong android_tokens
         notifications=notifications,
+        checkpoints=SyncedCheckpoints(),
+        pending=FakePending(),
         patient_names=FakePatientNames({patient_id: "Nguyễn Văn B"}),
     )
 
@@ -193,7 +229,7 @@ def test_dispatch_deduplicates_repeated_missed_dose_scans():
         (caregiver_id, patient_id, "bo_lo:999:" + str(caregiver_id), "content", 101)
     )
 
-    alerts = scan(
+    alerts = scan_alerts(
         None,
         now=datetime(2026, 10, 13, 11, 0, tzinfo=UTC),
         grace=timedelta(minutes=120),
@@ -204,6 +240,8 @@ def test_dispatch_deduplicates_repeated_missed_dose_scans():
         access=FakeAccessGuard({patient_id: [caregiver_id]}),
         tokens=FakeTokens({caregiver_id: ["token_android_123"]}),
         notifications=notifications,
+        checkpoints=SyncedCheckpoints(),
+        pending=FakePending(),
         patient_names=FakePatientNames(),
     )
 
@@ -220,7 +258,7 @@ def test_dispatch_respects_revoked_consent_and_sharing_switch():
     occ = SimpleNamespace(patient_id=patient_id, schedule_id=1, scheduled_at=scheduled_at)
     notifications = FakeNotifications()
 
-    alerts = scan(
+    alerts = scan_alerts(
         None,
         now=datetime(2026, 10, 13, 11, 0, tzinfo=UTC),
         grace=timedelta(minutes=120),
@@ -231,6 +269,8 @@ def test_dispatch_respects_revoked_consent_and_sharing_switch():
         access=FakeAccessGuard({patient_id: []}),  # không có caregiver nào đủ quyền
         tokens=FakeTokens({uuid4(): ["token_android_123"]}),
         notifications=notifications,
+        checkpoints=SyncedCheckpoints(),
+        pending=FakePending(),
         patient_names=FakePatientNames(),
     )
 
@@ -238,24 +278,15 @@ def test_dispatch_respects_revoked_consent_and_sharing_switch():
     assert len(alerts) == 0
 
 
-def test_alert_payload_hides_medication_details_and_names_patient():
-    # AC5: Push không có thuốc/liều lượng/giờ (CD6, QD-26), chỉ nêu tên bệnh nhân.
-    alert = Alert(
-        notification_id=105,
-        recipient_id=uuid4(),
-        device_token="fcm_token_xyz",
-        title="DrugTime",
-        body="Bác Nguyễn Văn A chưa ghi nhận liều thuốc đúng giờ",
-    )
+def test_alert_payload_hides_medication_details_and_patient_name():
+    # AC5: Push không có thuốc/liều lượng/giờ (CD6, QD-26); 3.19 Q10: không có cả tên patient.
+    alert = Alert(notification_id=105, recipient_id=uuid4(), device_token="fcm_token_xyz")
 
     payload = build_fcm_payload(alert)
 
     assert payload["message"]["token"] == "fcm_token_xyz"
     assert payload["message"]["notification"]["title"] == "DrugTime"
-    assert (
-        payload["message"]["notification"]["body"]
-        == "Bác Nguyễn Văn A chưa ghi nhận liều thuốc đúng giờ"
-    )
+    assert payload["message"]["notification"]["body"] == "Bạn có cảnh báo mới về người thân"
     assert payload["message"]["data"]["notification_id"] == "105"
 
     # Không lộ thông tin y tế nhạy cảm
@@ -440,7 +471,7 @@ def test_missing_snapshot_fails_before_notification_insert(name):
     schedules.alert_context = lambda *a: name
     notifications = Mock()
     with pytest.raises(ValueError, match="snapshot unavailable"):
-        scan(
+        scan_alerts(
             None,
             now=at + timedelta(hours=3),
             grace=timedelta(minutes=120),
@@ -451,6 +482,8 @@ def test_missing_snapshot_fails_before_notification_insert(name):
             access=FakeAccessGuard({patient: [recipient]}),
             tokens=FakeTokens(),
             notifications=notifications,
+            checkpoints=SyncedCheckpoints(),
+            pending=FakePending(),
             patient_names=FakePatientNames(),
         )
     notifications.create_missed_alert.assert_not_called()

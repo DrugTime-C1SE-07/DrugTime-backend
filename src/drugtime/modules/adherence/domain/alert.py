@@ -5,13 +5,23 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class Alert:
-    """Push chỉ mang nội dung tối thiểu; nội dung chi tiết đọc qua API (CD6)."""
+    """Push chỉ mang nội dung tối thiểu; nội dung chi tiết đọc qua API (CD6). Thân push là câu
+    chung, không tên patient, giờ hay tên thuốc, vì có thể hiện trên màn hình khóa (QD-26)."""
 
     notification_id: int
     recipient_id: UUID
     device_token: str
     title: str = "DrugTime"
     body: str = "Bạn có cảnh báo mới về người thân"
+
+
+@dataclass(frozen=True)
+class SyncRequest:
+    """Push ẩn "gõ cửa" điện thoại Android của patient để gửi hàng chờ và checkpoint (3.19).
+    Payload chỉ có type; không mang dữ liệu sức khỏe."""
+
+    patient_id: UUID
+    device_token: str
 
 
 @dataclass(frozen=True)

@@ -17,7 +17,7 @@ PATIENT, CALLER = uuid4(), uuid4()
 PERIOD = HistoryRange(NOW.date(), NOW.date())
 
 
-def test_sql_reader_maps_raw_logs_with_one_read_only_statement():
+def test_sql_reader_reads_checkpoint_then_raw_logs_read_only():
     scheduled = NOW.replace(hour=10, microsecond=123456)
     rows = [
         SimpleNamespace(
@@ -30,16 +30,23 @@ def test_sql_reader_maps_raw_logs_with_one_read_only_statement():
         )
         for status in (None, "bo_lo")
     ]
-    connection = Mock(execute=Mock(return_value=iter(rows)))
-    result = SqlAdherenceHistory().read(
+    synced = NOW.replace(hour=11)
+    checkpoint = [SimpleNamespace(user_id=PATIENT, synced_at=synced)]
+    connection = Mock(execute=Mock(side_effect=[iter(checkpoint), iter(rows)]))
+    result, synced_at = SqlAdherenceHistory().read(
         SimpleNamespace(connection=connection), PATIENT, PERIOD, NOW
     )
+    assert synced_at == synced
     assert [r.status for r in result] == [None, DoseStatus.MISSED]
     assert all(r.scheduled_at == scheduled and r.taken_at is None for r in result)
-    connection.execute.assert_called_once()
-    statement, params = connection.execute.call_args.args
-    compiled = str(statement.compile(dialect=postgresql.dialect())).upper()
-    assert not any(word in compiled for word in ("INSERT ", "UPDATE ", "DELETE "))
+    # 3.19: checkpoint đọc trước các liều, cả hai câu chỉ đọc.
+    assert connection.execute.call_count == 2
+    first, second = connection.execute.call_args_list
+    assert "dose_sync_checkpoints" in str(first.args[0])
+    for call_ in (first, second):
+        compiled = str(call_.args[0].compile(dialect=postgresql.dialect())).upper()
+        assert not any(word in compiled for word in ("INSERT ", "UPDATE ", "DELETE "))
+    params = second.args[1]
     assert params == dict(
         patient_id=PATIENT,
         from_date=NOW.date(),
@@ -79,7 +86,7 @@ def call(access, reader, **kw):
 def test_authorization_runs_before_reader_and_resolved_patient_single_as_of_forwarded(patient):
     events = []
     access = Mock(authorize_history=Mock(side_effect=lambda *args: events.append("authorize")))
-    reader = Mock(read=Mock(side_effect=lambda *args: events.append("read") or []))
+    reader = Mock(read=Mock(side_effect=lambda *args: events.append("read") or ([], None)))
     result = get_adherence_history(
         object(),
         caller_id=CALLER,
@@ -122,7 +129,8 @@ def test_single_materialized_rows_feed_all_groups_and_early_missed_is_normalized
             HistoryRow(2, "Other", 3, NOW.replace(hour=8), None, None),
         ]
     )
-    reader = Mock(read=Mock(return_value=rows))
+    # Patient đã đồng bộ sau hạn chót của liều 08:00, nên liều đó suy ra bo_lo như trước 3.19.
+    reader = Mock(read=Mock(return_value=(rows, NOW)))
     result = call(Mock(), reader)
     reader.read.assert_called_once()
     assert result.summary.total == sum(g.summary.total for g in result.groups) == 3
@@ -137,7 +145,7 @@ def test_reader_failure_is_not_empty_success():
 
 
 def test_no_authorization_cache():
-    access, reader = Mock(), Mock(read=Mock(return_value=[]))
+    access, reader = Mock(), Mock(read=Mock(return_value=([], None)))
     call(access, reader)
     access.authorize_history.side_effect = Forbidden("consent_revoked")
     with pytest.raises(Forbidden, match="consent_revoked"):

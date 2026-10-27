@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from drugtime.modules.adherence.domain.alert import Alert, NotificationRecord
+from drugtime.modules.adherence.domain.alert import Alert, NotificationRecord, SyncRequest
 from drugtime.modules.adherence.domain.dose import (
     DoseConfirmation,
     DoseConfirmationPersistenceResult,
@@ -13,9 +13,11 @@ from drugtime.shared.uow import UnitOfWork
 
 
 class NotificationPort(Protocol):
-    """CD8/QA.11: hiện thực ở drugtime.notification_gateway (FCM, mock; Zalo OA sau này)."""
+    """CD8/QA.11: hiện thực ở drugtime.notification_gateway (FCM, mock; Zalo OA sau này).
+    Hai hàm trả các token kênh báo không còn đăng ký (FCM UNREGISTERED) để adherence gỡ."""
 
-    def send(self, alerts: list[Alert]) -> None: ...
+    def send(self, alerts: list[Alert]) -> list[str]: ...
+    def request_sync(self, requests: list[SyncRequest]) -> list[str]: ...
 
 
 class DoseLogs(Protocol):
@@ -70,6 +72,33 @@ class PatientNames(Protocol):
     def get_patient_name(self, uow: UnitOfWork, patient_id: UUID) -> str | None: ...
 
 
+class SyncCheckpoints(Protocol):
+    """Checkpoint đồng bộ của patient (giờ server, không lùi; 3.19)."""
+
+    def record(self, uow: UnitOfWork, user_id: UUID) -> None: ...
+    def get(self, uow: UnitOfWork, user_id: UUID) -> datetime | None: ...
+    def get_many(self, uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, datetime]: ...
+    def erase_for_user(self, uow: UnitOfWork, user_id: UUID) -> None: ...
+
+
+class PendingVerifications(Protocol):
+    """Hàng việc nội bộ của Worker: liều quá hạn chót chưa xác minh được.
+
+    Không phải trạng thái liều (BS-01)."""
+
+    def add(self, uow: UnitOfWork, occ) -> bool:
+        """Thêm nếu chưa có dòng dose_logs và chưa có trong hàng; True khi vừa thêm mới."""
+        ...
+
+    def verified(self, uow: UnitOfWork, now: datetime) -> list:
+        """Liều trong hàng có checkpoint của patient >= giờ dự kiến + 120' và now > hạn chót."""
+        ...
+
+    def remove(self, uow: UnitOfWork, occ) -> None: ...
+    def purge_recorded(self, uow: UnitOfWork) -> None: ...
+    def erase_for_patient(self, uow: UnitOfWork, user_id: UUID) -> None: ...
+
+
 class ScanCursor(Protocol):
     def get(self, uow: UnitOfWork) -> datetime | None: ...
     def advance(self, uow: UnitOfWork, until: datetime) -> None: ...
@@ -79,7 +108,16 @@ class AccessGuard(Protocol):
     def authorize_adherence(
         self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool, patient_id: UUID
     ) -> None: ...
+    def authorize_dose_write(
+        self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool, patient_id: UUID
+    ) -> None: ...
     def caregivers_of(self, uow: UnitOfWork, patient_id: UUID) -> list[UUID]: ...
+
+
+class SyncCheckpointAccess(Protocol):
+    def authorize_sync_checkpoint(
+        self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool
+    ) -> None: ...
 
 
 class HistoryAccess(Protocol):
@@ -91,7 +129,9 @@ class HistoryAccess(Protocol):
 class AdherenceHistoryReader(Protocol):
     def read(
         self, uow: UnitOfWork, patient_id: UUID, period: HistoryRange, as_of: datetime
-    ) -> list[HistoryRow]: ...
+    ) -> tuple[list[HistoryRow], datetime | None]:
+        """Các lượt uống và liều đã ghi, cùng checkpoint đồng bộ của patient (None nếu chưa có)."""
+        ...
 
 
 # Context lấy tên thuốc; thời điểm snapshot vẫn phải lấy từ occurrence đang quét.
@@ -105,3 +145,4 @@ class Schedules(Protocol):
 
 class DeviceTokens(Protocol):
     def android_tokens(self, uow: UnitOfWork, user_ids: list[UUID]) -> list[tuple[UUID, str]]: ...
+    def remove(self, uow: UnitOfWork, tokens: list[str]) -> None: ...

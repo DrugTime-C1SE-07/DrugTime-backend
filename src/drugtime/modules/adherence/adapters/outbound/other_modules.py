@@ -23,6 +23,7 @@ class AccessGuardAdapter:
             audit_self=True,
         )
 
+    # Quyền đọc: hộp thư cảnh báo của người thân dùng hàm này.
     def authorize_adherence(
         self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool, patient_id: UUID
     ) -> None:
@@ -32,6 +33,32 @@ class AccessGuardAdapter:
             caller_is_admin=caller_is_admin,
             patient_id=patient_id,
             scope=access.Scope.ADHERENCE,
+        )
+
+    # Xác nhận liều là ghi dữ liệu sức khỏe: người thân chỉ có quyền đọc (QD-27, 3.19 Q2).
+    def authorize_dose_write(
+        self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool, patient_id: UUID
+    ) -> None:
+        access.authorize(
+            uow,
+            caller_id=caller_id,
+            caller_is_admin=caller_is_admin,
+            patient_id=patient_id,
+            scope=access.Scope.ADHERENCE,
+            action=access.Action.WRITE,
+        )
+
+    # Checkpoint chỉ ghi cho chính người gọi; không có patient_id từ client.
+    def authorize_sync_checkpoint(
+        self, uow: UnitOfWork, caller_id: UUID, caller_is_admin: bool
+    ) -> None:
+        access.authorize(
+            uow,
+            caller_id=caller_id,
+            caller_is_admin=caller_is_admin,
+            patient_id=caller_id,
+            scope=access.Scope.ADHERENCE,
+            action=access.Action.WRITE,
         )
 
     def caregivers_of(self, uow: UnitOfWork, patient_id: UUID) -> list[UUID]:
@@ -56,6 +83,9 @@ class SchedulesAdapter:
 class DeviceTokensAdapter:
     def android_tokens(self, uow: UnitOfWork, user_ids: list[UUID]) -> list[tuple[UUID, str]]:
         return identity.android_tokens(uow, user_ids)
+
+    def remove(self, uow: UnitOfWork, tokens: list[str]) -> None:
+        identity.remove_device_tokens(uow, tokens)
 
 
 # Application chỉ gọi adapter lấy tên sau khi PEP đã cho phép đọc patient tương ứng.

@@ -113,6 +113,25 @@ def test_upsert_confirmation_persists_missed_confirmation_without_taken_at():
     assert connection.calls[1][1]["taken_at"] is None
 
 
+def test_upsert_uses_excluded_status_after_missed__AC27():
+    # 3.19 Q3: dòng bo_lo nhận trạng thái tính từ taken_at, không cố định uong_tre.
+    client_uuid = uuid4()
+    scheduled_at = datetime(2026, 10, 2, 1, 0, tzinfo=UTC)
+    taken_at = datetime(2026, 10, 2, 1, 10, tzinfo=UTC)
+    connection = FakeConnection([None, _row(client_uuid, status="da_uong", taken_at=taken_at)])
+
+    SqlDoseLogs().upsert_confirmation(
+        FakeUow(connection),
+        DoseConfirmation(client_uuid, 1, scheduled_at, taken_at),
+        DoseStatus.TAKEN,
+    )
+
+    sql, params = connection.calls[1]
+    assert "THEN EXCLUDED.status ELSE dose_logs.status END" in sql
+    assert "'uong_tre'" not in sql
+    assert params["status"] == "da_uong"
+
+
 class RowsConnection:
     def __init__(self, rows):
         self.rows = rows
