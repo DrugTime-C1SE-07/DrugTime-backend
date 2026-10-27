@@ -7,6 +7,6 @@ from uuid import UUID
 class DoseOccurrence:
     """Một lượt uống theo lịch: medication_schedule_id tại scheduled_at (UTC)."""
 
-    schedule_id: UUID
+    schedule_id: int
     patient_id: UUID
     scheduled_at: datetime
