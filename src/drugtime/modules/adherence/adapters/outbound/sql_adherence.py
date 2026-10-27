@@ -12,6 +12,7 @@ from drugtime.modules.adherence.domain.dose import (
     DoseStatus,
 )
 from drugtime.modules.adherence.domain.history import TIMEZONE, VIETNAM, HistoryRange, HistoryRow
+from drugtime.modules.medication.api import DoseOccurrence
 from drugtime.shared.uow import UnitOfWork
 
 _SELECT_BY_CLIENT_UUID = text("""
@@ -20,14 +21,16 @@ FROM dose_logs
 WHERE client_uuid = :client_uuid
 """)
 
-# Cài đúng domain.dose.status_for_confirmation: quá +120 phút lưu bo_lo, không ghi taken_at.
+# Cài đúng domain.dose.status_for_confirmation (quá +120 phút lưu bo_lo, không ghi taken_at) và
+# status_after_confirmation: dòng bo_lo nhận trạng thái tính từ taken_at; dòng đã xác nhận
+# giữ nguyên.
 _UPSERT_CONFIRMATION = text("""
 INSERT INTO dose_logs (medication_schedule_id, scheduled_at, taken_at, status, client_uuid,
                        synced_at)
 VALUES (:schedule_id, :scheduled_at, :taken_at, :status, :client_uuid, now())
 ON CONFLICT (medication_schedule_id, scheduled_at) DO UPDATE SET
     status = CASE WHEN dose_logs.status = 'bo_lo' AND EXCLUDED.status <> 'bo_lo'
-                  THEN 'uong_tre' ELSE dose_logs.status END,
+                  THEN EXCLUDED.status ELSE dose_logs.status END,
     taken_at = CASE WHEN dose_logs.status = 'bo_lo' AND EXCLUDED.status <> 'bo_lo'
                     THEN EXCLUDED.taken_at
                     ELSE dose_logs.taken_at END,
@@ -92,7 +95,10 @@ LEFT JOIN dose_logs dl ON dl.medication_schedule_id = k.schedule_id
 class SqlAdherenceHistory:
     def read(
         self, uow: UnitOfWork, patient_id: UUID, period: HistoryRange, as_of: datetime
-    ) -> list[HistoryRow]:
+    ) -> tuple[list[HistoryRow], datetime | None]:
+        # Đọc checkpoint trước các liều: checkpoint chỉ tăng, nên đồng bộ chen giữa hai câu chỉ làm
+        # kết quả nghiêng về chua_xac_minh (an toàn), không bao giờ suy bo_lo quá sớm.
+        synced_at = SqlSyncCheckpoints().get(uow, patient_id)
         rows = uow.connection.execute(
             _HISTORY,
             {
@@ -115,7 +121,7 @@ class SqlAdherenceHistory:
                 status=DoseStatus(row.status) if row.status is not None else None,
             )
             for row in rows
-        ]
+        ], synced_at
 
 
 class SqlDoseLogs:
@@ -294,6 +300,106 @@ class SqlScanCursor:
                                                  updated_at = now()
         """),
             {"j": self.JOB, "u": until},
+        )
+
+
+class SqlSyncCheckpoints:
+    """dose_sync_checkpoints: API ghi (giờ DB, không lùi), Worker đọc và xóa (QD-35)."""
+
+    def record(self, uow: UnitOfWork, user_id: UUID) -> None:
+        uow.connection.execute(
+            text("""
+            INSERT INTO dose_sync_checkpoints (user_id, synced_at) VALUES (:u, now())
+            ON CONFLICT (user_id) DO UPDATE
+            SET synced_at = GREATEST(dose_sync_checkpoints.synced_at, EXCLUDED.synced_at)
+        """),
+            {"u": user_id},
+        )
+
+    def get(self, uow: UnitOfWork, user_id: UUID) -> datetime | None:
+        return self.get_many(uow, [user_id]).get(user_id)
+
+    def get_many(self, uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, datetime]:
+        if not user_ids:
+            return {}
+        rows = uow.connection.execute(
+            text("SELECT user_id, synced_at FROM dose_sync_checkpoints WHERE user_id = ANY(:ids)"),
+            {"ids": list(user_ids)},
+        )
+        return {r.user_id: r.synced_at for r in rows}
+
+    def erase_for_user(self, uow: UnitOfWork, user_id: UUID) -> None:
+        uow.connection.execute(
+            text("DELETE FROM dose_sync_checkpoints WHERE user_id = :u"), {"u": user_id}
+        )
+
+
+# Liều đã có dòng dose_logs (xác nhận hoặc bo_lo) không bao giờ vào hàng chờ, nên không gõ cửa.
+_ADD_PENDING = text("""
+INSERT INTO missed_dose_pending_verifications
+    (medication_schedule_id, scheduled_at, patient_user_id)
+SELECT :s, :at, :p
+WHERE NOT EXISTS (
+    SELECT 1 FROM dose_logs WHERE medication_schedule_id = :s AND scheduled_at = :at
+)
+ON CONFLICT (medication_schedule_id, scheduled_at) DO NOTHING
+RETURNING 1
+""")
+
+# Cùng ngưỡng với lượt quét: checkpoint >= hạn chót (bằng đúng là đã xác minh), now > hạn chót.
+_VERIFIED_PENDING = text("""
+SELECT v.medication_schedule_id AS schedule_id, v.patient_user_id AS patient_id, v.scheduled_at
+FROM missed_dose_pending_verifications v
+JOIN dose_sync_checkpoints c ON c.user_id = v.patient_user_id
+WHERE c.synced_at >= v.scheduled_at + :window
+  AND v.scheduled_at + :window < :now
+ORDER BY v.scheduled_at, v.medication_schedule_id
+""")
+
+
+class SqlPendingVerifications:
+    """Hàng việc nội bộ của Worker (không phải trạng thái liều)."""
+
+    def __init__(self, window: timedelta) -> None:
+        self._window = window
+
+    def add(self, uow: UnitOfWork, occ) -> bool:
+        row = uow.connection.execute(
+            _ADD_PENDING, {"s": occ.schedule_id, "at": occ.scheduled_at, "p": occ.patient_id}
+        ).first()
+        return row is not None
+
+    def verified(self, uow: UnitOfWork, now: datetime) -> list[DoseOccurrence]:
+        rows = uow.connection.execute(_VERIFIED_PENDING, {"window": self._window, "now": now})
+        return [
+            DoseOccurrence(
+                schedule_id=r.schedule_id, patient_id=r.patient_id, scheduled_at=r.scheduled_at
+            )
+            for r in rows
+        ]
+
+    def remove(self, uow: UnitOfWork, occ) -> None:
+        uow.connection.execute(
+            text(
+                "DELETE FROM missed_dose_pending_verifications "
+                "WHERE medication_schedule_id = :s AND scheduled_at = :at"
+            ),
+            {"s": occ.schedule_id, "at": occ.scheduled_at},
+        )
+
+    def purge_recorded(self, uow: UnitOfWork) -> None:
+        uow.connection.execute(
+            text("""
+            DELETE FROM missed_dose_pending_verifications v USING dose_logs d
+            WHERE d.medication_schedule_id = v.medication_schedule_id
+              AND d.scheduled_at = v.scheduled_at
+        """)
+        )
+
+    def erase_for_patient(self, uow: UnitOfWork, user_id: UUID) -> None:
+        uow.connection.execute(
+            text("DELETE FROM missed_dose_pending_verifications WHERE patient_user_id = :u"),
+            {"u": user_id},
         )
 
 

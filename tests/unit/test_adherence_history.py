@@ -28,8 +28,24 @@ ROW = HistoryRow(1, "Medicine", 1, AT, None, None)
 PERIOD = HistoryRange(date(2026, 10, 1), date(2026, 10, 19))
 
 
-def history(rows, *, as_of=AT + timedelta(hours=3), group_by=GroupBy.DATE):
-    return build_history(rows, patient_id=PATIENT, period=PERIOD, group_by=group_by, as_of=as_of)
+# Các test 3.23 giả định patient đã đồng bộ sau mọi hạn chót (nhánh bo_lo như cũ); nhánh
+# chua_xac_minh của 3.19 có test riêng bên dưới.
+SYNCED = datetime(2099, 1, 1, tzinfo=VIETNAM)
+
+
+def history(rows, *, as_of=AT + timedelta(hours=3), group_by=GroupBy.DATE, synced_at=SYNCED):
+    return build_history(
+        rows,
+        patient_id=PATIENT,
+        period=PERIOD,
+        group_by=group_by,
+        as_of=as_of,
+        synced_at=synced_at,
+    )
+
+
+def view(row, as_of, synced_at=SYNCED):
+    return dose_view(row, as_of, synced_at)
 
 
 def test_resolve_default_and_partial_date_range():
@@ -62,13 +78,13 @@ def test_reversed_and_future_dates(start, end, error):
 @pytest.mark.parametrize("minutes,us", [(0, 0), (30, 0), (30, 1), (90, 0), (120, 0)])
 @pytest.mark.parametrize("status", [None, DoseStatus.MISSED])
 def test_pending_at_30_after_30_and_exact_120(minutes, us, status):
-    dose = dose_view(replace(ROW, status=status), AT + timedelta(minutes=minutes, microseconds=us))
+    dose = view(replace(ROW, status=status), AT + timedelta(minutes=minutes, microseconds=us))
     assert (dose.status, dose.status_source, dose.taken_at) == ("cho_xac_nhan", "inferred", None)
 
 
 @pytest.mark.parametrize("status,source", [(None, "inferred"), (DoseStatus.MISSED, "recorded")])
 def test_missed_one_microsecond_after_120(status, source):
-    dose = dose_view(replace(ROW, status=status), AT + timedelta(minutes=120, microseconds=1))
+    dose = view(replace(ROW, status=status), AT + timedelta(minutes=120, microseconds=1))
     assert (dose.status, dose.status_source, dose.taken_at) == ("bo_lo", source, None)
 
 
@@ -83,7 +99,7 @@ def test_missed_one_microsecond_after_120(status, source):
 def test_recorded_confirmation_boundaries_30_and_120(delay, status):
     taken = AT + delay
     assert status_for_confirmation(DoseConfirmation(uuid4(), 1, AT, taken), taken) is status
-    dose = dose_view(replace(ROW, status=status, taken_at=taken), taken + timedelta(days=1))
+    dose = view(replace(ROW, status=status, taken_at=taken), taken + timedelta(days=1))
     assert (dose.status, dose.status_source, dose.taken_at) == (status.value, "recorded", taken)
 
 
@@ -157,8 +173,8 @@ def test_rate_80_percent_and_overall_from_counts_not_group_average():
 
 
 def test_half_up_two_decimal_places():
-    taken = dose_view(replace(ROW, status=DoseStatus.TAKEN, taken_at=AT), AT)
-    missed = dose_view(ROW, AT + timedelta(hours=3))
+    taken = view(replace(ROW, status=DoseStatus.TAKEN, taken_at=AT), AT)
+    missed = view(ROW, AT + timedelta(hours=3))
     assert summarize([taken] + [missed] * 31).adherence_rate == Decimal("3.13")
 
 
@@ -182,4 +198,51 @@ def test_pending_rate_at_120_and_missed_rate_after_120():
 
 def test_invalid_recorded_confirmation_fails_instead_of_counting_taken():
     with pytest.raises(ValueError, match="confirmed_dose_missing_timestamp"):
-        dose_view(replace(ROW, status=DoseStatus.TAKEN), AT)
+        view(replace(ROW, status=DoseStatus.TAKEN), AT)
+
+
+DEADLINE = AT + timedelta(minutes=120)
+
+
+@pytest.mark.parametrize("synced_at", [None, DEADLINE - timedelta(microseconds=1)])
+def test_unverified_when_checkpoint_before_deadline__AC40(synced_at):
+    dose = dose_view(ROW, DEADLINE + timedelta(seconds=1), synced_at)
+
+    assert (dose.status, dose.status_source, dose.taken_at) == ("chua_xac_minh", "inferred", None)
+
+
+def test_inferred_missed_when_checkpoint_at_deadline__AC40():
+    dose = dose_view(ROW, DEADLINE + timedelta(seconds=1), DEADLINE)
+
+    assert (dose.status, dose.status_source) == ("bo_lo", "inferred")
+
+
+def test_recorded_missed_and_pending_ignore_checkpoint__AC40():
+    recorded = dose_view(
+        replace(ROW, status=DoseStatus.MISSED), DEADLINE + timedelta(hours=1), None
+    )
+    pending = dose_view(ROW, DEADLINE, None)
+
+    assert (recorded.status, recorded.status_source) == ("bo_lo", "recorded")
+    assert pending.status == "cho_xac_nhan"
+
+
+def test_summary_excludes_unverified__AC40():
+    taken = dose_view(replace(ROW, status=DoseStatus.TAKEN, taken_at=AT), AT, None)
+    unverified = dose_view(ROW, DEADLINE + timedelta(hours=1), None)
+
+    summary = summarize([taken, unverified, unverified])
+
+    assert (summary.total, summary.counted, summary.pending, summary.unverified) == (3, 1, 0, 2)
+    assert summary.adherence_rate == Decimal("100.00")
+
+
+def test_history_reports_last_synced_in_vietnam_time__AC40():
+    synced = datetime(2026, 10, 19, 1, 0, tzinfo=UTC)
+
+    result = history([ROW], synced_at=synced)
+
+    assert result.patient_last_synced_at == synced
+    assert result.patient_last_synced_at.utcoffset() == timedelta(hours=7)
+    assert result.summary.unverified == 1
+    assert history([ROW], synced_at=None).patient_last_synced_at is None

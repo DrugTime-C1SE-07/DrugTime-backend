@@ -114,12 +114,11 @@ def adherence_counted_for_status(status: DoseStatus) -> bool:
     return status is not DoseStatus.MISSED
 
 
-def status_after_confirmation(existing: DoseStatus | None) -> DoseStatus:
-    """Chưa có dòng → Đã uống; Bỏ lỡ → Uống trễ; đã xác nhận → giữ nguyên (idempotent)."""
-    if existing is None:
-        return DoseStatus.TAKEN
-    if existing is DoseStatus.MISSED:
-        return DoseStatus.LATE
+def status_after_confirmation(existing: DoseStatus | None, computed: DoseStatus) -> DoseStatus:
+    """Chưa có dòng hoặc Bỏ lỡ → trạng thái tính từ taken_at (QD-03, kể cả xác nhận đến sau
+    lượt quét); đã xác nhận → giữ nguyên (idempotent, không ghi đè)."""
+    if existing is None or existing is DoseStatus.MISSED:
+        return computed
     return existing
 
 

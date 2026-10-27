@@ -22,6 +22,9 @@ from drugtime.shared.celery import celery_app  # noqa: E402
 from drugtime.shared.config import get_settings  # noqa: E402
 
 
+# Kênh báo thiếu hoặc hỏng credential: dừng khi khởi động thay vì gửi giả (3.19).
+job_runner.validate_notification_config()
+
 celery_app.conf.beat_schedule = {
     "drugtime-periodic-tick": {
         "task": "runtime.tick",

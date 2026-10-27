@@ -14,6 +14,7 @@ from drugtime.modules.ai_meal import api as ai_meal
 from drugtime.modules.catalog import api as catalog
 from drugtime.modules.consent import api as consent
 from drugtime.modules.family import api as family
+from drugtime.modules.health import api as health
 from drugtime.modules.identity import api as identity
 from drugtime.modules.interaction import api as interaction
 from drugtime.modules.medication import api as medication
@@ -59,9 +60,25 @@ def run_erasure(request_id: str) -> None:
     )
 
 
+_notifier: adherence.NotificationPort | None = None
+
+
+def validate_notification_config() -> None:
+    """Gọi khi Worker khởi động: thiếu hoặc hỏng credential FCM thì dừng ngay với lỗi rõ ràng
+    (NotificationConfigError), không chạy lượt quét mà không gửi được push."""
+    _gateway()
+
+
+def _gateway() -> adherence.NotificationPort:
+    # Dùng lại giữa các tick để giữ access token FCM còn hạn và kết nối HTTP.
+    global _notifier
+    if _notifier is None:
+        _notifier = notification_gateway.build(get_settings())
+    return _notifier
+
+
 def _scan() -> None:
-    notifier = notification_gateway.build(get_settings())
-    count = adherence.scan_missed_doses(unit_of_work, notifier=notifier)
+    count = adherence.scan_missed_doses(unit_of_work, notifier=_gateway())
     log.info("missed-dose scan: %d push alert(s)", count)
 
 

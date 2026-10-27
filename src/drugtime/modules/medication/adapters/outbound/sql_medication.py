@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import text
@@ -49,6 +49,67 @@ _UPDATABLE = {
 }
 
 
+VIETNAM = timezone(timedelta(hours=7), "Asia/Ho_Chi_Minh")
+
+# Cùng công thức scheduled_at với lịch sử 3.23 (_HISTORY của adherence) để hai bên khớp tuyệt đối.
+# Ngày VN chạy từ start.date - 1 để bắt lịch có giờ uống trước start theo ngày VN của end.
+_OCCURRENCES = """
+WITH candidate AS (
+    SELECT ms.id AS schedule_id, um.user_id AS patient_id, ms.intake_time, ms.days_of_week,
+           ms.effective_from, ms.ended_at
+    FROM medication_schedules ms
+    JOIN user_medications um ON um.id = ms.user_medication_id
+    WHERE ms.reminder_enabled
+      AND ms.effective_from < :end_at
+      AND (ms.ended_at IS NULL OR ms.ended_at > :start_at)
+      {prefilter}
+)
+SELECT c.schedule_id, c.patient_id, occ.scheduled_at
+FROM candidate c
+CROSS JOIN generate_series(0, CAST(:to_date AS date) - CAST(:from_date AS date))
+    AS calendar(day_offset)
+CROSS JOIN LATERAL (
+    SELECT ((CAST(:from_date AS date) + calendar.day_offset) + c.intake_time)
+           AT TIME ZONE :timezone AS scheduled_at
+) occ
+WHERE EXTRACT(ISODOW FROM CAST(:from_date AS date) + calendar.day_offset) = ANY(c.days_of_week)
+  AND occ.scheduled_at >= c.effective_from
+  AND (c.ended_at IS NULL OR occ.scheduled_at < c.ended_at)
+  AND occ.scheduled_at >= :start_at AND occ.scheduled_at < :end_at
+ORDER BY occ.scheduled_at, c.schedule_id
+"""
+
+# Lọc trước theo giờ uống (AC11): luôn là tập cha; điều kiện scheduled_at mới chính xác.
+_PREFILTER = {
+    None: "",
+    "same_day": "AND ms.intake_time >= :t_start AND ms.intake_time < :t_end",
+    "cross_midnight": "AND (ms.intake_time >= :t_start OR ms.intake_time < :t_end)",
+}
+
+
+def _window_params(start: datetime, end: datetime) -> dict | None:
+    """Tham số SQL cho cửa sổ [start, end); None khi cửa sổ rỗng."""
+    if start.tzinfo is None or end.tzinfo is None:
+        raise ValueError("start and end must be timezone-aware")
+    if start >= end:
+        return None
+    local_start, local_end = start.astimezone(VIETNAM), end.astimezone(VIETNAM)
+    params = {
+        "start_at": start,
+        "end_at": end,
+        "from_date": local_start.date() - timedelta(days=1),
+        "to_date": local_end.date(),
+        "timezone": "Asia/Ho_Chi_Minh",
+        "prefilter": None,
+    }
+    if end - start < timedelta(days=1):
+        params["t_start"] = local_start.time().replace(tzinfo=None)
+        params["t_end"] = local_end.time().replace(tzinfo=None)
+        same_day = local_start.date() == local_end.date()
+        params["prefilter"] = "same_day" if same_day else "cross_midnight"
+    return params
+
+
 class SqlMedication:
     # Ràng buộc schedule với patient ngay khi lấy ID thuốc dùng cho snapshot cảnh báo.
     def alert_medication_id(
@@ -89,8 +150,20 @@ class SqlMedication:
         self, uow: UnitOfWork, start: datetime, end: datetime
     ) -> list[DoseOccurrence]:
         """Sinh các lượt uống trong [start, end) từ intake_time + days_of_week (giờ
-        Asia/Ho_Chi_Minh), chỉ lấy scheduled_at >= effective_from và reminder_enabled."""
-        raise NotImplementedError  # TODO: task missed-dose scan (generate_series theo ngày)
+        Asia/Ho_Chi_Minh), chỉ lấy lịch bật nhắc và scheduled_at trong
+        [effective_from, ended_at)."""
+        params = _window_params(start, end)
+        if params is None:
+            return []
+        rows = uow.connection.execute(
+            text(_OCCURRENCES.format(prefilter=_PREFILTER[params.pop("prefilter")])), params
+        )
+        return [
+            DoseOccurrence(
+                schedule_id=r.schedule_id, patient_id=r.patient_id, scheduled_at=r.scheduled_at
+            )
+            for r in rows
+        ]
 
     # --- Thuốc của người bệnh (task 2.01). Thêm thuốc dùng now() của transaction. Sửa thuốc
     # dùng một mốc `at` lấy sau khi khóa dòng thuốc (xem lock), nên ended_at của lịch cũ

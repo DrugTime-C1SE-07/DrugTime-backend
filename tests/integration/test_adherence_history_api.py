@@ -21,14 +21,23 @@ from drugtime.modules.adherence.adapters.outbound.other_modules import (
     AccessGuardAdapter,
     SchedulesAdapter,
 )
-from drugtime.modules.adherence.adapters.outbound.sql_adherence import SqlDoseLogs, SqlNotifications
+from drugtime.modules.adherence.adapters.outbound.sql_adherence import (
+    SqlDoseLogs,
+    SqlNotifications,
+    SqlPendingVerifications,
+    SqlSyncCheckpoints,
+)
 from drugtime.modules.adherence.application.confirm_doses import confirm_doses
 from drugtime.modules.adherence.application.scan_missed_doses import scan
-from drugtime.modules.adherence.domain.dose import DoseConfirmation
+from drugtime.modules.adherence.domain.dose import LATE_CONFIRMATION_WINDOW, DoseConfirmation
 from drugtime.shared.db import SqlUnitOfWork, get_engine
 
 VN = ZoneInfo("Asia/Ho_Chi_Minh")
 DAY = datetime(2026, 10, 19, tzinfo=VN)
+# 3.19: liều qua hạn chót chỉ suy ra bo_lo khi patient đã đồng bộ sau hạn chót. Các test 3.23
+# mặc định patient đã đồng bộ (checkpoint xa trong tương lai); test 3.19 tự xóa/đặt checkpoint.
+FULLY_SYNCED = DAY + timedelta(days=365)
+STATUSES = ("da_uong", "uong_tre", "bo_lo", "cho_xac_nhan", "chua_xac_minh")
 CONTRACT = json.loads(
     (Path(__file__).resolve().parents[3] / "api_contract/openapi.json").read_text(encoding="utf-8")
 )
@@ -46,8 +55,12 @@ def assert_contract(response):
     assert body["as_of"].endswith("+07:00")
     summary = body["summary"]
     assert set(summary) == set(schemas["AdherenceSummary"]["required"])
-    assert summary["total"] == sum(summary[s] for s in ("taken", "late", "missed", "pending"))
-    assert summary["counted"] == summary["total"] - summary["pending"]
+    assert summary["total"] == sum(
+        summary[s] for s in ("taken", "late", "missed", "pending", "unverified")
+    )
+    assert summary["counted"] == summary["total"] - summary["pending"] - summary["unverified"]
+    synced = body["patient_last_synced_at"]
+    assert synced is None or synced.endswith("+07:00")
     assert (summary["adherence_rate"] is None) == (summary["counted"] == 0)
     assert summary["total"] == sum(group["summary"]["total"] for group in body["groups"])
     keys = []
@@ -57,14 +70,14 @@ def assert_contract(response):
         for dose in group["doses"]:
             assert set(dose) == set(schemas["AdherenceDose"]["required"])
             assert dose["scheduled_at"].endswith("+07:00")
-            assert dose["status"] in ("da_uong", "uong_tre", "bo_lo", "cho_xac_nhan")
+            assert dose["status"] in STATUSES
             assert dose["status_source"] in ("recorded", "inferred")
             if dose["status"] in ("da_uong", "uong_tre"):
                 assert dose["taken_at"].endswith("+07:00")
                 assert dose["status_source"] == "recorded"
             else:
                 assert dose["taken_at"] is None
-            if dose["status"] == "cho_xac_nhan":
+            if dose["status"] in ("cho_xac_nhan", "chua_xac_minh"):
                 assert dose["status_source"] == "inferred"
             keys.append((dose["schedule_id"], dose["scheduled_at"]))
     assert len(keys) == len(set(keys))
@@ -153,6 +166,21 @@ class HistoryData:
             {"s": schedule.schedule_id, "at": schedule.scheduled_at, "taken": taken, "st": status},
         ).scalar_one()
 
+    def sync(self, at):
+        """Checkpoint đồng bộ của patient (3.19); giờ do test chọn."""
+        self.db.execute(
+            text(
+                "INSERT INTO dose_sync_checkpoints (user_id, synced_at) VALUES (:u, :t) "
+                "ON CONFLICT (user_id) DO UPDATE SET synced_at = EXCLUDED.synced_at"
+            ),
+            {"u": self.patient, "t": at},
+        )
+
+    def unsync(self):
+        self.db.execute(
+            text("DELETE FROM dose_sync_checkpoints WHERE user_id = :u"), {"u": self.patient}
+        )
+
     def snapshot(self):
         return self.db.execute(
             text(
@@ -184,6 +212,7 @@ class HistoryData:
 @pytest.fixture
 def history_data(db, make, client, auth, monkeypatch):
     data = HistoryData(db, make, client, auth, make.user())
+    data.sync(FULLY_SYNCED)
     monkeypatch.setattr(history_http, "now", lambda: data.now)
     monkeypatch.setattr(dose_http, "now", lambda: data.now)
     return data
@@ -202,7 +231,7 @@ def test_patient_history_by_date_medication_groups_and_80_percent__AC1_AC3_AC4(h
     before = data.snapshot()
     by_date = assert_contract(data.day())
     assert by_date["summary"] == dict(
-        total=5, taken=3, late=1, missed=1, pending=0, counted=5, adherence_rate=80
+        total=5, taken=3, late=1, missed=1, pending=0, unverified=0, counted=5, adherence_rate=80
     )
     assert len(by_date["groups"]) == 1 and by_date["groups"][0]["date"] == "2026-10-19"
     by_med = assert_contract(data.day(group_by="medication"))
@@ -265,7 +294,7 @@ def test_empty_and_pending_only_have_null_rate__AC8(history_data):
     data = history_data
     empty = assert_contract(data.day())
     assert empty["groups"] == [] and empty["summary"] == dict(
-        total=0, taken=0, late=0, missed=0, pending=0, counted=0, adherence_rate=None
+        total=0, taken=0, late=0, missed=0, pending=0, unverified=0, counted=0, adherence_rate=None
     )
     data.schedule()
     data.now = DAY + timedelta(hours=8)
@@ -473,6 +502,8 @@ def scanner_ports(data, occurrences):
         access=AccessGuardAdapter(),
         tokens=Mock(android_tokens=Mock(return_value=[])),
         notifications=SqlNotifications(),
+        checkpoints=SqlSyncCheckpoints(),
+        pending=SqlPendingVerifications(LATE_CONFIRMATION_WINDOW),
     )
 
 
@@ -660,3 +691,74 @@ def test_single_history_select_is_consistent_during_committed_updates__AC3_AC4_A
     assert {d["status"] for d in all_doses(before)} == {"bo_lo"}
     after = assert_contract(data.day())
     assert after["summary"]["taken"] == 2 and after["summary"]["adherence_rate"] == 100
+
+
+def _family_read(data, family):
+    return data.client.get(
+        "/adherence",
+        params={
+            "from": DAY.date().isoformat(),
+            "to": DAY.date().isoformat(),
+            "patient_id": str(data.patient),
+        },
+        headers=data.auth(family),
+    )
+
+
+def test_unverified_and_last_synced__AC40(history_data):
+    data = history_data
+    data.unsync()
+    family = data.make.family_of(data.patient)
+    occurrence = data.schedule()  # 08:00, hạn chót 10:00
+    data.log(data.schedule(DAY + timedelta(hours=7)), "da_uong")
+    data.now = DAY + timedelta(hours=12)
+    for synced, expected_synced in (
+        (None, None),
+        (DAY + timedelta(hours=9, minutes=59, seconds=59), "2026-10-19T09:59:59+07:00"),
+    ):
+        if synced is not None:
+            data.sync(synced)
+        for response in (data.day(), _family_read(data, family)):
+            body = assert_contract(response)
+            dose = next(d for d in all_doses(body) if d["schedule_id"] == occurrence.schedule_id)
+            assert (dose["status"], dose["status_source"], dose["taken_at"]) == (
+                "chua_xac_minh",
+                "inferred",
+                None,
+            )
+            summary = body["summary"]
+            assert (summary["unverified"], summary["pending"], summary["counted"]) == (1, 0, 1)
+            assert summary["missed"] == 0 and summary["adherence_rate"] == 100
+            assert body["patient_last_synced_at"] == expected_synced
+    logs = data.make.access_logs(data.patient)
+    assert [(log["actor_role"], log["result"]) for log in logs] == [
+        ("patient", "allowed"),
+        ("family", "allowed"),
+    ] * 2
+    assert data.snapshot()[0].status == "da_uong" and len(data.snapshot()) == 1
+
+
+@pytest.mark.parametrize("reminder", [True, False])
+def test_inferred_missed_after_checkpoint__AC40(history_data, reminder):
+    data = history_data
+    data.unsync()
+    occurrence = data.schedule(reminder=reminder)
+    data.now = DAY + timedelta(hours=12)
+    data.sync(occurrence.scheduled_at + LATE_CONFIRMATION_WINDOW)  # cp = D đúng
+    body = assert_contract(data.day())
+    dose = all_doses(body)[0]
+    assert (dose["status"], dose["status_source"]) == ("bo_lo", "inferred")
+    assert body["summary"]["unverified"] == 0 and body["summary"]["missed"] == 1
+    assert body["patient_last_synced_at"] == "2026-10-19T10:00:00+07:00"
+    assert data.snapshot() == []
+
+
+def test_recorded_after_worker__AC40(history_data):
+    data = history_data
+    data.unsync()
+    occurrence = data.schedule()
+    data.now = DAY + timedelta(hours=12)
+    assert all_doses(assert_contract(data.day()))[0]["status"] == "chua_xac_minh"
+    data.log(occurrence)  # Worker đã ghi sau khi xác minh
+    dose = all_doses(assert_contract(data.day()))[0]
+    assert (dose["status"], dose["status_source"]) == ("bo_lo", "recorded")
