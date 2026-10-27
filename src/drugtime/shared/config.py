@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     notification_channel: str = "mock"
     fcm_project_id: str = ""
+    # Đường dẫn file JSON service account (Render Secret File); không đặt nội dung vào biến.
+    fcm_credentials_file: str = ""
 
     llm_api_url: str = ""
     llm_api_key: str = ""
@@ -43,7 +45,7 @@ class Settings(BaseSettings):
     link_reject_cooldown_hours: int = 24
 
     timezone: str = "Asia/Ho_Chi_Minh"
-    tick_interval_seconds: int = 300
+    tick_interval_seconds: int = 900
     missed_dose_grace_minutes: int = 120
     missed_dose_overlap_minutes: int = 30
     heartbeat_max_age_seconds: int = 180
