@@ -64,13 +64,18 @@ class HistoryDose:
     status_source: str
 
 
-def dose_view(row: HistoryRow, as_of: datetime) -> HistoryDose:
+def dose_view(row: HistoryRow, as_of: datetime, synced_at: datetime | None) -> HistoryDose:
+    """synced_at: checkpoint đồng bộ của patient. Liều quá hạn chót chưa có dòng mà patient chưa
+    đồng bộ kể từ hạn chót là chua_xac_minh (3.19, chỉ hiển thị, BS-01); đã đồng bộ thì bo_lo."""
+    deadline = row.scheduled_at + LATE_CONFIRMATION_WINDOW
     if row.status in (DoseStatus.TAKEN, DoseStatus.LATE):
         if row.taken_at is None:
             raise ValueError("confirmed_dose_missing_timestamp")
         status, source, taken_at = row.status.value, "recorded", row.taken_at
-    elif as_of <= row.scheduled_at + LATE_CONFIRMATION_WINDOW:
+    elif as_of <= deadline:
         status, source, taken_at = "cho_xac_nhan", "inferred", None
+    elif row.status is None and (synced_at is None or synced_at < deadline):
+        status, source, taken_at = "chua_xac_minh", "inferred", None
     else:
         status = DoseStatus.MISSED.value
         source = "recorded" if row.status is DoseStatus.MISSED else "inferred"
@@ -93,22 +98,34 @@ class Summary:
     late: int
     missed: int
     pending: int
+    unverified: int
     counted: int
     adherence_rate: Decimal | None
 
 
 def summarize(doses: Iterable[HistoryDose]) -> Summary:
-    counts = {status: 0 for status in ("da_uong", "uong_tre", "bo_lo", "cho_xac_nhan")}
+    statuses = ("da_uong", "uong_tre", "bo_lo", "cho_xac_nhan", "chua_xac_minh")
+    counts = dict.fromkeys(statuses, 0)
     for dose in doses:
         counts[dose.status] += 1
-    taken, late, missed, pending = counts.values()
+    taken, late, missed, pending, unverified = counts.values()
+    # Liều chờ xác nhận và chưa xác minh không vào mẫu số của tỷ lệ (A14).
     counted = taken + late + missed
     rate = (
         (Decimal(100) * (taken + late) / counted).quantize(Decimal("0.01"), ROUND_HALF_UP)
         if counted
         else None
     )
-    return Summary(counted + pending, taken, late, missed, pending, counted, rate)
+    return Summary(
+        total=counted + pending + unverified,
+        taken=taken,
+        late=late,
+        missed=missed,
+        pending=pending,
+        unverified=unverified,
+        counted=counted,
+        adherence_rate=rate,
+    )
 
 
 @dataclass(frozen=True)
@@ -133,6 +150,7 @@ class History:
     end: date
     timezone: str
     as_of: datetime
+    patient_last_synced_at: datetime | None
     summary: Summary
     group_by: GroupBy
     groups: tuple[DateGroup | MedicationGroup, ...]
@@ -145,10 +163,11 @@ def build_history(
     period: HistoryRange,
     group_by: GroupBy,
     as_of: datetime,
+    synced_at: datetime | None,
 ) -> History:
     doses = sorted(
         (
-            dose_view(row, as_of)
+            dose_view(row, as_of, synced_at)
             for row in rows
             if row.scheduled_at <= as_of
             and period.start <= row.scheduled_at.astimezone(VIETNAM).date() <= period.end
@@ -178,12 +197,13 @@ def build_history(
             for mid in sorted(by_medication)
         ]
     return History(
-        patient_id,
-        period.start,
-        period.end,
-        TIMEZONE,
-        as_of.astimezone(VIETNAM),
-        summarize(doses),
-        group_by,
-        tuple(groups),
+        patient_id=patient_id,
+        start=period.start,
+        end=period.end,
+        timezone=TIMEZONE,
+        as_of=as_of.astimezone(VIETNAM),
+        patient_last_synced_at=synced_at.astimezone(VIETNAM) if synced_at is not None else None,
+        summary=summarize(doses),
+        group_by=group_by,
+        groups=tuple(groups),
     )

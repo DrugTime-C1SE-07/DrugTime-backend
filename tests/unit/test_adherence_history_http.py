@@ -34,7 +34,7 @@ def client(monkeypatch):
     monkeypatch.setattr(http, "unit_of_work", transaction)
     monkeypatch.setattr(http, "now", lambda: NOW)
     monkeypatch.setattr(http, "_ACCESS", Mock())
-    monkeypatch.setattr(http, "_READER", Mock(read=Mock(return_value=[])))
+    monkeypatch.setattr(http, "_READER", Mock(read=Mock(return_value=([], None))))
     result = TestClient(app, raise_server_exceptions=False)
     result.events = events
     return result
@@ -48,6 +48,7 @@ def test_http_auth_and_date_group_query_aliases_and_commit_before_response(clien
     assert body["from"] == "2026-10-01" and body["to"] == "2026-10-19"
     assert body["patient_id"] == str(USER) and body["group_by"] == "date"
     assert body["summary"]["adherence_rate"] is None and body["groups"] == []
+    assert body["summary"]["unverified"] == 0 and body["patient_last_synced_at"] is None
     assert "start" not in body and "end" not in body
     assert http._READER.read.call_args.args[1:] == (
         USER,
@@ -58,7 +59,10 @@ def test_http_auth_and_date_group_query_aliases_and_commit_before_response(clien
 
 def test_http_medication_patient_selector_and_timestamp_precision(client):
     at = NOW.replace(hour=8, microsecond=123456)
-    http._READER.read.return_value = [HistoryRow(1, "Medicine", 7, at, at, DoseStatus.TAKEN)]
+    http._READER.read.return_value = (
+        [HistoryRow(1, "Medicine", 7, at, at, DoseStatus.TAKEN)],
+        None,
+    )
     response = client.get(f"/adherence?patient_id={PATIENT}&group_by=medication")
     assert response.status_code == 200
     http._ACCESS.authorize_history.assert_called_once()
@@ -124,9 +128,10 @@ def test_unauthenticated_does_not_read_health(monkeypatch):
 
 
 def test_early_missed_log_is_pending_at_exact_120(client):
-    http._READER.read.return_value = [
-        HistoryRow(1, "Medicine", 7, NOW.replace(hour=10), None, DoseStatus.MISSED),
-    ]
+    http._READER.read.return_value = (
+        [HistoryRow(1, "Medicine", 7, NOW.replace(hour=10), None, DoseStatus.MISSED)],
+        None,
+    )
     response = client.get("/adherence")
     assert response.status_code == 200
     body = response.json()

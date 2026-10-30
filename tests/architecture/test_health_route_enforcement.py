@@ -11,8 +11,12 @@ from fastapi.security import HTTPBearer
 from drugtime.main import create_app
 from drugtime.modules.identity import api as identity
 
+# (scope, operationId, audit_self): ghi liều và checkpoint chính chủ không ghi access_logs khi
+# được phép (theo PEP chung); đọc lịch sử thì có (3.23).
 PROTECTED_HEALTH_ROUTES = {
-    ("GET", "/adherence"): ("lich_su_tuan_thu", "getAdherenceHistory"),
+    ("GET", "/adherence"): ("lich_su_tuan_thu", "getAdherenceHistory", True),
+    ("POST", "/doses/batch"): ("lich_su_tuan_thu", "confirmDoseBatch", False),
+    ("POST", "/doses/sync-checkpoints"): ("lich_su_tuan_thu", "recordDoseSyncCheckpoint", False),
 }
 
 
@@ -35,9 +39,9 @@ def test_adherence_health_route_registered_with_bearer_identity_and_scope(method
     matches = [r for r in api_routes(app) if r.path == path and method in r.methods]
     assert len(matches) == 1
     route = matches[0]
-    scope, operation = PROTECTED_HEALTH_ROUTES[(method, path)]
+    scope, operation, audit_self = PROTECTED_HEALTH_ROUTES[(method, path)]
     assert route.openapi_extra["x-health-scope"] == scope
-    assert route.openapi_extra["x-health-audit-self"] is True
+    assert route.openapi_extra["x-health-audit-self"] is audit_self
     calls = list(dependencies(route.dependant))
     assert identity.current_user in calls
     assert any(isinstance(call, HTTPBearer) and call.scheme_name == "bearerAuth" for call in calls)

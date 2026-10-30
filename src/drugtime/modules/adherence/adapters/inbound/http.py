@@ -4,10 +4,11 @@ from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Header, Path, Query
+from fastapi import APIRouter, Body, Depends, Header, Path, Query, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel, ConfigDict
 
 from drugtime.modules.adherence.adapters.inbound.history_http import router as history_router
@@ -19,6 +20,7 @@ from drugtime.modules.adherence.adapters.outbound.other_modules import (
 from drugtime.modules.adherence.adapters.outbound.sql_adherence import (
     SqlDoseLogs,
     SqlNotifications,
+    SqlSyncCheckpoints,
 )
 from drugtime.modules.adherence.application.confirm_doses import confirm_doses
 from drugtime.modules.adherence.application.manage_notifications import (
@@ -26,6 +28,7 @@ from drugtime.modules.adherence.application.manage_notifications import (
     list_my_notifications,
     update_notification_status,
 )
+from drugtime.modules.adherence.application.record_sync_checkpoint import record_sync_checkpoint
 from drugtime.modules.adherence.domain.dose import DoseConfirmation
 from drugtime.modules.identity import api as identity
 from drugtime.shared.clock import now
@@ -34,6 +37,7 @@ from drugtime.shared.errors import Forbidden, NotFound, ServiceUnavailable, Unau
 
 router = APIRouter(tags=["adherence"])
 router.include_router(history_router)
+_BEARER = Depends(HTTPBearer(auto_error=False, scheme_name="bearerAuth", bearerFormat="JWT"))
 
 
 class DoseConfirmationIn(BaseModel):
@@ -78,6 +82,9 @@ class DoseConfirmationBatchOut(BaseModel):
     "/doses/batch",
     response_model=DoseConfirmationBatchOut,
     response_model_exclude_none=True,
+    operation_id="confirmDoseBatch",
+    dependencies=[_BEARER],
+    openapi_extra={"x-health-scope": "lich_su_tuan_thu", "x-health-audit-self": False},
 )
 def post_doses(
     items: Annotated[list[DoseConfirmationIn], Body(min_length=1, max_length=50)],
@@ -123,6 +130,42 @@ def post_doses(
             failed=result.failed,
         ),
     )
+
+
+def get_checkpoint_uow() -> Iterator[SqlUnitOfWork]:
+    try:
+        with unit_of_work() as uow:
+            yield uow
+    except (Forbidden, Unauthorized, RequestValidationError):
+        raise
+    except Exception as exc:
+        raise ServiceUnavailable("service_unavailable") from exc
+
+
+# PEP và ghi checkpoint commit trước khi gửi response: lỗi commit trả 503 thay vì 204 đã gửi.
+CheckpointUow = Annotated[SqlUnitOfWork, Depends(get_checkpoint_uow, scope="function")]
+
+
+@router.post(
+    "/doses/sync-checkpoints",
+    status_code=204,
+    response_class=Response,
+    operation_id="recordDoseSyncCheckpoint",
+    dependencies=[_BEARER],
+    openapi_extra={"x-health-scope": "lich_su_tuan_thu", "x-health-audit-self": False},
+)
+def post_sync_checkpoint(
+    uow: CheckpointUow,
+    user: identity.CurrentUser = Depends(identity.current_user),
+) -> Response:
+    record_sync_checkpoint(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        access=AccessGuardAdapter(),
+        checkpoints=SqlSyncCheckpoints(),
+    )
+    return Response(status_code=204)
 
 
 class NotificationRoute(APIRoute):

@@ -5,6 +5,7 @@ from uuid import UUID
 
 from drugtime.modules.identity.adapters.inbound.dependencies import current_user, require_admin
 from drugtime.modules.identity.adapters.inbound.http import router
+from drugtime.modules.identity.adapters.outbound.sql_device_tokens import SqlDeviceTokens
 from drugtime.modules.identity.adapters.outbound.sql_users import SqlUsers
 from drugtime.modules.identity.adapters.outbound.supabase_auth import SupabaseAuth
 from drugtime.modules.identity.application import erase_user as _erase
@@ -23,6 +24,7 @@ __all__ = [
     "CurrentUser",
     "account_remover",
     "android_tokens",
+    "remove_device_tokens",
     "current_user",
     "eraser",
     "require_admin",
@@ -81,6 +83,11 @@ def user_emails(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str | None]
 def android_tokens(uow: UnitOfWork, user_ids: list[UUID]) -> list[tuple[UUID, str]]:
     """Token FCM Android của các user (iOS bị bỏ qua: không có APNs trong Phase 1)."""
     return SqlUsers(uow).device_tokens(user_ids, "android")
+
+
+def remove_device_tokens(uow: UnitOfWork, tokens: list[str]) -> None:
+    """Gỡ token FCM mà kênh báo không còn đăng ký (UNREGISTERED), bất kể chủ sở hữu."""
+    SqlDeviceTokens().remove_tokens(uow, tokens)
 
 
 def user_name(uow: UnitOfWork, user_id: UUID) -> str | None:

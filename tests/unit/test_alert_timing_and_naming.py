@@ -98,6 +98,35 @@ class FakePatientNames:
         return self.names.get(patient_id)
 
 
+class SyncedCheckpoints:
+    """Mọi patient đã đồng bộ sau hạn chót: lượt quét đi nhánh đã xác minh (3.19)."""
+
+    def get_many(self, uow, user_ids):
+        return {u: datetime(9999, 1, 1, tzinfo=UTC) for u in user_ids}
+
+
+class FakePending:
+    def __init__(self):
+        self.added = []
+
+    def add(self, uow, occ):
+        self.added.append(occ)
+        return True
+
+    def verified(self, uow, now):
+        return []
+
+    def remove(self, uow, occ):
+        pass
+
+    def purge_recorded(self, uow):
+        pass
+
+
+def scan_alerts(*args, **kwargs):
+    return scan(*args, **kwargs).alerts
+
+
 class FakeNotifier:
     def __init__(self):
         self.sent_alerts = []
@@ -160,6 +189,8 @@ def test_alert_timing_under_2_seconds_batch_sizes():
             access=FakeAccessGuard(caregivers_map),
             tokens=FakeTokens(tokens_map),
             notifications=notifications,
+            checkpoints=SyncedCheckpoints(),
+            pending=FakePending(),
             patient_names=FakePatientNames(names_map),
         )
 
@@ -181,8 +212,9 @@ def test_alert_timing_under_2_seconds_batch_sizes():
     )
 
 
-def test_alert_explicitly_names_patient_vietnamese():
-    """AC2: Alert nêu tên bệnh nhân theo mẫu đã duyệt (PB20)."""
+def test_alert_body_generic_inbox_names_patient_vietnamese():
+    """3.20 AC2 sửa theo 3.19 Q10 (QD-26, AC36): hộp thư nêu tên bệnh nhân; thân push là câu chung
+    vì có thể hiện trên màn hình khóa."""
     vietnamese_names = [
         "Nguyễn Văn An",
         "Trần Thị Mai",
@@ -198,7 +230,7 @@ def test_alert_explicitly_names_patient_vietnamese():
         occ = SimpleNamespace(patient_id=patient_id, schedule_id=101, scheduled_at=scheduled_at)
         notifications = FakeNotifications()
 
-        alerts = scan(
+        alerts = scan_alerts(
             None,
             now=datetime(2026, 10, 14, 11, 0, tzinfo=UTC),
             grace=timedelta(minutes=120),
@@ -209,22 +241,25 @@ def test_alert_explicitly_names_patient_vietnamese():
             access=FakeAccessGuard({patient_id: [caregiver_id]}),
             tokens=FakeTokens({caregiver_id: ["token_fcm_android"]}),
             notifications=notifications,
+            checkpoints=SyncedCheckpoints(),
+            pending=FakePending(),
             patient_names=FakePatientNames({patient_id: name}),
         )
 
         assert len(alerts) == 1
         alert = alerts[0]
 
-        # Kiểm tra tiêu đề app và nội dung có đúng tên bệnh nhân
+        # Hộp thư có tên bệnh nhân; push chỉ có câu chung
         assert alert.title == "DrugTime"
         expected_content = f"Bác {name} chưa ghi nhận liều thuốc đúng giờ"
-        assert alert.body == expected_content
+        assert alert.body == "Bạn có cảnh báo mới về người thân"
         assert notifications.created[0][3] == expected_content
 
         # Kiểm tra payload FCM
         payload = build_fcm_payload(alert)
         assert payload["message"]["notification"]["title"] == "DrugTime"
-        assert payload["message"]["notification"]["body"] == expected_content
+        assert payload["message"]["notification"]["body"] == "Bạn có cảnh báo mới về người thân"
+        assert name not in str(payload)
         assert payload["message"]["data"]["notification_id"] == str(alert.notification_id)
 
 
@@ -239,7 +274,7 @@ def test_alert_fallback_when_patient_name_empty_or_none():
         occ = SimpleNamespace(patient_id=patient_id, schedule_id=102, scheduled_at=scheduled_at)
         notifications = FakeNotifications()
 
-        alerts = scan(
+        alerts = scan_alerts(
             None,
             now=datetime(2026, 10, 14, 11, 0, tzinfo=UTC),
             grace=timedelta(minutes=120),
@@ -250,6 +285,8 @@ def test_alert_fallback_when_patient_name_empty_or_none():
             access=FakeAccessGuard({patient_id: [caregiver_id]}),
             tokens=FakeTokens({caregiver_id: ["token_android"]}),
             notifications=notifications,
+            checkpoints=SyncedCheckpoints(),
+            pending=FakePending(),
             patient_names=FakePatientNames({patient_id: name}),
         )
 
@@ -273,7 +310,7 @@ def test_alert_payload_negative_check_health_privacy_cd6():
     occ = SimpleNamespace(patient_id=patient_id, schedule_id=103, scheduled_at=scheduled_at)
     notifications = FakeNotifications()
 
-    alerts = scan(
+    alerts = scan_alerts(
         None,
         now=datetime(2026, 10, 14, 11, 0, tzinfo=UTC),
         grace=timedelta(minutes=120),
@@ -284,6 +321,8 @@ def test_alert_payload_negative_check_health_privacy_cd6():
         access=FakeAccessGuard({patient_id: [caregiver_id]}),
         tokens=FakeTokens({caregiver_id: ["token_android"]}),
         notifications=notifications,
+        checkpoints=SyncedCheckpoints(),
+        pending=FakePending(),
         patient_names=FakePatientNames({patient_id: "Lê Văn C"}),
     )
 
@@ -346,7 +385,7 @@ def test_alert_platform_routing_android_push_ios_db_only():
         mixed_user: ["fcm_token_android_device"],
     }
 
-    alerts = scan(
+    alerts = scan_alerts(
         None,
         now=datetime(2026, 10, 14, 11, 0, tzinfo=UTC),
         grace=timedelta(minutes=120),
@@ -357,6 +396,8 @@ def test_alert_platform_routing_android_push_ios_db_only():
         access=FakeAccessGuard({patient_id: [android_user, ios_user, mixed_user]}),
         tokens=FakeTokens(android_tokens_map),
         notifications=notifications,
+        checkpoints=SyncedCheckpoints(),
+        pending=FakePending(),
         patient_names=FakePatientNames({patient_id: "Nguyễn Văn D"}),
     )
 
@@ -387,7 +428,7 @@ def test_alert_no_false_alerts_if_dose_already_confirmed():
     dose_logs = FakeDoseLogs({(105, scheduled_at): None})
     cursor = FakeScanCursor(initial=datetime(2026, 10, 14, 7, 0, tzinfo=UTC))
 
-    alerts = scan(
+    alerts = scan_alerts(
         None,
         now=datetime(2026, 10, 14, 11, 0, tzinfo=UTC),
         grace=timedelta(minutes=120),
@@ -398,6 +439,8 @@ def test_alert_no_false_alerts_if_dose_already_confirmed():
         access=FakeAccessGuard({patient_id: [caregiver_id]}),
         tokens=FakeTokens({caregiver_id: ["token_android"]}),
         notifications=notifications,
+        checkpoints=SyncedCheckpoints(),
+        pending=FakePending(),
         patient_names=FakePatientNames({patient_id: "Nguyễn Văn E"}),
     )
 

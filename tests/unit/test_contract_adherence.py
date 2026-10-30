@@ -86,6 +86,54 @@ def test_reject_invalid_dose_status_source_timestamp_and_constraints(change):
         AdherenceHistoryResponse.model_validate(payload)
 
 
+def unverified_payload():
+    payload = copy.deepcopy(DATE_EXAMPLE)
+    dose = payload["groups"][0]["doses"][0]
+    dose.update(taken_at=None, status="chua_xac_minh", status_source="inferred")
+    for summary in (payload["summary"], payload["groups"][0]["summary"]):
+        summary.update(taken=0, unverified=1, counted=0, adherence_rate=None)
+    payload["patient_last_synced_at"] = None
+    return payload
+
+
+def test_unverified_variant_validates_on_wire__AC40_AC41():
+    payload = unverified_payload()
+    result = AdherenceHistoryResponse.model_validate(payload).model_dump(mode="json", by_alias=True)
+    assert result == payload
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"taken_at": "2026-10-19T08:05:00+07:00"},
+        {"status_source": "recorded"},
+    ],
+)
+def test_reject_unverified_with_taken_at_or_recorded__AC41(change):
+    payload = unverified_payload()
+    payload["groups"][0]["doses"][0].update(change)
+    with pytest.raises(ValidationError):
+        AdherenceHistoryResponse.model_validate(payload)
+
+
+def test_unverified_counts_in_total_and_last_synced_is_required__AC41():
+    payload = unverified_payload()
+    payload["summary"]["unverified"] = 0
+    with pytest.raises(ValidationError):
+        AdherenceHistoryResponse.model_validate(payload)
+    payload = unverified_payload()
+    del payload["patient_last_synced_at"]
+    with pytest.raises(ValidationError):
+        AdherenceHistoryResponse.model_validate(payload)
+
+
+def test_last_synced_is_rendered_in_vietnam_time__AC41():
+    payload = unverified_payload()
+    payload["patient_last_synced_at"] = "2026-10-19T01:00:00Z"
+    result = AdherenceHistoryResponse.model_validate(payload).model_dump(mode="json", by_alias=True)
+    assert result["patient_last_synced_at"] == "2026-10-19T08:00:00+07:00"
+
+
 def test_reject_recorded_pending_even_without_taken_at():
     payload = pending_payload()
     payload["groups"][0]["doses"][0]["status_source"] = "recorded"
@@ -157,7 +205,7 @@ def test_response_required_nullable_enums_and_constraints():
 
     summary = AdherenceSummary.model_json_schema()["properties"]
     expected_summary = schemas["AdherenceSummary"]["properties"]
-    for field in ("total", "taken", "late", "missed", "pending", "counted"):
+    for field in ("total", "taken", "late", "missed", "pending", "unverified", "counted"):
         assert summary[field]["minimum"] == expected_summary[field]["minimum"] == 0
     assert schema_types(summary["adherence_rate"]) == schema_types(
         expected_summary["adherence_rate"]
@@ -172,9 +220,10 @@ def test_response_required_nullable_enums_and_constraints():
     expected_root = schemas["AdherenceHistoryResponse"]
     assert set(root["discriminator"]["mapping"]) == set(expected_root["discriminator"]["mapping"])
     for name in ("AdherenceDateGroup", "AdherenceMedicationGroup"):
-        assert root["$defs"][name]["properties"]["doses"]["minItems"] == schemas[name][
-            "properties"
-        ]["doses"]["minItems"]
+        assert (
+            root["$defs"][name]["properties"]["doses"]["minItems"]
+            == schemas[name]["properties"]["doses"]["minItems"]
+        )
 
 
 def test_contract_query_security_status_headers(generated):

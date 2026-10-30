@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from socket import create_connection
 from time import perf_counter
 from urllib.parse import urlparse
@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from test_adherence_history_api import DAY
+from test_adherence_history_api import history_data as history_data
+from test_missed_dose_verification import World
 
 from drugtime.main import create_app
 from drugtime.modules.adherence.adapters.outbound.sql_adherence import SqlNotifications
@@ -231,3 +234,35 @@ def test_integration_alert_timing_and_naming_flow(client_as, admin_engine):
     assert items[0]["about_patient_user_id"] == str(patient_id)
     assert items[0]["is_read"] is False
 
+
+
+def test_family_reads_alert_after_scan__regression(history_data, role_engines):
+    """3.19 Phát sinh 7: Worker tạo cảnh báo sau khi xác minh; người thân có liên kết + chia sẻ
+    đọc danh sách, chi tiết và đánh dấu đã đọc bằng phiên thật (PEP quyền ĐỌC), không bị 403."""
+    data = history_data
+    data.unsync()
+    w = World(data, role_engines["worker_role"])
+    family = w.make.family_of(data.patient)
+    token = w.token(family)
+    at = DAY + timedelta(hours=8)
+    data.schedule(at)
+    w.checkpoint(at + timedelta(hours=2, minutes=5))
+    w.run(at + timedelta(hours=2, minutes=6))
+    [alert] = w.pushes.alerts_to(token)
+    headers = data.auth(family)
+
+    listing = data.client.get("/notifications", headers=headers)
+    assert listing.status_code == 200, listing.text
+    assert [n["id"] for n in listing.json()["items"]] == [alert.notification_id]
+    detail = data.client.get(f"/notifications/{alert.notification_id}", headers=headers)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["about_patient_user_id"] == str(data.patient)
+    marked = data.client.patch(
+        f"/notifications/{alert.notification_id}", headers=headers, json={"is_read": True}
+    )
+    assert marked.status_code == 200 and marked.json()["is_read"] is True
+
+    family_logs = [
+        log for log in data.make.access_logs(data.patient) if log["actor_user_id"] == family
+    ]
+    assert family_logs and {log["result"] for log in family_logs} == {"allowed"}

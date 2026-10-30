@@ -37,7 +37,7 @@ def confirm_doses(
                     _failed(item, "schedule_not_found", 404, "schedule_id was not found")
                 )
                 continue
-            access.authorize_adherence(uow, caller_id, caller_is_admin, owner_id)
+            access.authorize_dose_write(uow, caller_id, caller_is_admin, owner_id)
             persistence = dose_logs.upsert_confirmation(uow, item, status)
             record = persistence.record
             results.append(

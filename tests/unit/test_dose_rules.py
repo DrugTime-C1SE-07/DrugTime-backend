@@ -14,12 +14,25 @@ from drugtime.modules.adherence.domain.dose import (
 )
 
 
-def test_confirmation_transitions():
-    # AC3/AC4: Xác nhận muộn chỉ chuyển dòng bo_lo sang uong_tre, không đổi dòng đã xác nhận.
-    assert status_after_confirmation(None) is DoseStatus.TAKEN
-    assert status_after_confirmation(DoseStatus.MISSED) is DoseStatus.LATE
-    assert status_after_confirmation(DoseStatus.TAKEN) is DoseStatus.TAKEN
-    assert status_after_confirmation(DoseStatus.LATE) is DoseStatus.LATE
+@pytest.mark.parametrize(
+    ("existing", "computed", "expected"),
+    [
+        # Chưa có dòng hoặc đang bo_lo: trạng thái tính từ taken_at (QD-03, 3.19 Q3).
+        (None, DoseStatus.TAKEN, DoseStatus.TAKEN),
+        (None, DoseStatus.LATE, DoseStatus.LATE),
+        (None, DoseStatus.MISSED, DoseStatus.MISSED),
+        (DoseStatus.MISSED, DoseStatus.TAKEN, DoseStatus.TAKEN),
+        (DoseStatus.MISSED, DoseStatus.LATE, DoseStatus.LATE),
+        (DoseStatus.MISSED, DoseStatus.MISSED, DoseStatus.MISSED),
+        # Đã xác nhận: giữ nguyên (idempotent, không ghi đè).
+        (DoseStatus.TAKEN, DoseStatus.LATE, DoseStatus.TAKEN),
+        (DoseStatus.TAKEN, DoseStatus.MISSED, DoseStatus.TAKEN),
+        (DoseStatus.LATE, DoseStatus.TAKEN, DoseStatus.LATE),
+        (DoseStatus.LATE, DoseStatus.MISSED, DoseStatus.LATE),
+    ],
+)
+def test_status_after_confirmation_matrix__AC27(existing, computed, expected):
+    assert status_after_confirmation(existing, computed) is expected
 
 
 def test_worker_never_overwrites():

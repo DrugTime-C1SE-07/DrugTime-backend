@@ -54,11 +54,11 @@ def _dose_constraints(schema: dict) -> None:
             },
         },
         {
-            "if": {"properties": {"status": {"enum": ["bo_lo", "cho_xac_nhan"]}}},
+            "if": {"properties": {"status": {"enum": ["bo_lo", "cho_xac_nhan", "chua_xac_minh"]}}},
             "then": {"properties": {"taken_at": {"type": "null"}}},
         },
         {
-            "if": {"properties": {"status": {"const": "cho_xac_nhan"}}},
+            "if": {"properties": {"status": {"enum": ["cho_xac_nhan", "chua_xac_minh"]}}},
             "then": {"properties": {"status_source": {"const": "inferred"}}},
         },
     ]
@@ -73,7 +73,7 @@ class AdherenceDose(BaseModel):
     schedule_id: PositiveId
     scheduled_at: AwareDatetime
     taken_at: AwareDatetime | None
-    status: Literal["da_uong", "uong_tre", "bo_lo", "cho_xac_nhan"]
+    status: Literal["da_uong", "uong_tre", "bo_lo", "cho_xac_nhan", "chua_xac_minh"]
     status_source: Literal["recorded", "inferred"]
 
     @field_validator("scheduled_at", "taken_at")
@@ -88,7 +88,7 @@ class AdherenceDose(BaseModel):
             raise ValueError("invalid_adherence_confirmation_timestamp")
         if confirmed and self.status_source != "recorded":
             raise ValueError("confirmation_must_be_recorded")
-        if self.status == "cho_xac_nhan" and self.status_source != "inferred":
+        if self.status in ("cho_xac_nhan", "chua_xac_minh") and self.status_source != "inferred":
             raise ValueError("pending_must_be_inferred")
         return self
 
@@ -112,6 +112,7 @@ class AdherenceSummary(BaseModel):
     late: Count
     missed: Count
     pending: Count
+    unverified: Count
     counted: Count
     adherence_rate: Rate | None
 
@@ -119,7 +120,7 @@ class AdherenceSummary(BaseModel):
     def valid_counts_and_rate(self):
         if self.counted != self.taken + self.late + self.missed:
             raise ValueError("invalid_adherence_counted")
-        if self.total != self.counted + self.pending:
+        if self.total != self.counted + self.pending + self.unverified:
             raise ValueError("invalid_adherence_total")
         expected = (
             (Decimal(100) * (self.taken + self.late) / self.counted).quantize(
@@ -156,12 +157,14 @@ class _HistoryResponse(BaseModel):
     end: date = Field(validation_alias=AliasChoices("to", "end"), serialization_alias="to")
     timezone: Literal["Asia/Ho_Chi_Minh"]
     as_of: AwareDatetime
+    # Bắt buộc, có thể null (chưa từng đồng bộ); chỉ trả cho người đã qua PEP (3.19).
+    patient_last_synced_at: AwareDatetime | None
     summary: AdherenceSummary
 
-    @field_validator("as_of")
+    @field_validator("as_of", "patient_last_synced_at")
     @classmethod
     def vietnam_timestamp(cls, value):
-        return value.astimezone(VIETNAM)
+        return value.astimezone(VIETNAM) if value is not None else None
 
 
 class AdherenceByDateResponse(_HistoryResponse):
