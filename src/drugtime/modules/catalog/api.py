@@ -12,7 +12,26 @@ from drugtime.modules.catalog.adapters.outbound.sql_active_ingredients import Sq
 from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
 from drugtime.modules.catalog.adapters.outbound.sql_conditions import SqlConditions
 from drugtime.modules.catalog.application.list_active_ingredients import normalize_query
+from drugtime.modules.catalog.application.lookup_ocr_candidates import (
+    lookup_ocr_candidates as _lookup_ocr_candidates,
+)
+from drugtime.modules.catalog.application.normalize_ocr import normalize_ocr_text
 from drugtime.modules.catalog.application.scheduling import is_sync_due
+from drugtime.modules.catalog.domain.catalog_index import (
+    MatchKind,
+    MatchSource,
+    NormalizedOcrText,
+    OcrCatalogCandidate,
+    OcrCatalogCluster,
+    OcrCatalogLookup,
+    OcrCluster,
+    OcrLine,
+    QueryCoverage,
+    StrengthEvidence,
+    StrengthOccurrence,
+    StrengthStatus,
+    StrengthValue,
+)
 from drugtime.modules.catalog.domain.condition import Condition
 from drugtime.modules.catalog.domain.medication import CatalogMedication
 from drugtime.modules.catalog.repository import CatalogSyncRepository
@@ -20,6 +39,21 @@ from drugtime.shared.clock import now
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
+    "MatchKind",
+    "MatchSource",
+    "OcrCatalogCandidate",
+    "OcrCatalogCluster",
+    "OcrCatalogLookup",
+    "OcrCluster",
+    "OcrLine",
+    "QueryCoverage",
+    "StrengthEvidence",
+    "StrengthOccurrence",
+    "StrengthValue",
+    "NormalizedOcrText",
+    "StrengthStatus",
+    "lookup_ocr_candidates",
+    "normalize_ocr_text",
     "Condition",
     "get_condition",
     "condition_names",
@@ -36,6 +70,11 @@ __all__ = [
 router = APIRouter()
 router.include_router(_catalog_router)
 router.include_router(_conditions_router)
+
+
+def lookup_ocr_candidates(uow: UnitOfWork, normalized: NormalizedOcrText) -> OcrCatalogLookup:
+    """Use a fresh UoW/read transaction per invocation; no snapshot is cached here."""
+    return _lookup_ocr_candidates(uow, normalized, SqlCatalog())
 
 
 def get_condition(uow: UnitOfWork, condition_id: int) -> Condition | None:
