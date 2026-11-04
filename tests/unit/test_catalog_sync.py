@@ -1,3 +1,5 @@
+import unicodedata
+
 from drugtime.modules.catalog.normalize import normalize_record
 from drugtime.modules.catalog.parsers.dav_drugbank import parse
 
@@ -32,3 +34,21 @@ def test_normalize_record_cleans_canonical_fields():
 
     assert result.source_ref == "VD-1"
     assert result.name == "Medicine A"
+
+
+def test_ingest_preserves_vietnamese_case_accents_and_nfc__AC20():
+    name = "THUỐC ĐỎ B12"
+    ingredient = "Cao Đinh lăng"
+    result = normalize_record(
+        {
+            "source_ref": " VD-VN-1 ",
+            "name": unicodedata.normalize("NFD", f"  {name}\t\n"),
+            "raw_active_ingredient": unicodedata.normalize("NFD", " Cao   Đinh\tlăng "),
+        }
+    )
+
+    assert result.source_ref == "VD-VN-1"
+    assert result.name == name
+    assert result.raw_active_ingredient == ingredient
+    assert unicodedata.is_normalized("NFC", result.name)
+    assert unicodedata.is_normalized("NFC", result.raw_active_ingredient)

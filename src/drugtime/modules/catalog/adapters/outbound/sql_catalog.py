@@ -1,6 +1,12 @@
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from drugtime.modules.catalog.application.search_medications import escape_like
+from drugtime.modules.catalog.domain.catalog_index import (
+    CatalogHit,
+    CatalogQueryResult,
+    MatchKind,
+)
 from drugtime.modules.catalog.domain.medication import CatalogMedication
 from drugtime.shared.errors import DomainError
 from drugtime.shared.uow import UnitOfWork
@@ -10,6 +16,68 @@ _TABLE = "medications"
 
 class SqlCatalog:
     # --- Dành cho tìm kiếm Mobile K04 & module khác ---
+    def find_ocr_matches(
+        self, uow: UnitOfWork, query_key: str, kind: MatchKind, *, limit: int = 200
+    ) -> CatalogQueryResult:
+        """Bound distinct IDs per source, retaining every alias hit for selected IDs."""
+        if not query_key:
+            return CatalogQueryResult(())
+        if limit <= 0:
+            raise ValueError("OCR candidate limit must be positive")
+        columns = (
+            "m.id, m.name, m.raw_active_ingredient, m.strength_text, m.dosage_form, "
+            "EXISTS (SELECT 1 FROM medication_active_ingredients mai "
+            "WHERE mai.medication_id = m.id) AS has_active_ingredients "
+        )
+        if kind == MatchKind.INGREDIENT_ALIAS:
+            sql = (
+                "WITH matched AS MATERIALIZED ("
+                "SELECT a.id AS alias_id, a.alias_text, a.active_ingredient_id, m.id "
+                "FROM ingredient_aliases a "
+                "JOIN medication_active_ingredients mai "
+                "ON mai.active_ingredient_id = a.active_ingredient_id "
+                "JOIN medications m ON m.id = mai.medication_id "
+                "WHERE m.deleted_at IS NULL "
+                "AND public.catalog_search_key(a.alias_text) LIKE :pattern ESCAPE '\\'), "
+                "selected AS (SELECT DISTINCT id FROM matched ORDER BY id LIMIT :probe) "
+                "SELECT " + columns + ", h.alias_id, h.alias_text, h.active_ingredient_id "
+                "FROM selected s JOIN medications m ON m.id = s.id "
+                "JOIN matched h ON h.id = s.id ORDER BY m.id, h.alias_id"
+            )
+        else:
+            # Only these fixed identifiers enter SQL; OCR text is always a bound value.
+            column = {
+                MatchKind.NAME: "m.name",
+                MatchKind.RAW_ACTIVE_INGREDIENT: "m.raw_active_ingredient",
+            }[kind]
+            sql = (
+                "SELECT " + columns + " FROM medications m WHERE m.deleted_at IS NULL "
+                f"AND public.catalog_search_key({column}) LIKE :pattern ESCAPE '\\' "
+                "ORDER BY m.id LIMIT :probe"
+            )
+        rows = uow.connection.execute(
+            text(sql), {"pattern": f"%{escape_like(query_key)}%", "probe": limit + 1}
+        )
+        # Consume the iterator before returning, so any late read failure aborts the call.
+        hits = tuple(
+            CatalogHit(
+                CatalogMedication(
+                    row.id, row.name, row.strength_text, row.dosage_form,
+                    row.has_active_ingredients, row.raw_active_ingredient,
+                ),
+                row.alias_id if kind == MatchKind.INGREDIENT_ALIAS else None,
+                row.alias_text if kind == MatchKind.INGREDIENT_ALIAS else None,
+                row.active_ingredient_id if kind == MatchKind.INGREDIENT_ALIAS else None,
+            )
+            for row in rows
+        )
+        selected_ids = sorted({hit.medication.id for hit in hits})
+        truncated = len(selected_ids) > limit
+        allowed = set(selected_ids[:limit])
+        return CatalogQueryResult(
+            tuple(hit for hit in hits if hit.medication.id in allowed), truncated
+        )
+
     def get_medication(
         self, uow: UnitOfWork, medication_id: int, *, include_deleted: bool = False
     ) -> CatalogMedication | None:
