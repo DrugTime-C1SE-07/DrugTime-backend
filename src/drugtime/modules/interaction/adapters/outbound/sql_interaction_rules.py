@@ -199,6 +199,17 @@ class SqlDrugInteractions(_SqlRuleTable):
             for r in rows
         ]
 
+    def active_rules_for_ingredients(
+        self, uow: UnitOfWork, ingredient_ids: list[int]
+    ) -> list[RuleRecord[DrugInteractionContent]]:
+        if not ingredient_ids:
+            return []
+        cond = (
+            "t.superseded_at IS NULL AND t.deleted_at IS NULL AND "
+            "(t.ingredient_a_id = ANY(:ids) OR t.ingredient_b_id = ANY(:ids))"
+        )
+        return self._select(uow, cond, {"ids": ingredient_ids})
+
     def insert(
         self,
         uow: UnitOfWork,
