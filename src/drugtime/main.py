@@ -49,6 +49,11 @@ _STATUS = {
 }
 
 
+# Responses never cached; failures become the generic 500 without re-raising, so the
+# server log never gets a traceback with sensitive SQL parameters (health data, OCR text).
+_NO_STORE_ROUTES = frozenset({("GET", "/adherence"), ("POST", "/catalog/medications/match")})
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="DrugTime API", version="0.1.0")
     origins = [o.strip() for o in get_settings().cors_allowed_origins.split(",") if o.strip()]
@@ -80,8 +85,8 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, internal_error)
 
     @app.middleware("http")
-    async def adherence_no_store(request: Request, call_next):
-        if request.method != "GET" or request.url.path != "/adherence":
+    async def sensitive_no_store(request: Request, call_next):
+        if (request.method, request.url.path) not in _NO_STORE_ROUTES:
             return await call_next(request)
         try:
             response = await call_next(request)

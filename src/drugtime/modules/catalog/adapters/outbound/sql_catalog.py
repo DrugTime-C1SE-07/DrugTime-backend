@@ -78,6 +78,43 @@ class SqlCatalog:
             tuple(hit for hit in hits if hit.medication.id in allowed), truncated
         )
 
+    def find_fuzzy_name_matches(
+        self, uow: UnitOfWork, query_key: str, *, threshold: float, limit: int
+    ) -> tuple[tuple[CatalogMedication, ...], bool]:
+        """Names whose trigram similarity to `query_key` reaches `threshold` (pg_trgm `%`,
+        served by the GIN index on catalog_search_key(name)); most similar first, then id."""
+        if not query_key:
+            return (), False
+        if limit <= 0:
+            raise ValueError("OCR fuzzy limit must be positive")
+        c = uow.connection
+        # Local to the request transaction; the OCR key is always a bound value.
+        c.execute(
+            text("SELECT set_config('pg_trgm.similarity_threshold', :t, true)"),
+            {"t": str(threshold)},
+        )
+        rows = c.execute(
+            text(
+                "SELECT m.id, m.name, m.raw_active_ingredient, m.strength_text, m.dosage_form, "
+                "EXISTS (SELECT 1 FROM medication_active_ingredients mai "
+                "WHERE mai.medication_id = m.id) AS has_active_ingredients "
+                "FROM medications m WHERE m.deleted_at IS NULL "
+                "AND public.catalog_search_key(m.name) OPERATOR(extensions.%) CAST(:key AS text) "
+                "ORDER BY extensions.similarity(public.catalog_search_key(m.name), "
+                "CAST(:key AS text)) DESC, m.id "
+                "LIMIT :probe"
+            ),
+            {"key": query_key, "probe": limit + 1},
+        ).all()
+        found = tuple(
+            CatalogMedication(
+                row.id, row.name, row.strength_text, row.dosage_form,
+                row.has_active_ingredients, row.raw_active_ingredient,
+            )
+            for row in rows[:limit]
+        )
+        return found, len(rows) > limit
+
     def get_medication(
         self, uow: UnitOfWork, medication_id: int, *, include_deleted: bool = False
     ) -> CatalogMedication | None:
