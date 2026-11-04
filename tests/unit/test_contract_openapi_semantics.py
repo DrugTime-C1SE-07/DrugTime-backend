@@ -40,6 +40,7 @@ TARGET_OPERATIONS = (
     ("post", "/profile/conditions"),
     ("patch", "/profile/conditions/{id}"),
     ("delete", "/profile/conditions/{id}"),
+    ("post", "/catalog/medications/match"),
 )
 
 

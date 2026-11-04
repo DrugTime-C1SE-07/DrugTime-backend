@@ -7,6 +7,7 @@ from fastapi import APIRouter
 
 from drugtime.modules.catalog.adapters.inbound.conditions_http import router as _conditions_router
 from drugtime.modules.catalog.adapters.inbound.http import router as _catalog_router
+from drugtime.modules.catalog.adapters.inbound.ocr_match_http import router as _ocr_match_router
 from drugtime.modules.catalog.adapters.outbound.job_queue import enqueue_sync
 from drugtime.modules.catalog.adapters.outbound.sql_active_ingredients import SqlActiveIngredients
 from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
@@ -69,6 +70,7 @@ __all__ = [
 
 router = APIRouter()
 router.include_router(_catalog_router)
+router.include_router(_ocr_match_router)
 router.include_router(_conditions_router)
 
 
