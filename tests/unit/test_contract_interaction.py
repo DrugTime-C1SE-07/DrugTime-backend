@@ -28,6 +28,7 @@ OPERATIONS = [
     ("get", "/admin/drug-food-interactions/{id}/versions"),
     ("get", "/admin/drug-food-interaction-versions/{version_id}"),
     ("get", "/admin/active-ingredients"),
+    ("post", "/patients/{patient_id}/interaction-checks"),
 ]
 
 pytestmark = pytest.mark.skipif(not CONTRACT.exists(), reason="api_contract chưa checkout")

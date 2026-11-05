@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
@@ -15,6 +16,11 @@ from drugtime.modules.interaction.adapters.inbound.schemas import (
     DrugInteractionUpdate,
     DrugInteractionVersionList,
     ErrorDetail,
+    InsufficientDataMedication,
+    InteractionCheckRequest,
+    InteractionCheckResponse,
+    InteractionCheckStatus,
+    PatientInteractionFinding,
 )
 from drugtime.modules.interaction.adapters.outbound.other_modules import (
     CatalogIngredients,
@@ -23,6 +29,9 @@ from drugtime.modules.interaction.adapters.outbound.other_modules import (
 from drugtime.modules.interaction.adapters.outbound.sql_interaction_rules import (
     SqlDrugFoodInteractions,
     SqlDrugInteractions,
+)
+from drugtime.modules.interaction.application.check_patient_interactions import (
+    check_patient_interactions,
 )
 from drugtime.modules.interaction.application.manage_drug_food_interactions import (
     drug_food_interaction_service,
@@ -36,9 +45,68 @@ from drugtime.shared.db import SqlUnitOfWork, get_uow
 
 router = APIRouter(tags=["interaction"])
 
-# TODO: POST /patients/{id}/interaction-checks (DK3: access -> medication -> catalog -> evaluator)
-
 UowDep = Annotated[SqlUnitOfWork, Depends(get_uow)]
+
+@router.post(
+    "/patients/{patient_id}/interaction-checks",
+    response_model=InteractionCheckResponse,
+    responses={
+        401: {"model": ErrorDetail, "description": "Chưa xác thực"},
+        403: {"model": ErrorDetail, "description": "khong_co_quyen | consent_revoked"},
+        422: {"description": "ValidationError | ErrorDetail catalog_medication_not_found"},
+    },
+    operation_id="checkPatientInteractions",
+    summary="Kiểm tra tương tác thuốc của người bệnh (PB24, Task 4.02)",
+)
+def check_interactions_endpoint(
+    patient_id: UUID,
+    body: InteractionCheckRequest,
+    uow: UowDep,
+    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+) -> InteractionCheckResponse:
+    res = check_patient_interactions(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        patient_id=patient_id,
+        candidate_medication_id=body.candidate_medication_id,
+        candidate_dose_amount=body.candidate_dose_amount,
+        candidate_dose_unit=body.candidate_dose_unit,
+        medication_ids=body.medication_ids,
+    )
+    return InteractionCheckResponse(
+        status=InteractionCheckStatus(res.status.value),
+        interactions=[
+            PatientInteractionFinding(
+                ingredient_a_id=f.ingredient_a_id,
+                ingredient_a_name=f.ingredient_a_name,
+                ingredient_b_id=f.ingredient_b_id,
+                ingredient_b_name=f.ingredient_b_name,
+                medication_a_id=f.medication_a_id,
+                medication_a_name=f.medication_a_name,
+                medication_b_id=f.medication_b_id,
+                medication_b_name=f.medication_b_name,
+                severity_level=f.severity_level,
+                interaction_type=f.interaction_type,
+                handling_type=f.handling_type,
+                min_interval_hours=f.min_interval_hours,
+                description=f.description,
+                warning_message=f.warning_message,
+                source=f.source,
+            )
+            for f in res.interactions
+        ],
+        insufficient_data_medications=[
+            InsufficientDataMedication(
+                medication_id=m.medication_id,
+                medication_name=m.medication_name,
+                reason=m.reason,
+            )
+            for m in res.insufficient_data_medications
+        ],
+        disclaimer=res.disclaimer,
+    )
+
 AdminDep = Annotated[identity.CurrentUser, Depends(identity.require_admin)]
 Severity = Annotated[int | None, Query(ge=1, le=4)]
 Skip = Annotated[int, Query(ge=0)]

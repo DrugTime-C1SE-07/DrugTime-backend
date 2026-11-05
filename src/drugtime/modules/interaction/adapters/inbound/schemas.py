@@ -5,6 +5,7 @@ gửi được `verification_status` hay đổi cặp hoạt chất khi sửa.
 """
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, ClassVar, Literal
 from uuid import UUID
 
@@ -327,3 +328,55 @@ class DrugFoodInteractionVersionList(BaseModel):
 
 class ErrorDetail(BaseModel):
     detail: str
+
+
+class InteractionCheckStatus(StrEnum):
+    FOUND = "co_tuong_tac"
+    NONE_FOUND = "da_kiem_tra_khong_thay"
+    INSUFFICIENT_DATA = "khong_du_du_lieu"
+
+
+class PatientInteractionFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredient_a_id: int
+    ingredient_a_name: str
+    ingredient_b_id: int | None = None
+    ingredient_b_name: str
+    medication_a_id: int | None = None
+    medication_a_name: str | None = None
+    medication_b_id: int | None = None
+    medication_b_name: str | None = None
+    severity_level: SeverityLevel
+    interaction_type: InteractionType
+    handling_type: HandlingType
+    min_interval_hours: float | None = None
+    description: str
+    warning_message: str
+    source: str
+
+
+class InsufficientDataMedication(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    medication_id: int
+    medication_name: str
+    reason: str
+
+
+class InteractionCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_medication_id: int | None = None
+    candidate_dose_amount: float | None = None
+    candidate_dose_unit: str | None = None
+    medication_ids: list[int] | None = None
+
+
+class InteractionCheckResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: InteractionCheckStatus
+    interactions: list[PatientInteractionFinding]
+    insufficient_data_medications: list[InsufficientDataMedication]
+    disclaimer: str
