@@ -44,6 +44,22 @@ class Settings(BaseSettings):
     link_reject_streak_limit: int = 5
     link_reject_cooldown_hours: int = 24
 
+    # Khớp văn bản OCR với danh mục (task 4.13, B4/B5/B7). Đổi cần khởi động lại;
+    # giá trị sẽ được hiệu chỉnh ở 4.17. Kiểm tra ràng buộc ở catalog MatchPolicy.
+    ocr_match_threshold: float = 0.7
+    ocr_match_low_threshold: float = 0.4
+    ocr_match_margin: float = 0.05
+    ocr_match_default_limit: int = 5
+    ocr_match_weight_name: float = 0.5
+    ocr_match_weight_strength: float = 0.3
+    ocr_match_weight_ingredient: float = 0.15
+    ocr_match_weight_vote: float = 0.05
+    ocr_match_fuzzy_similarity: float = 0.3
+    ocr_match_fuzzy_limit: int = 50
+    # R2 (03-plan §1): an OCR line this similar to a candidate's active ingredient text is an
+    # ingredient line, not a brand line.
+    ocr_match_ingredient_line_similarity: float = 0.6
+
     timezone: str = "Asia/Ho_Chi_Minh"
     tick_interval_seconds: int = 900
     missed_dose_grace_minutes: int = 120
