@@ -1,8 +1,10 @@
 """Unit tests cho endpoint POST /patients/{patient_id}/interaction-checks (PB24, Task 4.02)."""
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from drugtime.main import create_app
@@ -24,6 +26,22 @@ APP_SERVICE = "drugtime.modules.interaction.application.check_patient_interactio
 
 def _fake_uow():
     yield MagicMock()
+
+
+@pytest.fixture(autouse=True)
+def uow_box():
+    """Route mở `unit_of_work()` trong handler (task 4.05, AC24); thay bằng uow giả để test không
+    chạm DB. Test nào cần uow riêng thì gán `uow_box["uow"]`."""
+    box = {"uow": MagicMock(), "events": []}
+
+    @contextmanager
+    def fake_unit_of_work():
+        box["events"].append("enter")
+        yield box["uow"]
+        box["events"].append("exit")
+
+    with patch(f"{HTTP}.unit_of_work", fake_unit_of_work):
+        yield box
 
 
 def _client(user=None):
@@ -345,7 +363,7 @@ def test_interaction_checks_with_dose_threshold():
         assert data_missing["interactions"][0]["severity_level"] == 2
 
 
-def test_interaction_checks_preserves_existing_medication_doses_with_medication_ids():
+def test_interaction_checks_preserves_existing_medication_doses_with_medication_ids(uow_box):
     patient_id = uuid4()
     caller = identity.CurrentUser(id=patient_id, is_admin=False)
 
@@ -355,6 +373,7 @@ def test_interaction_checks_preserves_existing_medication_doses_with_medication_
     mock_row.medication_id = 200
     mock_row.quantity_per_dose = 2.0
     fake_uow.connection.execute.return_value.all.return_value = [mock_row]
+    uow_box["uow"] = fake_uow
 
     def _custom_fake_uow():
         yield fake_uow
@@ -498,3 +517,77 @@ def test_interaction_checks_mixed_response():
 
 
 
+
+
+def test_authorize_uses_audit_self__AC22():
+    """Task 4.05 (G15): người bệnh tự kiểm tra cũng ghi access_logs."""
+    from drugtime.modules.access.domain.rules import Action, Scope
+
+    caller = identity.CurrentUser(id=uuid4(), is_admin=False)
+    client = _client(user=caller)
+    with patch(f"{APP_SERVICE}.access.authorize") as authorize, patch(
+        f"{APP_SERVICE}.SqlDrugInteractions"
+    ):
+        resp = client.post(f"/patients/{caller.id}/interaction-checks", json={})
+    assert resp.status_code == 200, resp.text
+    kwargs = authorize.call_args.kwargs
+    assert kwargs["audit_self"] is True
+    assert kwargs["scope"] is Scope.INTERACTIONS and kwargs["action"] is Action.READ
+    assert kwargs["patient_id"] == caller.id
+
+
+def test_response_built_inside_unit_of_work__AC24(uow_box):
+    """Task 4.05 (AC24): use case chạy và response được dựng trước khi transaction thoát, nên
+    dòng access_logs commit xong (hoặc commit lỗi thành 500) trước khi dữ liệu rời server."""
+    from fastapi.responses import JSONResponse
+
+    caller = identity.CurrentUser(id=uuid4(), is_admin=False)
+    client = _client(user=caller)
+    events = uow_box["events"]
+    result = MagicMock(
+        status=MagicMock(value="da_kiem_tra_khong_thay"),
+        interactions=(),
+        insufficient_data_medications=(),
+        disclaimer=NFR03_DISCLAIMER,
+    )
+
+    def use_case(uow, **kwargs):
+        assert uow is uow_box["uow"]
+        events.append("use_case")
+        return result
+
+    def response(*args, **kwargs):
+        events.append("response")
+        return JSONResponse(*args, **kwargs)
+
+    with patch(f"{HTTP}.check_patient_interactions", side_effect=use_case), patch(
+        f"{HTTP}.JSONResponse", side_effect=response
+    ):
+        resp = client.post(f"/patients/{caller.id}/interaction-checks", json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["disclaimer"] == NFR03_DISCLAIMER
+    assert events == ["enter", "use_case", "response", "exit"]
+
+
+def test_commit_failure_returns_500_without_data__AC24():
+    """Thoát transaction lỗi (commit hỏng) → 500, không có dữ liệu trong body."""
+    caller = identity.CurrentUser(id=uuid4(), is_admin=False)
+    client = TestClient(_client(user=caller).app, raise_server_exceptions=False)
+
+    @contextmanager
+    def failing_unit_of_work():
+        yield MagicMock()
+        raise RuntimeError("commit failed")
+
+    result = MagicMock(
+        status=MagicMock(value="da_kiem_tra_khong_thay"),
+        interactions=(),
+        insufficient_data_medications=(),
+        disclaimer=NFR03_DISCLAIMER,
+    )
+    with patch(f"{HTTP}.unit_of_work", failing_unit_of_work), patch(
+        f"{HTTP}.check_patient_interactions", return_value=result
+    ):
+        resp = client.post(f"/patients/{caller.id}/interaction-checks", json={})
+    assert resp.status_code == 500
+    assert "disclaimer" not in resp.text

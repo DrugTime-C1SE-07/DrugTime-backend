@@ -318,6 +318,18 @@ class SqlDrugFoodInteractions(_SqlRuleTable):
             for r in rows
         ]
 
+    def active_rules_for_ingredients(
+        self, uow: UnitOfWork, ingredient_ids: list[int]
+    ) -> list[RuleRecord[DrugFoodInteractionContent]]:
+        """Phiên bản hiện hành, chưa xoá của mọi quy tắc thuộc các hoạt chất này (task 4.05)."""
+        if not ingredient_ids:
+            return []
+        cond = (
+            "t.superseded_at IS NULL AND t.deleted_at IS NULL AND "
+            "t.active_ingredient_id = ANY(:ids)"
+        )
+        return self._select(uow, cond, {"ids": ingredient_ids}, "ORDER BY t.id")
+
     def insert(
         self,
         uow: UnitOfWork,

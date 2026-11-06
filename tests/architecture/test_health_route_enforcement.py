@@ -17,6 +17,17 @@ PROTECTED_HEALTH_ROUTES = {
     ("GET", "/adherence"): ("lich_su_tuan_thu", "getAdherenceHistory", True),
     ("POST", "/doses/batch"): ("lich_su_tuan_thu", "confirmDoseBatch", False),
     ("POST", "/doses/sync-checkpoints"): ("lich_su_tuan_thu", "recordDoseSyncCheckpoint", False),
+    # Task 4.05: tra cứu thực phẩm; kiểm tra thuốc-thuốc 4.02 được đăng ký bổ sung (G15).
+    ("GET", "/patients/{patient_id}/food-interactions"): (
+        "canh_bao_tuong_tac",
+        "listPatientFoodInteractions",
+        True,
+    ),
+    ("POST", "/patients/{patient_id}/interaction-checks"): (
+        "canh_bao_tuong_tac",
+        "checkPatientInteractions",
+        True,
+    ),
 }
 
 

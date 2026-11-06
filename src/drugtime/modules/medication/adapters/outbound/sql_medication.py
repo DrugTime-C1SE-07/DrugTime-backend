@@ -11,6 +11,7 @@ from drugtime.modules.medication.domain.user_medication import (
     IntakeTiming,
     MedicationState,
     NewMedication,
+    PatientMedicationRef,
     PatientScheduleRecord,
     PendingClosed,
     ScheduleView,
@@ -197,6 +198,30 @@ class SqlMedication:
             {"u": user_id},
         )
         return [r.id for r in rows]
+
+    def medication_refs(self, uow: UnitOfWork, user_id: UUID) -> list[PatientMedicationRef]:
+        """Thuốc đang dùng (chưa xoá, chưa ngừng) của người bệnh, id tăng dần (task 4.05)."""
+        rows = uow.connection.execute(
+            text(
+                "SELECT id, medication_id FROM user_medications WHERE user_id = :u "
+                "AND deleted_at IS NULL AND ended_at IS NULL ORDER BY id"
+            ),
+            {"u": user_id},
+        )
+        return [PatientMedicationRef(r.id, r.medication_id, True) for r in rows]
+
+    def medication_ref(
+        self, uow: UnitOfWork, user_id: UUID, user_medication_id: int
+    ) -> PatientMedicationRef | None:
+        """Một thuốc chưa xoá của đúng người bệnh này, kể cả đã ngừng (task 4.05)."""
+        row = uow.connection.execute(
+            text(
+                "SELECT id, medication_id, ended_at IS NULL AS active FROM user_medications "
+                "WHERE id = :id AND user_id = :u AND deleted_at IS NULL"
+            ),
+            {"id": user_medication_id, "u": user_id},
+        ).first()
+        return None if row is None else PatientMedicationRef(row.id, row.medication_id, row.active)
 
     def default_prescription(self, uow: UnitOfWork, user_id: UUID) -> int:
         c = uow.connection
