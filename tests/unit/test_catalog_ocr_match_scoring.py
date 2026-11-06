@@ -11,7 +11,10 @@ import pytest
 
 from drugtime.modules.catalog.application.match_ocr_text import match_ocr_text
 from drugtime.modules.catalog.application.normalize_ocr import normalize_key, normalize_ocr_text
-from drugtime.modules.catalog.application.score_ocr_matches import score_ocr_matches
+from drugtime.modules.catalog.application.score_ocr_matches import (
+    catalog_strength,
+    score_ocr_matches,
+)
 from drugtime.modules.catalog.domain.catalog_index import (
     CatalogHit,
     CatalogQueryResult,
@@ -43,11 +46,14 @@ def med(id_, name, strength="500 mg", ingredient=None, form="Viên nén", has_in
 
 
 class FakeReader:
-    def __init__(self, catalog, *, aliases=None, truncate_kinds=(), fuzzy_truncated=False):
+    def __init__(
+        self, catalog, *, aliases=None, truncate_kinds=(), fuzzy_truncated=False, probe=None
+    ):
         self.catalog = catalog
         self.aliases = aliases or {}  # alias text -> medication ids
         self.truncate_kinds = set(truncate_kinds)
         self.fuzzy_truncated = fuzzy_truncated
+        self.probe = probe  # like sql_catalog: ORDER BY id LIMIT probe, truncated beyond it
         self.fuzzy_calls = []
 
     def find_ocr_matches(self, uow, query_key, kind, *, limit=200):
@@ -67,7 +73,15 @@ class FakeReader:
                 for m in self.catalog
                 if m.id in ids
             ]
-        return CatalogQueryResult(tuple(hits), kind in self.truncate_kinds)
+        truncated = kind in self.truncate_kinds
+        if self.probe is not None:
+            kept = sorted({h.medication.id for h in hits})
+            truncated |= len(kept) > self.probe
+            allowed = set(kept[: self.probe])
+            hits = sorted(
+                (h for h in hits if h.medication.id in allowed), key=lambda h: h.medication.id
+            )
+        return CatalogQueryResult(tuple(hits), truncated)
 
     def find_fuzzy_name_matches(self, uow, query_key, *, threshold, limit):
         self.fuzzy_calls.append(query_key)
@@ -205,11 +219,22 @@ def test_catalog_strength_unparsable_not_matched():
     assert outcome.status == S.LOW_CONFIDENCE and ids(outcome) == [1]
 
 
-@pytest.mark.parametrize("kind", list(MatchKind))
-def test_truncated_lookup_never_matched__AC14(kind):
-    outcome, _ = run("Panadol Extra 500mg + 65mg", CATALOG, aliases=ALIASES, truncate_kinds={kind})
+def test_truncated_lookup_never_matched__AC14():
+    # adhoc-20261106 AC7: only a cut NAME lookup that brought the top candidate blocks.
+    outcome, _ = run(
+        "Panadol Extra 500mg + 65mg", CATALOG, aliases=ALIASES, truncate_kinds={MatchKind.NAME}
+    )
     assert outcome.status == S.LOW_CONFIDENCE
     assert R.TRUNCATED in outcome.reasons
+
+
+@pytest.mark.parametrize("kind", [MatchKind.RAW_ACTIVE_INGREDIENT, MatchKind.INGREDIENT_ALIAS])
+def test_truncated_ingredient_lookup_does_not_block__AC7(kind):
+    # Ingredient evidence is read from each candidate's own text (NN2), so a cut ingredient
+    # lookup hides no competitor of the top candidate.
+    outcome, _ = run("Panadol Extra 500mg + 65mg", CATALOG, aliases=ALIASES, truncate_kinds={kind})
+    assert outcome.status == S.MATCHED and outcome.preselected_id == 10
+    assert R.TRUNCATED not in outcome.reasons
 
 
 def test_truncated_fuzzy_never_matched__AC14():
@@ -414,3 +439,239 @@ def test_ingredient_line_threshold_from_settings__R2_AC10():
     strict = replace(POLICY, ingredient_line_similarity=1.0)
     outcome, _ = run("PANADOL EXTRA\nParacetamol 500mg Caffeine 65mg", catalog, policy=strict)
     assert outcome.status == S.LOW_CONFIDENCE and outcome.preselected_id is None
+
+
+# --- adhoc-20261106: brand vs active-ingredient evidence (NN1-NN5, YT1) ---
+# Fixtures put generic-named products ("Paracetamol 500mg") at lower ids than the brand and
+# cut retrieval with `probe`, like the real catalog (2 182 rows contain paracetamol).
+
+PARA = "Paracetamol"
+GENERICS = [
+    med(1, "PARACETAMOL 500mg", "500 mg", PARA),
+    med(2, "Paracetamol 500mg", "500 mg", PARA),
+    med(3, "Paracetamol", "500 mg", PARA),
+]
+EFFERALGAN = med(30, "Efferalgan", "500 mg", PARA)
+DECOLGEN_FORTE_INGR = "Paracetamol 500mg; Phenylephrine HCl 10mg; Chlorpheniramine maleate 2mg"
+STREPSILS_STRENGTH = "2,4 – Dichlorobenzyl Alcohol 1,2mg; Amylmetacresol 0,6mg"
+ATORIS_STRENGTH = "Atorvastatin (dưới dạng Atorvastatin calci 10,36mg) 10mg"
+TIFFY_DEY_INGR = "Paracetamol 500mg; Chlorpheniramin maleat 2mg; Phenylephrin HCl 10mg"
+
+
+def score_of(outcome, med_id):
+    return next(c.score for c in outcome.items if c.medication.id == med_id)
+
+
+def test_brand_line_beats_generic_named_with_probe_cut__AC1():
+    outcome, _ = run("EFFERALGAN\nParacetamol 500mg", [*GENERICS, EFFERALGAN], probe=3)
+    assert ids(outcome)[0] == 30
+    top = outcome.items[0].score
+    assert all(c.score < top for c in outcome.items[1:])
+
+
+def test_partial_ingredient_fragment_gives_no_name_credit__AC4():
+    outcome, _ = run(
+        "EFFERALGAN\nparaceta 500mg\naracetamol", [*GENERICS, EFFERALGAN], probe=3
+    )
+    assert ids(outcome)[0] == 30
+    # Strength + ingredient + vote only: a fragment of the ingredient is no name evidence.
+    assert all(score_of(outcome, g.id) <= 0.5 for g in GENERICS if g.id in ids(outcome))
+
+
+@pytest.mark.parametrize(
+    ("text", "catalog", "expected"),
+    [
+        (
+            "Strepsils\nOriginal",
+            [
+                med(1, "StrepsilsMaxpro", None, "Flurbiprofen"),
+                med(2, "Strepsils Cool", None, "Amylmetacresol"),
+                med(3, "Strepsils original", None, "Amylmetacresol"),
+            ],
+            3,
+        ),
+        (
+            "Decolgen\nForte\nParacetamol 500mg",
+            [
+                med(1, "Fortec", "10 mg", "Amlodipin"),
+                med(2, "Decolgen", None, "Paracetamol 500mg, Phenylephrin HCl 5mg"),
+                med(3, "Paracetamol", "500 mg", PARA),
+                med(4, "Decolgen Forte", None, DECOLGEN_FORTE_INGR),
+            ],
+            4,
+        ),
+    ],
+    ids=["strepsils", "decolgen"],
+)
+def test_two_line_brand_name_ranks_first__AC3(text, catalog, expected):
+    outcome, _ = run(text, catalog)
+    assert ids(outcome)[0] == expected
+
+
+@pytest.mark.parametrize(
+    ("brand", "ingredient"),
+    [("Tiffy Dey", TIFFY_DEY_INGR), ("Decolgen Forte", DECOLGEN_FORTE_INGR)],
+)
+def test_combination_with_null_strength_ranks_first__AC2(brand, ingredient):
+    catalog = [*GENERICS, med(40, brand, None, ingredient)]
+    text = (
+        f"{brand.upper()}\nParacetamol 500mg\nChlorpheniramine maleate 2mg\n"
+        "Phenylephrine HCl 10mg"
+    )
+    outcome, _ = run(text, catalog, probe=3)
+    assert ids(outcome)[0] == 40
+    # Generic explains 1 of 3 strengths: never the full strength weight (0.3).
+    for g in GENERICS:
+        if g.id in ids(outcome):
+            assert score_of(outcome, g.id) < POLICY.weight_strength + 0.15 + 0.05 + 1e-9
+
+
+def test_ingredient_only_combination_box__AC5():
+    catalog = [
+        med(1, "PARACETAMOL 500mg", "500 mg", PARA),
+        med(40, "Tiffy", None, "Chlorpheniramin maleat 2mg; Paracetamol 500mg"),
+    ]
+    outcome, _ = run("Paracetamol 500mg\nChlorpheniramin maleat 2mg", catalog)
+    assert outcome.status != S.MATCHED and outcome.preselected_id is None
+    # The single-ingredient product is listed below the combination, or not at all (< T_low).
+    assert ids(outcome)[0] == 40
+
+
+def test_ingredient_score_independent_of_probe_and_id_order__AC6():
+    text = "EFFERALGAN\nParacetamol 500mg"
+    full, _ = run(text, [*GENERICS, EFFERALGAN])
+    cut, _ = run(text, [*GENERICS, EFFERALGAN], probe=1)
+    first = med(0, "Efferalgan", "500 mg", PARA)
+    reordered, _ = run(text, [first, *GENERICS], probe=1)
+    assert score_of(full, 30) == score_of(cut, 30) == score_of(reordered, 0)
+
+
+@pytest.mark.parametrize(
+    ("strength_text", "ingredient", "expected"),
+    [
+        ("500 mg", DECOLGEN_FORTE_INGR, (frozenset({"500 mg"}), False)),
+        (None, DECOLGEN_FORTE_INGR, (frozenset({"500 mg", "10 mg", "2 mg"}), True)),
+        ("", "Paracetamol 500 mg, Phenylephrin HCl 5 mg", (frozenset({"500 mg", "5 mg"}), True)),
+        (
+            None,
+            "2,4 – Dichlorobenzyl Alcohol 1,2mg; Amylmetacresol 0,6mg",
+            (frozenset({"1.2 mg", "0.6 mg"}), True),
+        ),
+        (None, "Mỗi 5ml chứa: Paracetamol 120mg; Phenylephrin HCl 5mg", (None, False)),
+        (None, "Paracetamol, Codeine phosphate", (None, False)),
+        (None, None, (None, False)),
+        # C1′: strength_text readable only once split into components → derived
+        (STREPSILS_STRENGTH, None, (frozenset({"1.2 mg", "0.6 mg"}), True)),
+        # C6: a salt-equivalence note is dropped → derived
+        (ATORIS_STRENGTH, None, (frozenset({"10 mg"}), True)),
+        # Directly readable strength_text stays authoritative (4.13 unchanged)
+        ("500 mg + 65 mg", None, (frozenset({"500 mg", "65 mg"}), False)),
+        ("0,5 g", None, (frozenset({"500 mg"}), False)),
+        ("35 mg/5 ml", None, (frozenset({"35 mg/5 ml"}), False)),
+        ("Mỗi viên chứa paracetamol", DECOLGEN_FORTE_INGR, (None, False)),
+    ],
+)
+def test_catalog_strength_from_ingredient_text(strength_text, ingredient, expected):
+    assert catalog_strength(strength_text, ingredient) == expected
+
+
+def test_derived_strength_never_excludes_candidate():
+    catalog = [med(4, "Decolgen Forte", None, DECOLGEN_FORTE_INGR)]
+    outcome, _ = run("DECOLGEN FORTE\nChlorpheniramine maleate 2mg", catalog)
+    assert ids(outcome) == [4] and outcome.status != S.MATCHED
+
+
+METFORMIN_BRANDS = [
+    med(5, "Glucofast", "500 mg", "Metformin HCl"),
+    med(6, "Glucomin", "500 mg", "Metformin HCl"),
+]
+
+
+def test_brand_top_with_cut_ingredient_lookup_matched__AC7():
+    catalog = [med(1, "Metformin 500mg", "500 mg", "Metformin HCl"), *METFORMIN_BRANDS]
+    # probe=2 cuts the ingredient lookup of "metformin" (3 rows), never the brand's name.
+    outcome, _ = run("GLUCOFAST 500mg\nMetformin HCl 500mg", catalog, probe=2)
+    assert outcome.status == S.MATCHED and outcome.preselected_id == 5
+    assert R.TRUNCATED not in outcome.reasons
+
+
+def test_generic_top_with_cut_ingredient_lookup_blocked__AC7():
+    # C4: the brand line is unreadable ("APO1ETS" has no 4-letter run) and the brand of the
+    # same ingredient was cut from the lookup; never preselect the generic (QD-39).
+    catalog = [
+        med(1, "Clopidogrel 75 mg", "75 mg", "Clopidogrel"),
+        med(2, "Clopidogrel 75mg", "75 mg", "Clopidogrel"),
+        med(9, "Apolets", "75 mg", "Clopidogrel"),
+    ]
+    outcome, _ = run("APO1ETS\nClopidogrel 75mg", catalog, probe=2)
+    assert outcome.status == S.LOW_CONFIDENCE and outcome.preselected_id is None
+    assert R.TRUNCATED in outcome.reasons
+
+
+def test_truncated_name_key_of_top_still_blocks__AC7():
+    catalog = [
+        med(1, "Metformin 500mg", "500 mg", "Metformin HCl"),
+        med(2, "Metformin 500mg", "500 mg", "Metformin HCl"),
+        med(3, "Metformin 500mg", "500 mg", "Metformin HCl"),
+        *METFORMIN_BRANDS,
+    ]
+    outcome, _ = run("METFORMIN 500mg\nMetformin", catalog, probe=2)
+    assert outcome.status == S.LOW_CONFIDENCE and R.TRUNCATED in outcome.reasons
+
+
+def test_weak_tail_candidates_dropped__AC8():
+    catalog = [
+        med(1, "Cefuroxim", "500 mg", "Cefuroxim"),
+        med(2, "Cefuroxim axetil vien nen bao phim zinnat", None),
+    ]
+    outcome, _ = run("CEFUROXIM 500mg\nCefuroxim", catalog)
+    assert ids(outcome) == [1]
+    assert all(c.score >= POLICY.low_threshold for c in outcome.items)
+
+
+STREPSILS = [
+    med(1, "StrepsilsMaxpro", "Flurbiprofen 8,75mg", "Flurbiprofen"),
+    med(2, "Strepsils original", STREPSILS_STRENGTH, STREPSILS_STRENGTH),
+]
+
+
+def test_b2_credit_for_derived_strength__C1():
+    # No strength read: a derived single strength earns the B2 credit like strength_text.
+    outcome, _ = run("Strepsils\nOriginal", STREPSILS)
+    assert ids(outcome)[0] == 2
+    assert outcome.status != S.MATCHED  # derived strength never preselects (B3-7)
+
+
+def test_misread_strength_does_not_exclude_derived__C1prime():
+    # "1,2 mg" read as "2 mg": a strength readable only after normalisation never excludes.
+    outcome, _ = run("Strepsils Original\n2 mg", STREPSILS)
+    assert 2 in ids(outcome)
+
+
+def test_packaging_words_give_no_name_evidence__C2():
+    catalog = [
+        med(1, "Metformin 500mg", "500 mg", "Metformin HCl"),
+        med(7, "Levalox 500 mg Film-coated Tablets", "500 mg", "Levofloxacin"),
+        med(8, "Glumeform film coated tablets", "500 mg", "Metformin HCl"),
+    ]
+    outcome, _ = run("METFORMIN 500mg\n28 film-coated tablets", catalog)
+    assert ids(outcome)[0] == 1
+
+
+def test_weak_noise_line_does_not_trigger_brand_rule__C3():
+    catalog = [
+        med(1, "Atorvastatin 10mg", "10 mg", "Atorvastatin"),
+        med(3, "Atrox 10", "10 mg", "Atorvastatin 10mg"),
+    ]
+    # "ateris 10" is only 0.36 similar to "atrox 10": not strong brand evidence.
+    outcome, _ = run("Atorvastatin 10mg\nateris 10", catalog)
+    assert ids(outcome)[0] == 1
+
+
+def test_brand_with_salt_note_strength_ranks_first__C5_C6():
+    catalog = [
+        med(1, "Atorvastatin 10mg", "10 mg", "Atorvastatin"),
+        med(20, "Atoris 10mg", ATORIS_STRENGTH, ATORIS_STRENGTH),
+    ]
+    outcome, _ = run("ATORIS\nAtorvastatin 10mg\nator", catalog)
+    assert ids(outcome)[0] == 20
