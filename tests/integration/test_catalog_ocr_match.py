@@ -174,12 +174,17 @@ def test_newlines_preserved_votes__AC16(client, make, auth, db, tag):
     lines = [f"GLUCOPHAGE {tag}", "850mg", f"Glucophage {tag}", "HSD 12/2027"]
     lf = ok(match(client, headers, {"text": "\n".join(lines)}))
     crlf = ok(match(client, headers, {"text": "\r\n".join(lines)}))
-    joined = ok(match(client, headers, {"text": " ".join(lines)}))
     assert lf == crlf
     assert lf["status"] == "matched" and lf["preselected_id"] == mid
-    # On one line the expiry date pollutes the name key: line breaks reach 4.12 intact.
-    joined_score = next((i["score"] for i in joined["items"] if i["id"] == mid), 0.0)
-    assert joined_score < lf["items"][0]["score"]
+    # Line breaks reach 4.12 intact: the suggested query is the name line alone, while on
+    # one line the expiry date pollutes it. (adhoc-20261106: name scores are word coverage,
+    # so a score difference no longer shows the line breaks.)
+    unknown = [f"XYLOQUANT {tag}", "HSD 12/2027"]
+    for separator in ("\n", "\r\n"):
+        body = ok(match(client, headers, {"text": separator.join(unknown)}))
+        assert body["suggested_query"] == f"xyloquant {tag}"
+    joined = ok(match(client, headers, {"text": " ".join(unknown)}))
+    assert joined["suggested_query"] == f"xyloquant {tag} hsd 12/2027"
 
 
 def test_fuzzy_finds_misread_name__AC17(client, make, auth, db, tag):
@@ -222,3 +227,74 @@ def test_ingredient_line_does_not_preselect_other_product__D2(client, make, auth
     )
     assert not (body["status"] == "matched" and body["preselected_id"] == generic), body
     assert brand in item_ids(body) or body["status"] != "matched"
+
+
+# --- adhoc-20261106: brand vs active-ingredient evidence on PostgreSQL ---
+
+
+def test_brand_ranks_above_generic_named_with_probe_cut__AC1(client, make, auth, db, tag):
+    """201 generic-named rows with lower ids push the brand out of the ingredient lookup
+    (LIMIT 200 by id, sql_catalog.find_ocr_matches); the brand must still rank first."""
+    db.execute(
+        text(
+            "INSERT INTO medications (name, raw_active_ingredient, strength_text, dosage_form) "
+            "SELECT :n, :ai, '500 mg', 'Viên nén' FROM generate_series(1, 201)"
+        ),
+        {"n": f"Paracetamol{tag} 500mg", "ai": f"Paracetamol{tag}"},
+    )
+    brand = add_med(db, make, f"Efferalgan{tag}", "500 mg", ingredient=f"Paracetamol{tag}")
+    body = ok(
+        match(
+            client,
+            auth(make.user()),
+            {"text": f"EFFERALGAN{tag.upper()}\nParacetamol{tag} 500mg"},
+        )
+    )
+    assert body["items"][0]["id"] == brand, body
+
+
+def test_combination_null_strength_brand_first__AC2(client, make, auth, db, tag):
+    brand = add_med(
+        db, make, f"Tiffy Dey{tag}", None,
+        ingredient=f"Paracetamol{tag} 500mg; Chlorpheniramin{tag} 2mg",
+    )
+    generic = add_med(db, make, f"Paracetamol{tag} 500mg", "500 mg", ingredient=f"Paracetamol{tag}")
+    body = ok(
+        match(
+            client,
+            auth(make.user()),
+            {
+                "text": f"TIFFY DEY{tag.upper()}\nParacetamol{tag} 500mg\n"
+                f"Chlorpheniramin{tag} 2mg"
+            },
+        )
+    )
+    assert body["items"][0]["id"] == brand, body
+    assert body["preselected_id"] != generic
+
+
+def test_two_line_brand_name__AC3(client, make, auth, db, tag):
+    # Both words carry the tag: "original" alone hits unrelated catalog rows.
+    original = add_med(db, make, f"Strepsils{tag} Original{tag}", None, ingredient=None)
+    add_med(db, make, f"Strepsils{tag} Cool{tag}", None, ingredient=None)
+    body = ok(match(client, auth(make.user()), {"text": f"Strepsils{tag}\nOriginal{tag}"}))
+    assert body["items"][0]["id"] == original, body
+
+
+def test_generic_top_with_cut_ingredient_lookup_not_matched__AC7(client, make, auth, db, tag):
+    """C4 on PostgreSQL: the brand line is unreadable ("APO1ETS…" has no 4-letter run) and
+    201 generic rows push the brand of the same ingredient out of the ingredient lookup.
+    The generic must never be preselected (QD-39)."""
+    db.execute(
+        text(
+            "INSERT INTO medications (name, raw_active_ingredient, strength_text, dosage_form) "
+            "SELECT :n, :ai, '75 mg', 'Viên nén' FROM generate_series(1, 201)"
+        ),
+        {"n": f"Clopidogrel{tag} 75mg", "ai": f"Clopidogrel{tag}"},
+    )
+    add_med(db, make, f"Apolets{tag}", "75 mg", ingredient=f"Clopidogrel{tag}")
+    body = ok(
+        match(client, auth(make.user()), {"text": f"APO1ETS 75\nClopidogrel{tag} 75mg"})
+    )
+    assert body["status"] != "matched" and body["preselected_id"] is None, body
+    assert "truncated" in body["reasons"]
