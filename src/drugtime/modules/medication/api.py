@@ -15,15 +15,19 @@ from drugtime.modules.medication.adapters.outbound.other_modules import CatalogA
 from drugtime.modules.medication.adapters.outbound.sql_medication import SqlMedication
 from drugtime.modules.medication.application.ports import RecordedDoses
 from drugtime.modules.medication.domain.schedule import DoseOccurrence
+from drugtime.modules.medication.domain.user_medication import PatientMedicationRef
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = [
     "alert_context",
     "DoseOccurrence",
+    "PatientMedicationRef",
     "RecordedDoses",
     "configure",
     "eraser",
     "occurrences_between",
+    "patient_medication_ref",
+    "patient_medication_refs",
     "router",
     "schedule_ids_of",
     "schedule_owner",
@@ -62,6 +66,18 @@ def schedule_ids_of(uow: UnitOfWork, user_id: UUID) -> list[int]:
 
 def occurrences_between(uow: UnitOfWork, start: datetime, end: datetime) -> list[DoseOccurrence]:
     return SqlMedication().occurrences_between(uow, start, end)
+
+
+def patient_medication_refs(uow: UnitOfWork, patient_id: UUID) -> list[PatientMedicationRef]:
+    """Thuốc đang dùng của người bệnh, id tăng dần. Người gọi phải kiểm quyền trước."""
+    return SqlMedication().medication_refs(uow, patient_id)
+
+
+def patient_medication_ref(
+    uow: UnitOfWork, patient_id: UUID, user_medication_id: int
+) -> PatientMedicationRef | None:
+    """Thuốc chưa xoá của đúng người bệnh, kể cả đã ngừng; None nếu không thuộc người này."""
+    return SqlMedication().medication_ref(uow, patient_id, user_medication_id)
 
 
 class _Eraser:

@@ -1,7 +1,10 @@
+from dataclasses import asdict
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer
 
 from drugtime.modules.identity import api as identity
 from drugtime.modules.interaction.adapters.inbound.schemas import (
@@ -16,6 +19,7 @@ from drugtime.modules.interaction.adapters.inbound.schemas import (
     DrugInteractionUpdate,
     DrugInteractionVersionList,
     ErrorDetail,
+    FoodInteractionReport,
     InsufficientDataMedication,
     InteractionCheckRequest,
     InteractionCheckResponse,
@@ -24,7 +28,9 @@ from drugtime.modules.interaction.adapters.inbound.schemas import (
 )
 from drugtime.modules.interaction.adapters.outbound.other_modules import (
     CatalogIngredients,
+    CatalogMedications,
     IdentityAdmins,
+    PatientMedications,
 )
 from drugtime.modules.interaction.adapters.outbound.sql_interaction_rules import (
     SqlDrugFoodInteractions,
@@ -32,6 +38,9 @@ from drugtime.modules.interaction.adapters.outbound.sql_interaction_rules import
 )
 from drugtime.modules.interaction.application.check_patient_interactions import (
     check_patient_interactions,
+)
+from drugtime.modules.interaction.application.lookup_food_interactions import (
+    lookup_food_interactions,
 )
 from drugtime.modules.interaction.application.manage_drug_food_interactions import (
     drug_food_interaction_service,
@@ -41,11 +50,18 @@ from drugtime.modules.interaction.application.manage_drug_interactions import (
 )
 from drugtime.modules.interaction.application.manage_rules import ListQuery
 from drugtime.modules.interaction.domain.catalog_rules import InteractionType
-from drugtime.shared.db import SqlUnitOfWork, get_uow
+from drugtime.shared.clock import now
+from drugtime.shared.db import SqlUnitOfWork, get_uow, unit_of_work
 
 router = APIRouter(tags=["interaction"])
 
 UowDep = Annotated[SqlUnitOfWork, Depends(get_uow)]
+
+# Đăng ký với tests/architecture/test_health_route_enforcement.py (task 4.05, G15).
+_HEALTH_EXTRA = {"x-health-scope": "canh_bao_tuong_tac", "x-health-audit-self": True}
+# Chỉ để OpenAPI khai báo `security: bearerAuth`; xác thực thật ở identity.current_user.
+_BEARER = Depends(HTTPBearer(auto_error=False, scheme_name="bearerAuth", bearerFormat="JWT"))
+_NO_STORE = {"Cache-Control": {"schema": {"type": "string", "const": "no-store"}}}
 
 @router.post(
     "/patients/{patient_id}/interaction-checks",
@@ -57,23 +73,33 @@ UowDep = Annotated[SqlUnitOfWork, Depends(get_uow)]
     },
     operation_id="checkPatientInteractions",
     summary="Kiểm tra tương tác thuốc của người bệnh (PB24, Task 4.02)",
+    openapi_extra=_HEALTH_EXTRA,
+    dependencies=[_BEARER],
 )
 def check_interactions_endpoint(
     patient_id: UUID,
     body: InteractionCheckRequest,
-    uow: UowDep,
     user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
-) -> InteractionCheckResponse:
-    res = check_patient_interactions(
-        uow,
-        caller_id=user.id,
-        caller_is_admin=user.is_admin,
-        patient_id=patient_id,
-        candidate_medication_id=body.candidate_medication_id,
-        candidate_dose_amount=body.candidate_dose_amount,
-        candidate_dose_unit=body.candidate_dose_unit,
-        medication_ids=body.medication_ids,
-    )
+) -> JSONResponse:
+    # Fail-closed (task 4.05, AC24): dựng response trong transaction, nên dòng access_logs
+    # `allowed` commit xong mới trả dữ liệu. `Depends(get_uow)` commit sau khi đã gửi response.
+    with unit_of_work() as uow:
+        res = check_patient_interactions(
+            uow,
+            caller_id=user.id,
+            caller_is_admin=user.is_admin,
+            patient_id=patient_id,
+            candidate_medication_id=body.candidate_medication_id,
+            candidate_dose_amount=body.candidate_dose_amount,
+            candidate_dose_unit=body.candidate_dose_unit,
+            medication_ids=body.medication_ids,
+        )
+        payload = _interaction_check_response(res).model_dump(mode="json")
+        response = JSONResponse(payload)
+    return response
+
+
+def _interaction_check_response(res) -> InteractionCheckResponse:
     return InteractionCheckResponse(
         status=InteractionCheckStatus(res.status.value),
         interactions=[
@@ -106,6 +132,53 @@ def check_interactions_endpoint(
         ],
         disclaimer=res.disclaimer,
     )
+
+
+@router.get(
+    "/patients/{patient_id}/food-interactions",
+    response_model=FoodInteractionReport,
+    responses={
+        200: {"headers": _NO_STORE},
+        401: {"model": ErrorDetail, "description": "Chưa xác thực"},
+        403: {"model": ErrorDetail, "description": "khong_co_quyen | consent_revoked"},
+        404: {"model": ErrorDetail, "description": "user_medication_not_found"},
+    },
+    operation_id="listPatientFoodInteractions",
+    summary="Tra cứu thực phẩm cần tránh cho thuốc của người bệnh (PB25, Task 4.05)",
+    openapi_extra=_HEALTH_EXTRA,
+    dependencies=[_BEARER],
+)
+def list_food_interactions_endpoint(
+    patient_id: UUID,
+    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    user_medication_id: Annotated[int | None, Query(ge=1)] = None,
+) -> JSONResponse:
+    as_of = now()
+    # Dựng response trong transaction: dòng access_logs `allowed` commit trước khi trả dữ liệu.
+    with unit_of_work() as uow:
+        report = lookup_food_interactions(
+            uow,
+            caller_id=user.id,
+            caller_is_admin=user.is_admin,
+            patient_id=patient_id,
+            user_medication_id=user_medication_id,
+            medications=PatientMedications(),
+            catalog=CatalogMedications(),
+            ingredients=CatalogIngredients(),
+            rules=SqlDrugFoodInteractions(),
+        )
+        payload = FoodInteractionReport.model_validate(
+            {
+                "patient_id": patient_id,
+                "as_of": as_of,
+                "status": report.status.value,
+                "medications": [asdict(m) for m in report.medications],
+                "disclaimer": report.disclaimer,
+            }
+        ).model_dump(mode="json")
+        response = JSONResponse(payload, headers={"Cache-Control": "no-store"})
+    return response
+
 
 AdminDep = Annotated[identity.CurrentUser, Depends(identity.require_admin)]
 Severity = Annotated[int | None, Query(ge=1, le=4)]

@@ -29,6 +29,7 @@ OPERATIONS = [
     ("get", "/admin/drug-food-interaction-versions/{version_id}"),
     ("get", "/admin/active-ingredients"),
     ("post", "/patients/{patient_id}/interaction-checks"),
+    ("get", "/patients/{patient_id}/food-interactions"),  # task 4.05
 ]
 
 pytestmark = pytest.mark.skipif(not CONTRACT.exists(), reason="api_contract chưa checkout")
@@ -137,3 +138,27 @@ def test_severity_scale_documented(specs):
         "phối hợp nguy hiểm",
     ):
         assert label in severity["description"]
+
+
+HEALTH_OPERATIONS = [
+    ("get", "/patients/{patient_id}/food-interactions"),
+    ("post", "/patients/{patient_id}/interaction-checks"),
+]
+
+
+@pytest.mark.parametrize("method, path", HEALTH_OPERATIONS)
+def test_health_extensions_match_contract(specs, method, path):
+    """Task 4.05 (Q10): contract viết tay và app khai báo cùng x-health-*."""
+    contract, app = specs
+    c_op, a_op = contract["paths"][path][method], app["paths"][path][method]
+    for key in ("x-health-scope", "x-health-audit-self"):
+        assert c_op[key] == a_op[key], (method, path, key)
+    assert c_op["security"] == a_op["security"] == [{"bearerAuth": []}]
+
+
+def test_food_lookup_200_declares_no_store(specs):
+    contract, app = specs
+    path = "/patients/{patient_id}/food-interactions"
+    for spec in (contract, app):
+        header = spec["paths"][path]["get"]["responses"]["200"]["headers"]["Cache-Control"]
+        assert header["schema"]["const"] == "no-store"

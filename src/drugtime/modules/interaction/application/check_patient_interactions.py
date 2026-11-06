@@ -34,7 +34,8 @@ def check_patient_interactions(
     medication_ids: list[int] | None = None,
 ) -> EvaluationResult:
     """Kiểm tra tương tác thuốc giữa ứng viên mới và thuốc đang dùng của bệnh nhân."""
-    # 1. Phân quyền DK3: Scope.INTERACTIONS, Action.READ
+    # 1. Phân quyền DK3: Scope.INTERACTIONS, Action.READ. Ghi access_logs cả khi người bệnh
+    # tự kiểm tra (task 4.05, G15).
     access.authorize(
         uow,
         caller_id=caller_id,
@@ -42,6 +43,7 @@ def check_patient_interactions(
         patient_id=patient_id,
         scope=Scope.INTERACTIONS,
         action=Action.READ,
+        audit_self=True,
     )
 
     # 2. Thu thập danh sách thuốc đang dùng của bệnh nhân từ server DB và chuẩn bị liều lượng

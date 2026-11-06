@@ -8,8 +8,16 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, ClassVar, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from drugtime.modules.interaction.application.manage_rules import RuleView
 from drugtime.modules.interaction.domain.catalog_rules import (
@@ -380,3 +388,66 @@ class InteractionCheckResponse(BaseModel):
     interactions: list[PatientInteractionFinding]
     insufficient_data_medications: list[InsufficientDataMedication]
     disclaimer: str
+
+
+# ---------------------------------------------------------------- tra cứu thực phẩm (task 4.05)
+
+_VIETNAM = ZoneInfo("Asia/Ho_Chi_Minh")
+
+
+class FoodInteractionStatus(StrEnum):
+    FOUND = "co_tuong_tac"
+    NONE_FOUND = "da_kiem_tra_khong_thay"
+    INSUFFICIENT_DATA = "khong_du_du_lieu"
+
+
+class FoodInteractionMedicationSummary(BaseModel):
+    """Cùng shape với `CatalogMedicationSummary` của contract. Đặt tên khác để không trùng tên
+    component với lớp của module medication khi FastAPI sinh OpenAPI."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    name: str
+    active_ingredient: str | None
+    strength_text: str | None
+    dosage_form: str | None
+
+
+class FoodInteractionWarning(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rule_id: int
+    version_id: int
+    ingredient: ActiveIngredientRef
+    food_to_avoid: str
+    severity_level: SeverityLevel
+    reason: str
+    source: str
+
+
+class FoodInteractionMedicationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    user_medication_id: int
+    medication: FoodInteractionMedicationSummary
+    is_active: bool
+    status: FoodInteractionStatus
+    ingredients: list[ActiveIngredientRef]
+    warnings: list[FoodInteractionWarning]
+
+
+class FoodInteractionReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    patient_id: UUID
+    as_of: datetime
+    status: FoodInteractionStatus
+    medications: list[FoodInteractionMedicationResult]
+    disclaimer: Annotated[str, Field(min_length=1)]
+
+    @field_validator("as_of")
+    @classmethod
+    def vietnam_timestamp(cls, value: datetime) -> datetime:
+        # Múi giờ cố định của dự án (bất biến 7); contract hứa offset +07:00.
+        return value.astimezone(_VIETNAM)

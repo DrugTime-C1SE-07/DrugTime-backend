@@ -132,6 +132,15 @@ class MedicationInfo:
 
 
 @dataclass(frozen=True)
+class PatientMedicationRef:
+    """Thuốc chưa xoá của người bệnh, tối thiểu cho module khác (task 4.05)."""
+
+    user_medication_id: int
+    medication_id: int
+    is_active: bool  # chưa ngừng (ended_at IS NULL)
+
+
+@dataclass(frozen=True)
 class UserMedicationRecord:
     id: int
     user_id: UUID
