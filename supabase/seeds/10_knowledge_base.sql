@@ -6,14 +6,14 @@
 -- Chỉ chứa quy tắc verification_status = 'da_xac_minh' (QD-37).
 -- Nạp bởi `supabase db reset`.
 -- count disease_groups=2
--- count active_ingredients=52
--- count ingredient_aliases=55
+-- count active_ingredients=53
+-- count ingredient_aliases=57
 -- count active_ingredient_disease_groups=29
 -- count drug_classes=0
 -- count active_ingredient_drug_classes=0
 -- count medications=59
 -- count medication_active_ingredients=66
--- count active_ingredient_interactions=69
+-- count active_ingredient_interactions=70
 -- count active_ingredient_interaction_dose_thresholds=16
 -- count drug_food_interactions=49
 
@@ -77,6 +77,7 @@ FROM (VALUES
     ('Sitagliptin', 'dieu_tri_benh_nen', 'Thuốc chống đái tháo đường, nhóm ức chế dipeptidyl peptidase-4', 'A10BH01', 'Dược thư Quốc gia Việt Nam 2018'),
     ('Spironolacton', 'dieu_tri_benh_nen', 'Thuốc lợi tiểu kháng aldosteron', 'C03DA01', 'Dược thư Quốc gia Việt Nam 2018'),
     ('Tobramycin', 'trieu_chung_cap_tinh', 'Kháng sinh nhóm aminoglycosid', 'J01GB01', 'Dược thư Quốc gia Việt Nam 2018'),
+    ('Thuốc cản quang chứa Iod', 'trieu_chung_cap_tinh', 'Thuốc cản quang chứa iod dùng trong chẩn đoán X-quang', 'V08AB', 'Dược thư Quốc gia Việt Nam 2018 & Tương tác thuốc 2015'),
     ('Valsartan', 'dieu_tri_benh_nen', 'Đối kháng thụ thể angiotensin II', 'C09CA03', 'Dược thư Quốc gia Việt Nam 2018'),
     ('Warfarin', 'dieu_tri_benh_nen', 'Thuốc chống đông máu loại kháng vitamin K', 'B01AA03', 'Dược thư Quốc gia Việt Nam 2018'),
     ('Xylometazolin', 'trieu_chung_cap_tinh', 'Thuốc chủ vận α₁-adrenergic', 'R01AA07', 'Dược thư Quốc gia Việt Nam 2018')
@@ -138,6 +139,8 @@ FROM (VALUES
     ('Sitagliptin', 'Sitagliptin'),
     ('Spironolacton', 'Spironolactone'),
     ('Tobramycin', 'Tobramycin'),
+    ('Thuốc cản quang chứa Iod', 'Thuốc cản quang chứa Iod'),
+    ('Thuốc cản quang chứa Iod', 'Thuốc cản quang có iod'),
     ('Valsartan', 'Valsartan'),
     ('Warfarin', 'Warfarin'),
     ('Xylometazolin', 'Xylometazoline')
@@ -362,6 +365,7 @@ FROM (VALUES
     ('Loratadin', 'Cimetidin', 'chong_chi_dinh', 1, 'can_theo_doi', NULL, 'Cimetidin ức chế chuyển hóa loratadin, làm tăng nồng độ loratadin trong huyết tương khoảng 60%.', 'Dược thư Quốc gia Việt Nam 2018, tr. 924'),
     ('Metformin', 'Cimetidin', 'phu_thuoc_lieu', 2, 'can_theo_doi', NULL, 'Cimetidin làm giảm độ thanh lọc của metformin ở thận do cạnh tranh bài tiết qua hệ thống vận chuyển cation hữu cơ (OCT2) ở ống thận, làm tăng nồng độ đỉnh và sinh khả dụng của metformin trong huyết tương, tăng nguy cơ nhiễm toan acid lactic. Cần theo dõi đáp ứng lâm sàng và hiệu chỉnh giảm liều metformin nếu cần.', 'Dược thư Quốc gia Việt Nam 2018, tr. 391, 957; Tương tác thuốc và chú ý khi chỉ định 2015, tr. 135'),
     ('Metformin', 'Furosemid', 'phu_thuoc_lieu', 2, 'can_theo_doi', NULL, 'Furosemid làm tăng nồng độ đỉnh của metformin trong huyết tương do giảm thể tích dịch tuần hoàn và có thể làm suy giảm chức năng thận tạm thời, làm tăng nguy cơ tích lũy metformin và nhiễm toan lactic, đặc biệt ở bệnh nhân cao tuổi hoặc người có suy giảm chức năng thận từ trước. Tránh phối hợp nếu suy thận rõ rệt.', 'Tương tác thuốc và chú ý khi chỉ định 2015, tr. 137'),
+    ('Metformin', 'Thuốc cản quang chứa Iod', 'chong_chi_dinh', 4, 'tranh_phoi_hop', NULL, 'Việc tiêm vào mạch máu các thuốc cản quang có iod có thể gây suy thận cấp, làm giảm đào thải metformin, dẫn đến tích lũy và nguy cơ nhiễm toan acid lactic nghiêm trọng. Tạm ngừng metformin trước hoặc vào thời điểm thăm dò X-quang và chỉ uống lại sau 48 giờ khi kiểm tra chức năng thận (eGFR/creatinin) đã trở lại bình thường. Đây là tạm ngừng có điều kiện quanh thủ thuật, không phải chống chỉ định vĩnh viễn.', 'Dược thư Quốc gia Việt Nam 2018, tr. 956–957 & Tương tác thuốc và chú ý khi chỉ định 2015, tr. 136–137'),
     ('Nifedipin', 'Aspirin', 'chong_chi_dinh', 1, 'can_theo_doi', NULL, 'Tác dụng chống kết tập tiểu cầu tăng lên khi phối hợp nifedipin với aspirin.', 'Dược thư Quốc gia Việt Nam 2018, tr. 1058'),
     ('Nifedipin', 'Cimetidin', 'chong_chi_dinh', 3, 'giam_lieu', NULL, 'Cimetidin ức chế chuyển hóa nifedipin, làm tăng nồng độ và tác dụng của nifedipin; cần giảm liều khi phối hợp.', 'Dược thư Quốc gia Việt Nam 2018, tr. 391, 1058'),
     ('Nifedipin', 'Clarithromycin', 'chong_chi_dinh', 2, 'can_theo_doi', NULL, 'Clarithromycin có thể làm tăng tác dụng độc của thuốc chẹn kênh calci (như nifedipin).', 'Dược thư Quốc gia Việt Nam 2018, tr. 406'),
