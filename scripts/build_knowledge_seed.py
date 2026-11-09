@@ -9,7 +9,8 @@ Workbook theo mẫu "DrugTime_DuLieuDuoc" (bám schema v11): dòng 2 là tiêu �
 
 1. kiểm ràng buộc (khóa tham chiếu, enum, mức độ 1–4, trích dẫn có số trang, trùng lặp, độ phủ
    rà soát G11, vai trò duyệt QD-37); có lỗi thì in ra stderr, exit 1, không ghi file;
-2. lọc: chỉ quy tắc ``da_xac_minh``; hoạt chất phải có dòng độ phủ đã duyệt; bỏ quy tắc mà engine
+2. lọc: chỉ quy tắc ``da_xac_minh``; hoạt chất phải có dòng độ phủ đã duyệt và không còn quy tắc
+   chưa duyệt (nếu còn, engine sẽ báo "không thấy" sai cho đúng cặp đó); bỏ quy tắc mà engine
    không khớp được (B ngoài danh mục) và nhóm thuốc không gắn hoạt chất;
 3. sinh SQL tất định (cùng workbook → cùng byte), không chứa thời điểm sinh.
 
@@ -25,6 +26,7 @@ import re
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -38,6 +40,8 @@ REVIEW_ROLES = ("Rà soát nguồn", "Dược sĩ duyệt nội dung", "Phát h�
 PAGE_RE = re.compile(r"\btr\.\s*\d+", re.IGNORECASE)
 HEADER_RE = re.compile(r"\[([a-z_]+)\]")
 FIRST_DATA_ROW = 4
+DATE_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+ENTRY_DATE_COLUMNS = ("Ngày nhập", "Ngày rà")
 
 SHEETS = {
     "rules": "02_QuyUoc",
@@ -59,6 +63,7 @@ SKIP_NOT_VERIFIED = "chua_xac_minh"
 SKIP_EXTERNAL_B = "b_ngoai_danh_muc"
 SKIP_UNLINKED_CLASS = "nhom_khong_gan_hoat_chat"
 SKIP_INGREDIENT = "hoat_chat_chua_duyet_do_phu"
+SKIP_PENDING_RULE = "hoat_chat_con_quy_tac_chua_duyet"
 SKIP_MEDICATION = "thuoc_co_hoat_chat_bi_bo"
 SKIP_PARENT = "quy_tac_cha_bi_bo"
 
@@ -125,8 +130,26 @@ def _number(value: object) -> Decimal | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return Decimal(str(value).replace(",", "."))
+        number = Decimal(str(value).replace(",", "."))
     except InvalidOperation:
+        return None
+    # NaN/Infinity không phải số liệu hợp lệ: trả None để báo lỗi dữ liệu thay vì traceback.
+    return number if number.is_finite() else None
+
+
+def _date(value: object) -> date | None:
+    """Ô ngày của workbook: kiểu ngày của Excel, hoặc chuỗi dd/mm/yyyy."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    match = DATE_RE.match(value.strip()) if isinstance(value, str) else None
+    if not match:
+        return None
+    day, month, year = (int(g) for g in match.groups())
+    try:
+        return date(year, month, day)
+    except ValueError:
         return None
 
 
@@ -153,8 +176,11 @@ def _values(rows: list[tuple]) -> str:
     return ",\n".join("    (" + ", ".join(_sql(v) for v in r) + ")" for r in rows)
 
 
-def _check_rules_sheet(wb, errors: list[str]) -> set[str]:
-    """Kiểm thang mức độ và vai trò duyệt; trả về danh sách đơn vị ở mục 3 (dose_unit hợp lệ)."""
+def _check_rules_sheet(wb, errors: list[str]) -> tuple[set[str], dict[str, date]]:
+    """Kiểm thang mức độ và vai trò duyệt.
+
+    Trả về danh sách đơn vị ở mục 3 (dose_unit hợp lệ) và ngày duyệt của từng vai trò.
+    """
     ws = wb[SHEETS["rules"]]
     scale_rows: list[tuple] = []
     roles: dict[str, tuple] = {}
@@ -179,15 +205,52 @@ def _check_rules_sheet(wb, errors: list[str]) -> set[str]:
     for row in scale_rows:
         if "dự thảo" in " ".join(str(c) for c in row if c is not None).lower():
             errors.append(f"{SHEETS['rules']}: thang mức độ mức {row[0]} còn ghi 'dự thảo'")
+    review_dates: dict[str, date] = {}
     for role in REVIEW_ROLES:
         row = roles.get(role)
         if row is None or len(row) < 3 or not row[1] or not row[2]:
             errors.append(f"{SHEETS['rules']}: thiếu người hoặc ngày duyệt cho vai trò '{role}'")
-    return units
+            continue
+        value = _date(row[2])
+        if value is None:
+            errors.append(
+                f"{SHEETS['rules']}: ngày duyệt của vai trò '{role}' không phải ngày "
+                f"(dd/mm/yyyy): '{row[2]}'"
+            )
+        else:
+            review_dates[role] = value
+    return units, review_dates
 
 
-def build(workbook_path: Path) -> BuildResult:
+def _check_review_dates(
+    review_dates: dict[str, date],
+    latest_entry: tuple[date, str] | None,
+    today: date,
+    errors: list[str],
+) -> None:
+    """QD-37: ngày duyệt không sớm hơn dữ liệu, không ở tương lai, đúng thứ tự ba vai trò."""
+    where = SHEETS["rules"]
+    for role, value in review_dates.items():
+        shown = value.strftime("%d/%m/%Y")
+        if latest_entry is not None and value < latest_entry[0]:
+            errors.append(
+                f"{where}: ngày duyệt của vai trò '{role}' ({shown}) sớm hơn ngày nhập dữ liệu "
+                f"mới nhất ({latest_entry[0].strftime('%d/%m/%Y')}, {latest_entry[1]})"
+            )
+        if value > today:
+            errors.append(f"{where}: ngày duyệt của vai trò '{role}' ({shown}) ở tương lai")
+    for earlier, later in zip(REVIEW_ROLES, REVIEW_ROLES[1:], strict=False):
+        if earlier in review_dates and later in review_dates:
+            if review_dates[later] < review_dates[earlier]:
+                errors.append(
+                    f"{where}: ngày duyệt của vai trò '{later}' sớm hơn vai trò '{earlier}'"
+                )
+
+
+def build(workbook_path: Path, today: date | None = None) -> BuildResult:
     from openpyxl import load_workbook
+
+    today = today or date.today()
 
     data = Path(workbook_path).read_bytes()
     digest = hashlib.sha256(data).hexdigest()
@@ -200,8 +263,17 @@ def build(workbook_path: Path) -> BuildResult:
         errors.append("Thiếu sheet: " + ", ".join(missing))
         return result
 
-    dose_units = _check_rules_sheet(wb, errors)
+    dose_units, review_dates = _check_rules_sheet(wb, errors)
     sheet = {key: _read_sheet(wb, name) for key, name in SHEETS.items() if key != "rules"}
+
+    latest_entry: tuple[date, str] | None = None
+    for rows in sheet.values():
+        for row in rows:
+            for column in ENTRY_DATE_COLUMNS:
+                value = _date(row.values.get(column))
+                if value is not None and (latest_entry is None or value > latest_entry[0]):
+                    latest_entry = (value, row.where)
+    _check_review_dates(review_dates, latest_entry, today, errors)
 
     def require(row: Row, *keys: str) -> bool:
         ok = True
@@ -509,6 +581,23 @@ def build(workbook_path: Path) -> BuildResult:
         return result
 
     # ---- lọc
+    # Hoạt chất còn quy tắc chưa duyệt mà engine khớp được thì bị bỏ: nếu giữ, engine báo "đã kiểm
+    # tra, không thấy" cho đúng cặp/thực phẩm có tương tác đang chờ duyệt. Bỏ thì engine trả
+    # "chưa đủ dữ liệu". Tính một lần trên tập quy tắc gốc, không lan tiếp.
+    pending_rules: dict[str, list[str]] = defaultdict(list)
+    for row in drug_rules:
+        if row.text("ingredient_b_in_table_a") == "co" and row.text("verification_status") != (
+            VERIFIED
+        ):
+            label = row.text("Mã tạm") or row.where
+            pending_rules[row.text("ingredient_a_id")].append(label)
+            pending_rules[row.text("ingredient_b_id")].append(label)
+    for row in food_rules:
+        if row.text("verification_status") != VERIFIED:
+            pending_rules[row.text("active_ingredient_id")].append(
+                f"{row.text('active_ingredient_id')} – {row.text('food_to_avoid')}"
+            )
+
     skipped: list[tuple[str, str, str]] = []
     kept_ingredients = set()
     for name in sorted(ingredients):
@@ -518,10 +607,13 @@ def build(workbook_path: Path) -> BuildResult:
             and cov.text("Đã rà thuốc–thuốc") == "co"
             and cov.text("Đã rà thức ăn") == "co"
         )
-        if ok:
-            kept_ingredients.add(name)
-        else:
+        if not ok:
             skipped.append((SKIP_INGREDIENT, ingredients[name].where, name))
+        elif pending_rules.get(name):
+            label = f"{name} (quy tắc chưa duyệt: {', '.join(sorted(pending_rules[name]))})"
+            skipped.append((SKIP_PENDING_RULE, ingredients[name].where, label))
+        else:
+            kept_ingredients.add(name)
 
     kept_drug = []
     for row in drug_rules:

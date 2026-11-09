@@ -1,7 +1,7 @@
 -- FILE SINH TỰ ĐỘNG bởi backend/scripts/build_knowledge_seed.py — KHÔNG SỬA TAY.
 -- Nguồn: workbook dữ liệu dược
 --   (docs/Team1_DTU/03_Design/Database/DrugTime_DuLieuDuoc.xlsx)
--- workbook sha256: d60f1021ef6f3f7ad6dcb719e03d97f7b7ae3d7039fb763782d6d4d03bddd1af
+-- workbook sha256: 4813648902636e840e8867000134a52c02fcf83b7c7f0d2595d91c898983098d
 -- Sinh lại: python scripts/build_knowledge_seed.py <workbook> --out supabase/seeds/10_knowledge_base.sql
 -- Chỉ chứa quy tắc verification_status = 'da_xac_minh' (QD-37).
 -- Nạp bởi `supabase db reset`.

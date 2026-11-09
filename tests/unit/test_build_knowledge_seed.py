@@ -1,7 +1,8 @@
-"""Unit test cho scripts/build_knowledge_seed.py (task 4.04: AC1–AC4, AC10, AC14, AC15)."""
+"""Unit test cho scripts/build_knowledge_seed.py (task 4.04: AC1–AC4, AC10, AC14–AC16)."""
 
 import importlib.util
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -458,10 +459,75 @@ def test_skips_rules_not_verified__AC2(tmp_path):
     r = _build(tmp_path, data=data)
     assert r.errors == []
     assert "-- count active_ingredient_interactions=0" in r.sql
-    assert "-- count drug_food_interactions=1" in r.sql
     assert "Nước bưởi" not in r.sql
     assert "[chua_xac_minh] 30_TuongTacThuoc dòng 4: I1" in r.report
     assert "[chua_xac_minh] 32_TuongTacThucAn dòng 5: Alpha – Nước bưởi" in r.report
+    # Vòng 3 (H1): hoạt chất còn quy tắc chưa duyệt bị bỏ, cả A và B của cặp chưa duyệt; nếu giữ,
+    # engine sẽ báo "đã kiểm tra, không thấy" cho đúng cặp/thực phẩm đó.
+    assert "-- count active_ingredients=1" in r.sql
+    assert "-- count drug_food_interactions=0" in r.sql
+    assert (
+        "[hoat_chat_con_quy_tac_chua_duyet] 20_HoatChat dòng 4: "
+        "Alpha (quy tắc chưa duyệt: Alpha – Nước bưởi, I1)"
+    ) in r.report
+    assert (
+        "[hoat_chat_con_quy_tac_chua_duyet] 20_HoatChat dòng 5: Beta (quy tắc chưa duyệt: I1)"
+        in r.report
+    )
+
+
+@pytest.mark.parametrize("pending", ["drug", "food"])
+def test_ingredient_with_pending_rule_is_dropped__AC2(tmp_path, pending):
+    data = _base()
+    if pending == "drug":
+        data["30_TuongTacThuoc"][0][11] = "pending_review"  # I1 Alpha–Beta
+        dropped, kept = {"Alpha", "Beta"}, {"Gamma"}
+    else:
+        data["32_TuongTacThucAn"][1][5] = "pending_review"  # Alpha – Nước bưởi
+        dropped, kept = {"Alpha"}, {"Beta", "Gamma"}
+    r = _build(tmp_path, data=data)
+    assert r.errors == []
+    for name in dropped:
+        assert f"'{name}'" not in r.sql
+        assert any(
+            line.startswith("  [hoat_chat_con_quy_tac_chua_duyet] 20_HoatChat")
+            and f": {name} (quy tắc chưa duyệt:" in line
+            for line in r.report.splitlines()
+        ), r.report
+    for name in kept:
+        assert f"'{name}'" in r.sql
+    assert f"-- count active_ingredients={len(kept)}" in r.sql
+    # Quy tắc đã duyệt của hoạt chất bị bỏ cũng vắng (Alpha – Rượu; I1 khi chỉ thức ăn chờ duyệt).
+    assert "'Rượu'" not in r.sql
+    assert "-- count active_ingredient_interactions=0" in r.sql
+    # Thuốc mẫu chứa hoạt chất bị bỏ, kể cả thuốc phối hợp, bị bỏ theo.
+    assert "Alphadol 500" not in r.sql
+    assert ("BetaGam" in r.sql) == ("Beta" in kept)
+
+
+def test_pending_rule_with_external_b_keeps_ingredient__AC2(tmp_path):
+    data = _base()
+    data["30_TuongTacThuoc"].append(
+        [
+            "I3",
+            "Alpha",
+            "khong",
+            None,
+            "Thuốc ngoài danh mục",
+            "chong_chi_dinh",
+            4,
+            "tranh_phoi_hop",
+            None,
+            "x",
+            "tr. 956",
+            "pending_review",
+        ]
+    )
+    r = _build(tmp_path, data=data)
+    assert r.errors == []
+    assert "-- count active_ingredients=3" in r.sql
+    assert "[b_ngoai_danh_muc] 30_TuongTacThuoc dòng 5: I3" in r.report
+    assert "hoat_chat_con_quy_tac_chua_duyet" not in r.report
 
 
 def test_skips_ingredient_with_unapproved_coverage_and_its_medications__AC2(tmp_path):
@@ -514,6 +580,80 @@ def test_requires_reviewer_roles_and_final_scale__AC10(tmp_path):
     r = _build(tmp_path, rules=rules)
     _errors_contain(r, "thang mức độ mức 1 còn ghi 'dự thảo'")
     _errors_contain(r, "thiếu người hoặc ngày duyệt cho vai trò 'Dược sĩ duyệt nội dung'")
+
+
+def _rules_with_dates(rasoat, duocsi, phathanh):
+    rules = [list(r) for r in RULES_FINAL]
+    for role, value in (
+        ("Rà soát nguồn", rasoat),
+        ("Dược sĩ duyệt nội dung", duocsi),
+        ("Phát hành", phathanh),
+    ):
+        rules[next(i for i, r in enumerate(rules) if r[0] == role)][2] = value
+    return rules
+
+
+def _with_entry_date(monkeypatch, entry):
+    """Thêm cột "Ngày rà" (không có khóa [..], như workbook thật) vào 34_DoPhuRaSoat."""
+    monkeypatch.setitem(
+        HEADERS, "34_DoPhuRaSoat", HEADERS["34_DoPhuRaSoat"] + ["Ngày rà\n[không nạp DB]"]
+    )
+    data = _base()
+    for row in data["34_DoPhuRaSoat"]:
+        row.append(entry)
+    return data
+
+
+@pytest.mark.parametrize(
+    "dates,today,expected",
+    [
+        (("chưa rõ", "07/11/2026", "07/11/2026"), None, "'Rà soát nguồn' không phải ngày"),
+        (("31/02/2026", "07/11/2026", "07/11/2026"), None, "'Rà soát nguồn' không phải ngày"),
+        # Lỗi thật của workbook: Excel đọc "07/11" thành 11/07 (tháng/ngày).
+        (
+            (datetime(2026, 7, 11),) * 3,
+            None,
+            "'Phát hành' (11/07/2026) sớm hơn ngày nhập dữ liệu mới nhất (07/11/2026",
+        ),
+        (
+            ("07/11/2026",) * 3,
+            date(2026, 11, 6),
+            "'Dược sĩ duyệt nội dung' (07/11/2026) ở tương lai",
+        ),
+        (
+            ("07/11/2026", "08/11/2026", "07/11/2026"),
+            date(2026, 11, 8),
+            "vai trò 'Phát hành' sớm hơn vai trò 'Dược sĩ duyệt nội dung'",
+        ),
+    ],
+)
+def test_invalid_approval_dates_fail__AC10(tmp_path, monkeypatch, dates, today, expected):
+    data = _with_entry_date(monkeypatch, datetime(2026, 11, 7))
+    path = _write(tmp_path, data=data, rules=_rules_with_dates(*dates))
+    r = seed.build(path, today=today or date(2026, 11, 8))
+    _errors_contain(r, expected)
+    assert r.sql == ""
+
+
+def test_approval_date_equal_to_latest_entry_and_today_is_valid__AC10(tmp_path, monkeypatch):
+    data = _with_entry_date(monkeypatch, "07/11/2026")
+    path = _write(
+        tmp_path, data=data, rules=_rules_with_dates(datetime(2026, 11, 7), *["07/11/2026"] * 2)
+    )
+    r = seed.build(path, today=date(2026, 11, 7))
+    assert r.errors == []
+    assert r.sql
+
+
+@pytest.mark.parametrize("raw", ["NaN", "inf", "-Infinity"])
+def test_non_finite_numbers_rejected__AC16(tmp_path, raw):
+    data = _base_dose()
+    data["31_NguongLieu"] = [_threshold(lo=raw, hi=None)]
+    data["41_BietDuoc_HoatChat"][0][2] = raw
+    r = _build(tmp_path, data=data)
+    _errors_contain(r, "31_NguongLieu dòng 4: min_dose phải là số ≥ 0")
+    _errors_contain(r, "41_BietDuoc_HoatChat dòng 4: strength_value phải là số > 0")
+    assert r.sql == ""
 
 
 def test_skips_external_b_and_unlinked_class__AC14(tmp_path):
