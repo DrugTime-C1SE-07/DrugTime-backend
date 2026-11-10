@@ -26,6 +26,7 @@ class PersonalProfiles(Protocol):
         date_of_birth: date,
         gender: str,
         email: str | None,
+        phone_number: str | None,
         at: datetime,
     ) -> tuple[str | None, bool]: ...
 

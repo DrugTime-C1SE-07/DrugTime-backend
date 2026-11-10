@@ -10,7 +10,7 @@ from drugtime.modules.identity import api as identity
 from drugtime.modules.medication.adapters.inbound import profile_http as http
 from drugtime.modules.medication.domain.user_condition import HealthProfile, UserConditionView
 from drugtime.shared.db import get_uow
-from drugtime.shared.errors import Conflict, Forbidden, NotFound
+from drugtime.shared.errors import Conflict, DomainError, Forbidden, NotFound
 
 OPERATIONS = [
     ("get", "/profile", None),
@@ -50,6 +50,46 @@ def test_get_no_store_nullable(client, monkeypatch):
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["full_name"] is None
+    assert response.json()["phone_number"] is None
+
+
+def test_put_contact_phone_forwarded_without_changing_email(client, monkeypatch):
+    update = Mock(return_value=(None, False))
+    monkeypatch.setattr(http, "update_profile", update)
+    response = client.put(
+        "/profile",
+        json={
+            "full_name": "Bao",
+            "date_of_birth": "2000-01-01",
+            "gender": "nam",
+            "phone_number": "0912345678",
+        },
+    )
+    assert response.status_code == 204
+    assert update.call_args.kwargs["phone_number"] == "0912345678"
+    assert update.call_args.kwargs["email"] is None
+
+
+@pytest.mark.parametrize(
+    "error,status",
+    [
+        (DomainError("invalid_phone"), 422),
+        (Conflict("phone_change_unavailable"), 409),
+    ],
+)
+def test_put_contact_phone_errors_are_sanitized(client, monkeypatch, error, status):
+    monkeypatch.setattr(http, "update_profile", Mock(side_effect=error))
+    response = client.put(
+        "/profile",
+        json={
+            "full_name": "Bao",
+            "date_of_birth": "2000-01-01",
+            "gender": "nam",
+            "phone_number": "0912345678",
+        },
+    )
+    assert response.status_code == status
+    assert response.json() == {"detail": str(error)}
 
 
 @pytest.mark.parametrize("method,path,body", OPERATIONS)

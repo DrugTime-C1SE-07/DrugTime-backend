@@ -53,6 +53,7 @@ def update_profile(
     date_of_birth: date,
     gender: str,
     email: str | None = None,
+    phone_number: str | None = None,
     at: datetime,
 ) -> _profile.ProfileUpdateResult:
     return _profile.update_profile(
@@ -63,6 +64,7 @@ def update_profile(
         date_of_birth=date_of_birth,
         gender=gender,
         email=email,
+        phone_number=phone_number,
         at=at,
     )
 

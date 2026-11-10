@@ -31,6 +31,7 @@ def test_profile_get_put_incomplete_complete__AC01_AC04(client, db, make, auth, 
     user = make.user()
     db.execute(text("UPDATE users SET full_name=NULL WHERE id=:u"), {"u": user})
     headers = auth(user)
+    email = db.execute(text("SELECT email FROM users WHERE id=:u"), {"u": user}).scalar_one()
     response = client.get("/profile", headers=headers)
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -38,6 +39,8 @@ def test_profile_get_put_incomplete_complete__AC01_AC04(client, db, make, auth, 
         "full_name": None,
         "date_of_birth": None,
         "gender": None,
+        "email": email,
+        "phone_number": None,
         "conditions": [],
     }
     link = add(client, auth, user, condition(db), subtype="  supplied  ", stage="old")
@@ -56,6 +59,8 @@ def test_profile_get_put_incomplete_complete__AC01_AC04(client, db, make, auth, 
         "full_name": "Bao",
         "date_of_birth": "2026-10-14",
         "gender": "male",
+        "email": email,
+        "phone_number": None,
         "conditions": [link],
     }
     for invalid in ({**body, "full_name": "  "}, {**body, "date_of_birth": "2026-10-15"}):

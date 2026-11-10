@@ -36,6 +36,7 @@ def get_profile(
             )
             for link in links
         ],
+        phone_number=profile.phone_number,
     )
 
 
@@ -50,6 +51,7 @@ def update_profile(
     date_of_birth: date,
     gender: str,
     email: str | None = None,
+    phone_number: str | None = None,
     at: datetime,
 ) -> tuple[str | None, bool]:
     access.authorize_write(uow, user_id, is_admin)
@@ -60,5 +62,6 @@ def update_profile(
         date_of_birth=date_of_birth,
         gender=gender,
         email=email,
+        phone_number=phone_number,
         at=at,
     )

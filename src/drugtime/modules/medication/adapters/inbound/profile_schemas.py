@@ -38,6 +38,16 @@ def _health_profile_schema(schema: dict) -> None:
 class ProfileUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     full_name: StrictStr = Field(min_length=1, pattern=r"\S")
+    phone_number: StrictStr = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description=(
+            "Optional contact phone, normalized to E.164 (+84 for local 0-prefixed numbers). "
+            "Omit to preserve. Null and empty values are invalid. "
+            "Does not change login credentials or send SMS/OTP; ownership is not verified."
+        ),
+    )
     date_of_birth: date
     gender: Literal["nam", "nu", "khac", "male", "female", "other"]
     # Omission means leave the current login email unchanged; explicit null is invalid.
@@ -103,6 +113,7 @@ class HealthProfileResponse(BaseModel):
     date_of_birth: date | None
     gender: str | None
     email: str | None
+    phone_number: str | None
     conditions: list[UserConditionResponse]
 
 

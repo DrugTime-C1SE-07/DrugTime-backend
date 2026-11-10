@@ -4,7 +4,11 @@ from datetime import date, datetime
 from uuid import UUID
 
 from drugtime.modules.identity.application.ports import AuthProvider, UserRepository
-from drugtime.modules.identity.domain.profile import ProfileRecord, validate_profile
+from drugtime.modules.identity.domain.profile import (
+    ProfileRecord,
+    normalize_contact_phone,
+    validate_profile,
+)
 from drugtime.shared.errors import ServiceUnavailable, Unauthorized
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +36,7 @@ def update_profile(
     date_of_birth: date,
     gender: str,
     email: str | None = None,
+    phone_number: str | None = None,
     at: datetime,
 ) -> ProfileUpdateResult:
     current = users.get_profile(user_id)
@@ -47,6 +52,9 @@ def update_profile(
     )
     new_email = current.email if email is None else profile.email
     email_changed = new_email != current.email
+    phone_fields = (
+        {"phone_number": normalize_contact_phone(phone_number)} if phone_number is not None else {}
+    )
     if email_changed:
         auth.update_email(user_id, new_email)
 
@@ -57,6 +65,7 @@ def update_profile(
             date_of_birth=date_of_birth,
             gender=profile.gender,
             email=new_email,
+            **phone_fields,
         )
     except Exception:
         if email_changed:
@@ -64,8 +73,7 @@ def update_profile(
                 auth.update_email(user_id, current.email)
             except Exception as rollback_error:
                 _LOGGER.error(
-                    "Could not restore Supabase email after profile DB update failed "
-                    "for user %s",
+                    "Could not restore Supabase email after profile DB update failed for user %s",
                     user_id,
                 )
                 raise ServiceUnavailable("auth_provider_unavailable") from rollback_error

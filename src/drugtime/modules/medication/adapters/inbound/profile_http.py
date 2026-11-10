@@ -115,6 +115,7 @@ def put_profile(
                 date_of_birth=body.date_of_birth,
                 gender=body.gender,
                 email=body.email,
+                phone_number=body.phone_number,
                 at=datetime.now(UTC),
             )
             response = Response(status_code=204)
