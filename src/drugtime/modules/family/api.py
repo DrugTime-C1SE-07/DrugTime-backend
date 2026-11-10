@@ -23,6 +23,9 @@ __all__ = [
     "revoke_link_as_member",
     "router",
     "sharing_family_ids",
+    "sharing_patient_ids",
+    "audit_empty_patient_list",
+    "audit_denied_patient_list",
 ]
 
 
@@ -99,6 +102,19 @@ def has_active_sharing_link(uow: UnitOfWork, patient_id: UUID, family_id: UUID) 
 
 def sharing_family_ids(uow: UnitOfWork, patient_id: UUID) -> list[UUID]:
     return SqlLinks().sharing_family_ids(uow, patient_id)
+
+
+def sharing_patient_ids(uow: UnitOfWork, family_id: UUID) -> list[UUID]:
+    """Candidate IDs only; access still resolves current purpose/link consent via PEP."""
+    return SqlLinks().sharing_patient_ids(uow, family_id)
+
+
+def audit_empty_patient_list(uow: UnitOfWork, actor_id: UUID) -> None:
+    SqlLinkAudit().allowed(uow, actor_id, None, None, "list_linked_patients")
+
+
+def audit_denied_patient_list(actor_id: UUID) -> None:
+    SqlLinkAudit().denied(actor_id, None, None, "list_linked_patients", "khong_co_quyen")
 
 
 class _Eraser:

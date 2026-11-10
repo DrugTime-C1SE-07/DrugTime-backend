@@ -6,6 +6,13 @@ from drugtime.modules.access.domain.rules import AccessFacts, Action, ActorRole,
 P, C = uuid4(), uuid4()
 
 
+def test_scope_maps_to_health_data():
+    from drugtime.modules.access.domain.rules import SCOPE_PURPOSE, Scope
+
+    assert SCOPE_PURPOSE[Scope.LINKED_PATIENTS] == "health_data"
+    assert str(Scope.LINKED_PATIENTS) == "danh_sach_benh_nhan_lien_ket"
+
+
 def facts(**kw):
     base = dict(
         caller_id=C,

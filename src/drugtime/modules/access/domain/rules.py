@@ -11,6 +11,7 @@ class Scope(StrEnum):
     ADHERENCE = "lich_su_tuan_thu"
     INTERACTIONS = "canh_bao_tuong_tac"
     MEAL = "goi_y_bua_an"
+    LINKED_PATIENTS = "danh_sach_benh_nhan_lien_ket"
 
 
 # Purpose consent của patient cần có cho từng scope.
@@ -20,6 +21,7 @@ SCOPE_PURPOSE: dict[Scope, str] = {
     Scope.ADHERENCE: "health_data",
     Scope.INTERACTIONS: "health_data",
     Scope.MEAL: "ai_meal",
+    Scope.LINKED_PATIENTS: "health_data",
 }
 
 

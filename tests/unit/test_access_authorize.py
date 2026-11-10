@@ -56,6 +56,23 @@ def test_allowed_log_failure_fails_request():
         _call(Facts(), Log(fail_allowed=True))
 
 
+def test_resolve_uses_current_facts_each_call():
+    from dataclasses import replace
+
+    from drugtime.modules.access.application.authorize import resolve_access
+
+    facts = Facts()
+    log = Log()
+    args = dict(caller_id=C, caller_is_admin=False, patient_id=P, scope=Scope.LINKED_PATIENTS)
+    assert resolve_access(object(), facts, **args).allowed
+    for field in ("active_sharing_link", "purpose_consent", "family_sharing_consent"):
+        original = facts.f
+        facts.f = replace(original, **{field: False})
+        assert not resolve_access(object(), facts, **args).allowed
+        facts.f = original
+    assert log.allowed == log.denied == []
+
+
 def test_family_read_appends_allowed():
     log = Log()
     _call(Facts(), log)

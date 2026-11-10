@@ -17,7 +17,7 @@ class SqlLinkAudit:
         self,
         uow: UnitOfWork,
         actor_id: UUID,
-        patient_id: UUID,
+        patient_id: UUID | None,
         link_id: int | None,
         operation: str,
     ) -> None:

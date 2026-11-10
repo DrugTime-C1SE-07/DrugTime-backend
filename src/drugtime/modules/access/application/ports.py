@@ -29,3 +29,18 @@ class AccessLog(Protocol):
     ) -> None:
         """Ghi ở transaction riêng để dòng denied còn lại dù request bị rollback."""
         ...
+
+
+class PatientCandidates(Protocol):
+    def ids(self, uow: UnitOfWork, family_id: UUID) -> list[UUID]: ...
+
+
+class PatientNames(Protocol):
+    def get(self, uow: UnitOfWork, patient_ids: list[UUID]) -> dict[UUID, str | None]: ...
+
+
+class PatientListAudit(Protocol):
+    def empty(self, uow: UnitOfWork, actor_id: UUID) -> None: ...
+    def denied(self, actor_id: UUID) -> None:
+        """Persist request-level denial in an independent transaction, without a patient."""
+        ...
