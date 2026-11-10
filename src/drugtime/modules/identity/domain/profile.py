@@ -22,10 +22,7 @@ def validate_email(email: str | None) -> str | None:
 
     normalized_email = email.strip().lower()
 
-    if (
-        len(normalized_email) > 254
-        or not _EMAIL_PATTERN.fullmatch(normalized_email)
-    ):
+    if len(normalized_email) > 254 or not _EMAIL_PATTERN.fullmatch(normalized_email):
         raise DomainError("invalid_email")
 
     return normalized_email
@@ -37,6 +34,17 @@ class ProfileRecord:
     date_of_birth: date | None
     gender: str | None
     email: str | None
+    phone_number: str | None = None
+
+
+def normalize_contact_phone(value: str) -> str:
+    """Normalize contact data only; never change Supabase Auth credentials."""
+    phone = value.strip().replace(" ", "").replace("-", "")
+    if phone.startswith("0"):
+        phone = "+84" + phone[1:]
+    if re.fullmatch(r"\+[1-9][0-9]{7,14}", phone) is None:
+        raise DomainError("invalid_phone")
+    return phone
 
 
 def validate_profile(

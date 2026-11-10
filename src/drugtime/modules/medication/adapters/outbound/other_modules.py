@@ -87,6 +87,7 @@ class IdentityProfileAdapter:
             profile.date_of_birth,
             profile.gender,
             profile.email,
+            profile.phone_number,
         )
 
     def update(
@@ -98,6 +99,7 @@ class IdentityProfileAdapter:
         date_of_birth: date,
         gender: str,
         email: str | None,
+        phone_number: str | None = None,
         at: datetime,
     ) -> tuple[str | None, bool]:
         result = identity.update_profile(
@@ -107,6 +109,7 @@ class IdentityProfileAdapter:
             date_of_birth=date_of_birth,
             gender=gender,
             email=email,
+            phone_number=phone_number,
             at=at,
         )
         return result.previous_email, result.auth_email_changed

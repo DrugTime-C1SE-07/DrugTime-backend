@@ -51,7 +51,7 @@ class SqlUsers:
     def get_profile(self, user_id: UUID) -> ProfileRecord | None:
         row = self._c.execute(
             text(
-                "SELECT full_name, date_of_birth, gender, email FROM users "
+                "SELECT full_name, date_of_birth, gender, email, phone_number FROM users "
                 "WHERE id = :id AND erased_at IS NULL"
             ),
             {"id": user_id},
@@ -66,19 +66,19 @@ class SqlUsers:
         date_of_birth,
         gender: str,
         email: str | None = None,
+        phone_number: str | None = None,
     ) -> None:
         try:
-            if email is None:
-                statement = text(
-                    "UPDATE users SET full_name = :full_name, date_of_birth = :dob, "
-                    "gender = :gender WHERE id = :id AND erased_at IS NULL"
-                )
-            else:
-                statement = text(
-                    "UPDATE users SET full_name = :full_name, date_of_birth = :dob, "
-                    "gender = :gender, email = :email "
-                    "WHERE id = :id AND erased_at IS NULL"
-                )
+            assignments = ["full_name = :full_name", "date_of_birth = :dob", "gender = :gender"]
+            if email is not None:
+                assignments.append("email = :email")
+            if phone_number is not None:
+                assignments.append("phone_number = :phone_number")
+            statement = text(
+                "UPDATE users SET "
+                + ", ".join(assignments)
+                + " WHERE id = :id AND erased_at IS NULL"
+            )
             result = self._c.execute(
                 statement,
                 {
@@ -87,9 +87,14 @@ class SqlUsers:
                     "gender": gender,
                     "id": user_id,
                     **({"email": email} if email is not None else {}),
+                    **({"phone_number": phone_number} if phone_number is not None else {}),
                 },
             )
         except IntegrityError as exc:
+            if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == (
+                "users_phone_number_key"
+            ):
+                raise Conflict("phone_change_unavailable") from exc
             if getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == (
                 "users_email_lower_uq"
             ):

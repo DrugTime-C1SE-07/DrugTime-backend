@@ -32,6 +32,7 @@ class PersonalProfile:
     date_of_birth: date | None
     gender: str | None
     email: str | None
+    phone_number: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,3 +42,4 @@ class HealthProfile:
     gender: str | None
     email: str | None
     conditions: list[UserConditionView]
+    phone_number: str | None = None
