@@ -51,7 +51,13 @@ _STATUS = {
 
 # Responses never cached; failures become the generic 500 without re-raising, so the
 # server log never gets a traceback with sensitive SQL parameters (health data, OCR text).
-_NO_STORE_ROUTES = frozenset({("GET", "/adherence"), ("POST", "/catalog/medications/match")})
+_NO_STORE_ROUTES = frozenset(
+    {
+        ("GET", "/adherence"),
+        ("POST", "/catalog/medications/match"),
+        ("GET", "/family/patients"),
+    }
+)
 
 
 def create_app() -> FastAPI:

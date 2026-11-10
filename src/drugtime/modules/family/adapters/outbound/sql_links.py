@@ -255,6 +255,16 @@ class SqlLinks:
         )
         return [r.family_user_id for r in rows]
 
+    def sharing_patient_ids(self, uow: UnitOfWork, family_id: UUID) -> list[UUID]:
+        rows = uow.connection.execute(
+            text(
+                "SELECT DISTINCT patient_user_id FROM caregiver_links "
+                f"WHERE family_user_id = :f AND {_ACTIVE}"
+            ),
+            {"f": family_id},
+        )
+        return [r.patient_user_id for r in rows]
+
     def erase(self, uow: UnitOfWork, user_id: UUID) -> None:
         c = uow.connection
         c.execute(

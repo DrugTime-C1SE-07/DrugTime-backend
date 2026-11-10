@@ -380,3 +380,23 @@ def test_sql_revoke_returns_none_when_no_match():
     result = SqlLinks().revoke(uow, link_id=999, caller_id=patient_id, now=now)
 
     assert result is None
+
+
+def test_sharing_patient_ids_are_caller_scoped():
+    family, patient = uuid4(), uuid4()
+    uow = FakeUow([[SimpleNamespace(patient_user_id=patient)]])
+    assert SqlLinks().sharing_patient_ids(uow, family) == [patient]
+    sql = _sql(uow)
+    assert "SELECT DISTINCT patient_user_id" in sql
+    assert "WHERE family_user_id = :f" in sql
+    assert "status = 'active' AND sharing_enabled = true" in sql
+    assert "EXISTS ( SELECT 1 FROM family_link_consent_confirmations" in sql
+    assert "evidence.patient_user_id = caregiver_links.patient_user_id" in sql
+    assert "evidence.family_user_id = caregiver_links.family_user_id" in sql
+    assert "evidence.link_id = caregiver_links.id" in sql
+    assert "LIMIT" not in sql
+    assert uow.connection.calls[0][1] == {"f": family}
+
+
+def test_sharing_patient_ids_empty():
+    assert SqlLinks().sharing_patient_ids(FakeUow([[]]), uuid4()) == []

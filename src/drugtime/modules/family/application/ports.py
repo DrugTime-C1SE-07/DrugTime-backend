@@ -68,8 +68,8 @@ class Links(Protocol):
         self, uow: UnitOfWork, patient_id: UUID, family_id: UUID
     ) -> bool: ...
     def sharing_family_ids(self, uow: UnitOfWork, patient_id: UUID) -> list[UUID]: ...
+    def sharing_patient_ids(self, uow: UnitOfWork, family_id: UUID) -> list[UUID]: ...
     def erase(self, uow: UnitOfWork, user_id: UUID) -> None: ...
-
 
 
 class LinkCodes(Protocol):
@@ -134,7 +134,7 @@ class LinkAudit(Protocol):
         self,
         uow: UnitOfWork,
         actor_id: UUID,
-        patient_id: UUID,
+        patient_id: UUID | None,
         link_id: int | None,
         operation: str,
     ) -> None: ...

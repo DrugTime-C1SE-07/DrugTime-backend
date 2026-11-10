@@ -14,6 +14,11 @@ from drugtime.modules.identity import api as identity
 # (scope, operationId, audit_self): ghi liều và checkpoint chính chủ không ghi access_logs khi
 # được phép (theo PEP chung); đọc lịch sử thì có (3.23).
 PROTECTED_HEALTH_ROUTES = {
+    ("GET", "/family/patients"): (
+        "danh_sach_benh_nhan_lien_ket",
+        "listMyLinkedPatients",
+        False,
+    ),
     ("GET", "/adherence"): ("lich_su_tuan_thu", "getAdherenceHistory", True),
     ("POST", "/doses/batch"): ("lich_su_tuan_thu", "confirmDoseBatch", False),
     ("POST", "/doses/sync-checkpoints"): ("lich_su_tuan_thu", "recordDoseSyncCheckpoint", False),

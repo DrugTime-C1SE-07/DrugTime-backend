@@ -2,7 +2,10 @@
 
 from uuid import UUID
 
-from drugtime.modules.access.adapters.inbound.http import router
+from fastapi import APIRouter
+
+from drugtime.modules.access.adapters.inbound.http import router as admin_router
+from drugtime.modules.access.adapters.inbound.linked_patients_http import router as patients_router
 from drugtime.modules.access.adapters.outbound.facts import ModuleFactsReader
 from drugtime.modules.access.adapters.outbound.sql_access_log import SqlAccessLog
 from drugtime.modules.access.application import authorize as _authorize
@@ -10,6 +13,10 @@ from drugtime.modules.access.domain.rules import Action, Scope
 from drugtime.shared.uow import UnitOfWork
 
 __all__ = ["Action", "Scope", "authorize", "authorized_caregivers", "router"]
+
+router = APIRouter()
+router.include_router(admin_router)
+router.include_router(patients_router)
 
 
 def authorize(
