@@ -1,6 +1,9 @@
 from functools import lru_cache
+from threading import BoundedSemaphore
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+EMAIL_SEND_SLOTS = BoundedSemaphore(5)
 
 
 class Settings(BaseSettings):
@@ -23,6 +26,14 @@ class Settings(BaseSettings):
     fcm_project_id: str = ""
     # Đường dẫn file JSON service account (Render Secret File); không đặt nội dung vào biến.
     fcm_credentials_file: str = ""
+
+    deletion_otp_hmac_key: str = ""
+    email_change_otp_hmac_key: str = ""
+    deletion_smtp_host: str = ""
+    deletion_smtp_port: int = 465
+    deletion_smtp_sender: str = ""
+    deletion_smtp_username: str = ""
+    deletion_smtp_password: str = ""
 
     llm_api_url: str = ""
     llm_api_key: str = ""

@@ -43,16 +43,20 @@ def scan_missed_doses(uow_factory, *, notifier: NotificationPort) -> int:
     s = get_settings()
     grace = timedelta(minutes=s.missed_dose_grace_minutes)
     _scan.validate_grace(grace)
+    access = AccessGuardAdapter()
     return _scan.scan_and_notify(
         uow_factory,
         notifier,
+        dispatch_alerts=lambda alerts: _scan.dispatch_authorized(
+            uow_factory, access, notifier, alerts
+        ),
         now=now(),
         grace=grace,
         overlap=timedelta(minutes=s.missed_dose_overlap_minutes),
         cursor=SqlScanCursor(),
         schedules=SchedulesAdapter(),
         dose_logs=SqlDoseLogs(),
-        access=AccessGuardAdapter(),
+        access=access,
         tokens=DeviceTokensAdapter(),
         notifications=SqlNotifications(),
         checkpoints=SqlSyncCheckpoints(),

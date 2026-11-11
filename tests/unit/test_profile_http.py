@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from unittest.mock import ANY, Mock
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -173,64 +173,19 @@ def test_profile_put_declares_email_change_errors(client, monkeypatch):
     assert "503" in operation["responses"]
 
 
-def test_profile_put_restores_auth_email_when_database_commit_fails(client, monkeypatch):
+def test_profile_put_returns_safe_500_if_database_commit_fails(client, monkeypatch):
     @contextmanager
     def fail_commit():
         yield object()
         raise RuntimeError("private database details")
 
     monkeypatch.setattr(http, "unit_of_work", fail_commit)
-    monkeypatch.setattr(
-        http,
-        "update_profile",
-        Mock(return_value=("old@example.com", True)),
-    )
-    restore = Mock()
-    monkeypatch.setattr(identity, "restore_profile_email", restore)
-
+    monkeypatch.setattr(http, "update_profile", Mock())
     response = client.put(
         "/profile",
-        json={
-            "full_name": "Bao",
-            "date_of_birth": "2000-01-01",
-            "gender": "nam",
-            "email": "new@example.com",
-        },
+        json={"full_name": "Bao", "date_of_birth": "2000-01-01", "gender": "nam"},
     )
-
     assert response.status_code == 500
-    restore.assert_called_once_with(ANY, "old@example.com")
-
-
-def test_profile_put_returns_503_if_auth_compensation_fails(client, monkeypatch):
-    @contextmanager
-    def fail_commit():
-        yield object()
-        raise RuntimeError("private database details")
-
-    monkeypatch.setattr(http, "unit_of_work", fail_commit)
-    monkeypatch.setattr(
-        http,
-        "update_profile",
-        Mock(return_value=("old@example.com", True)),
-    )
-    monkeypatch.setattr(
-        identity,
-        "restore_profile_email",
-        Mock(side_effect=RuntimeError("private auth details")),
-    )
-
-    response = client.put(
-        "/profile",
-        json={
-            "full_name": "Bao",
-            "date_of_birth": "2000-01-01",
-            "gender": "nam",
-            "email": "new@example.com",
-        },
-    )
-
-    assert response.status_code == 503
     assert "private" not in response.text
 
 

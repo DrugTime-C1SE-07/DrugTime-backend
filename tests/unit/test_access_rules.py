@@ -1,13 +1,13 @@
 from itertools import product
 from uuid import uuid4
 
-from drugtime.modules.access.domain.rules import AccessFacts, Action, ActorRole, decide
+from drugtime.modules.access.domain.rules import AccessFacts, Action, ActorRole, Scope, decide
 
 P, C = uuid4(), uuid4()
 
 
 def test_scope_maps_to_health_data():
-    from drugtime.modules.access.domain.rules import SCOPE_PURPOSE, Scope
+    from drugtime.modules.access.domain.rules import SCOPE_PURPOSE
 
     assert SCOPE_PURPOSE[Scope.LINKED_PATIENTS] == "health_data"
     assert str(Scope.LINKED_PATIENTS) == "danh_sach_benh_nhan_lien_ket"
@@ -142,3 +142,10 @@ def test_write_denies_linked_family_and_admin_with_their_role():
     assert not d.allowed and d.log_role is ActorRole.ADMIN and d.reason == "khong_co_quyen"
     d = decide(facts(active_sharing_link=False), Action.WRITE)
     assert not d.allowed and d.log_role is ActorRole.NO_ACCESS and d.reason == "khong_co_quyen"
+
+
+def test_pending_deletion_blocks_owner_meal_write_only():
+    patient = uuid4()
+    facts = AccessFacts(patient, patient, False, True, False, False, pending_deletion=True)
+    assert not decide(facts, Action.WRITE, scope=Scope.MEAL).allowed
+    assert decide(facts, Action.WRITE, scope=Scope.MEDICATIONS).allowed

@@ -4,6 +4,8 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from sqlalchemy import text
+
 from drugtime.modules.adherence.application.ports import (
     AccessGuard,
     DeviceTokens,
@@ -139,7 +141,12 @@ def _alert_family(
 
     # iOS vẫn có dòng notifications khi mở app (DM3, C-06, C-07, BS-03).
     return [
-        Alert(notification_id=created[recipient_id], recipient_id=recipient_id, device_token=token)
+        Alert(
+            notification_id=created[recipient_id],
+            recipient_id=recipient_id,
+            device_token=token,
+            patient_id=occ.patient_id,
+        )
         for recipient_id, token in tokens.android_tokens(uow, list(created))
     ]
 
@@ -147,6 +154,8 @@ def _alert_family(
 def scan_and_notify(
     uow_factory: Callable[[], AbstractContextManager[UnitOfWork]],
     notifier: NotificationPort,
+    *,
+    dispatch_alerts: Callable[[list[Alert]], tuple[int, list[str]]] | None = None,
     **ports,
 ) -> int:
     validate_grace(ports["grace"])
@@ -154,15 +163,42 @@ def scan_and_notify(
         result = scan(uow, **ports)
     # Best effort, chỉ sau khi notifications và hàng chờ đã commit (DW1 bước 11–12).
     unregistered: list[str] = []
-    if result.alerts:
-        unregistered += _dispatch("alerts", lambda: notifier.send(result.alerts))
+    alerts = result.alerts
+    sent = len(alerts)
+    if alerts and dispatch_alerts is not None:
+        sent, tokens_to_remove = dispatch_alerts(alerts)
+        unregistered += tokens_to_remove
+    elif alerts:
+        unregistered += _dispatch("alerts", lambda: notifier.send(alerts))
     if result.sync_requests:
         unregistered += _dispatch(
             "sync_requests", lambda: notifier.request_sync(result.sync_requests)
         )
     if unregistered:
         _remove_unregistered(uow_factory, ports["tokens"], unregistered)
-    return len(result.alerts)
+    return sent
+
+
+def dispatch_authorized(uow_factory, access: AccessGuard, notifier, alerts: list[Alert]):
+    sent = 0
+    unregistered = []
+    for alert in alerts:
+        if alert.patient_id is None:
+            continue
+        try:
+            with uow_factory() as uow:
+                uow.connection.execute(text("SET LOCAL lock_timeout = '5s'"))
+                uow.connection.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": f"account-deletion:{alert.patient_id}"},
+                )
+                if alert.recipient_id not in access.caregivers_of(uow, alert.patient_id):
+                    continue
+                unregistered.extend(notifier.send([alert]) or [])
+                sent += 1
+        except Exception:
+            log.warning("Push permission check or delivery failed; family alert skipped")
+    return sent, unregistered
 
 
 def _dispatch(kind: str, send: Callable[[], list[str] | None]) -> list[str]:

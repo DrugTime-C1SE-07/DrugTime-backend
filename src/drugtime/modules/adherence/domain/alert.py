@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
@@ -13,6 +13,7 @@ class Alert:
     device_token: str
     title: str = "DrugTime"
     body: str = "Bạn có cảnh báo mới về người thân"
+    patient_id: UUID | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)

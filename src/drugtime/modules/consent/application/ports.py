@@ -2,6 +2,7 @@ from typing import Protocol
 from uuid import UUID
 
 from drugtime.modules.consent.domain.consent import ActiveConsent
+from drugtime.modules.consent.domain.deletion_creation import DeletionOtpState, PendingDeletion
 from drugtime.modules.consent.domain.deletion_request import DeletionRequest
 from drugtime.modules.consent.domain.purpose import Purpose
 from drugtime.shared.uow import UnitOfWork
@@ -21,6 +22,14 @@ class UserDataEraser(Protocol):
 
 class AccountRemover(Protocol):
     def delete_account(self, user_id: UUID) -> None: ...
+
+
+class DeletionCreationStore(Protocol):
+    def lock(self, uow: UnitOfWork, user_id: UUID) -> None: ...
+    def otp_state(self, uow: UnitOfWork, user_id: UUID) -> DeletionOtpState: ...
+    def save_otp(self, uow: UnitOfWork, user_id: UUID, state: DeletionOtpState) -> None: ...
+    def pending(self, uow: UnitOfWork, user_id: UUID) -> PendingDeletion | None: ...
+    def insert(self, uow: UnitOfWork, user_id: UUID, request: PendingDeletion) -> None: ...
 
 
 class DeletionRequests(Protocol):

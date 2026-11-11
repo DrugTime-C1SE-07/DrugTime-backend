@@ -1,4 +1,3 @@
-import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
@@ -9,9 +8,7 @@ from drugtime.modules.identity.domain.profile import (
     normalize_contact_phone,
     validate_profile,
 )
-from drugtime.shared.errors import ServiceUnavailable, Unauthorized
-
-_LOGGER = logging.getLogger(__name__)
+from drugtime.shared.errors import Conflict, Unauthorized
 
 
 @dataclass(frozen=True)
@@ -51,32 +48,22 @@ def update_profile(
         at=at,
     )
     new_email = current.email if email is None else profile.email
-    email_changed = new_email != current.email
+    old_key = current.email.strip().lower() if current.email is not None else None
+    new_key = new_email.strip().lower() if new_email is not None else None
+    email_changed = old_key != new_key
     phone_fields = (
         {"phone_number": normalize_contact_phone(phone_number)} if phone_number is not None else {}
     )
     if email_changed:
-        auth.update_email(user_id, new_email)
+        raise Conflict("email_change_verification_required")
 
-    try:
-        users.update_profile(
-            user_id,
-            full_name=profile.full_name,
-            date_of_birth=date_of_birth,
-            gender=profile.gender,
-            email=new_email,
-            **phone_fields,
-        )
-    except Exception:
-        if email_changed:
-            try:
-                auth.update_email(user_id, current.email)
-            except Exception as rollback_error:
-                _LOGGER.error(
-                    "Could not restore Supabase email after profile DB update failed for user %s",
-                    user_id,
-                )
-                raise ServiceUnavailable("auth_provider_unavailable") from rollback_error
-        raise
+    users.update_profile(
+        user_id,
+        full_name=profile.full_name,
+        date_of_birth=date_of_birth,
+        gender=profile.gender,
+        # A concurrent verified email change owns this column.
+        **phone_fields,
+    )
 
     return ProfileUpdateResult(current.email, email_changed)

@@ -22,6 +22,7 @@ def resolve_access(
         facts.read(uow, caller_id, caller_is_admin, patient_id, scope),
         action,
         audit_self=(scope is Scope.HEALTH_PROFILE) or audit_self,
+        scope=scope,
     )
 
 
@@ -61,6 +62,8 @@ def authorized_caregivers(
     uow: UnitOfWork, facts: FactsReader, patient_id: UUID, scope: Scope = Scope.ADHERENCE
 ) -> list[UUID]:
     """Worker: người nhận cảnh báo theo đúng điều kiện nhánh family; không ghi log (CD6)."""
+    if facts.pending_deletion(uow, patient_id):
+        return []
     if not facts.has_consent(uow, patient_id, "family_sharing"):
         return []
     if not facts.has_consent(uow, patient_id, SCOPE_PURPOSE[scope]):

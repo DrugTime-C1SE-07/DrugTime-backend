@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -5,9 +6,11 @@ from uuid import uuid4
 
 import pytest
 
+from drugtime.modules.adherence import api
 from drugtime.modules.adherence.application.scan_missed_doses import scan
 from drugtime.modules.adherence.domain.alert import Alert
 from drugtime.notification_gateway.fcm import FcmGateway, build_fcm_payload
+from drugtime.shared.config import Settings
 
 
 class FakeSchedules:
@@ -40,6 +43,28 @@ def test_gateway_privacy_in_payload_and_failure_log(caplog, monkeypatch):
     message = build_fcm_payload(alert)["message"]
     assert message["data"] == {"notification_id": "7"}
     assert message["android"]["notification"]["visibility"] == "PRIVATE"
+
+
+def test_dispatch_rechecks_caregiver_after_scan_transaction(monkeypatch):
+    from drugtime.modules.adherence.application import scan_missed_doses as module
+
+    pending_patient, active_patient, recipient = uuid4(), uuid4(), uuid4()
+    blocked = Alert(1, recipient, "blocked-token", patient_id=pending_patient)
+    allowed = Alert(2, recipient, "allowed-token", patient_id=active_patient)
+    monkeypatch.setattr(module, "scan", lambda *a, **kw: module.ScanResult([blocked, allowed]))
+    monkeypatch.setattr(
+        api, "get_settings", lambda: Settings(_env_file=None, missed_dose_grace_minutes=120)
+    )
+    monkeypatch.setattr(
+        api, "AccessGuardAdapter", lambda: FakeAccessGuard({active_patient: [recipient]})
+    )
+    notifier = Mock()
+    notifier.send.return_value = []
+    count = api.scan_missed_doses(
+        lambda: nullcontext(SimpleNamespace(connection=Mock())), notifier=notifier
+    )
+    assert count == 1
+    notifier.send.assert_called_once_with([allowed])
 
 
 class FakeDoseLogs:

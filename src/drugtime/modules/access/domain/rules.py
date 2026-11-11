@@ -46,6 +46,7 @@ class AccessFacts:
     active_sharing_link: bool  # link active + sharing_enabled
     family_sharing_consent: bool  # consent family_sharing của patient
     patient_exists: bool = True  # patient_id có ứng với tài khoản nào không
+    pending_deletion: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,13 @@ def _role(f: AccessFacts) -> ActorRole:
     return ActorRole.NO_ACCESS
 
 
-def decide(f: AccessFacts, action: Action = Action.READ, *, audit_self: bool = False) -> Decision:
+def decide(
+    f: AccessFacts,
+    action: Action = Action.READ,
+    *,
+    audit_self: bool = False,
+    scope: Scope | None = None,
+) -> Decision:
     """Chính chủ: theo purpose consent, audit khi scope yêu cầu.
     Chỉ người thân hợp lệ được đọc dữ liệu
     của người khác; ghi luôn bị từ chối. Admin không đọc dữ liệu y tế (QD-32). log_role là vai
@@ -71,6 +78,11 @@ def decide(f: AccessFacts, action: Action = Action.READ, *, audit_self: bool = F
         return Decision(False, None, "khong_co_quyen")
     if f.caller_is_admin:
         return Decision(False, ActorRole.ADMIN, "khong_co_quyen")
+    if f.pending_deletion:
+        if f.caller_id != f.patient_id:
+            return Decision(False, _role(f), "khong_co_quyen")
+        if scope is Scope.MEAL and action is Action.WRITE:
+            return Decision(False, ActorRole.PATIENT, "khong_co_quyen")
     if f.caller_id == f.patient_id:
         return Decision(
             f.purpose_consent,

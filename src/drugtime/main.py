@@ -1,6 +1,8 @@
 """Composition root của Backend API (container Backend API)."""
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -48,6 +50,11 @@ _STATUS = {
     ServiceUnavailable: 503,
 }
 
+_DELETION_ROUTES = frozenset({"/data-deletion-requests", "/data-deletion-requests/otp"})
+_EMAIL_CHANGE_ROUTES = frozenset({
+    "/me/email-change/otp", "/me/email-change/verify-current", "/me/email-change/confirm"
+})
+
 
 # Responses never cached; failures become the generic 500 without re-raising, so the
 # server log never gets a traceback with sensitive SQL parameters (health data, OCR text).
@@ -90,16 +97,34 @@ def create_app() -> FastAPI:
 
     app.add_exception_handler(Exception, internal_error)
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        if request.scope["path"] not in (_DELETION_ROUTES | _EMAIL_CHANGE_ROUTES):
+            return await request_validation_exception_handler(request, exc)
+        # Pydantic validation details can echo the submitted OTP in input or context.
+        errors = [
+            {"loc": err["loc"], "msg": "Invalid input", "type": err["type"]}
+            for err in exc.errors()
+        ]
+        return JSONResponse({"detail": errors}, status_code=422)
+
     @app.middleware("http")
     async def sensitive_no_store(request: Request, call_next):
-        if (request.method, request.url.path) not in _NO_STORE_ROUTES:
+        deletion = request.method == "POST" and request.scope["path"] in (
+            _DELETION_ROUTES | _EMAIL_CHANGE_ROUTES
+        )
+        if not deletion and (request.method, request.url.path) not in _NO_STORE_ROUTES:
             return await call_next(request)
         try:
             response = await call_next(request)
         except Exception as exc:
             # Handle infrastructure/serialization failures here so ServerErrorMiddleware
             # never sends a health error without no-store or logs a sensitive exception.
-            response = internal_error(request, exc)
+            response = (
+                JSONResponse({"detail": "service_unavailable"}, status_code=503)
+                if deletion
+                else internal_error(request, exc)
+            )
         response.headers["Cache-Control"] = "no-store"
         return response
 
