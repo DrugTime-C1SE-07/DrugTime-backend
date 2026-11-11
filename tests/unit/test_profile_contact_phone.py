@@ -44,7 +44,7 @@ def test_contact_phone_update_does_not_change_auth_or_email():
     assert auth.mock_calls == []
     assert not result.auth_email_changed
     assert users.update_profile.call_args.kwargs["phone_number"] == "+84912345678"
-    assert users.update_profile.call_args.kwargs["email"] == "bao@example.com"
+    assert "email" not in users.update_profile.call_args.kwargs
 
 
 def test_invalid_phone_rejected_before_auth_or_database_update():
@@ -209,11 +209,11 @@ def test_unrelated_integrity_error_is_not_misreported_as_phone_conflict():
     assert exc.value is error
 
 
-def test_phone_conflict_restores_simultaneously_changed_email():
+def test_simultaneous_email_change_rejects_phone_update_without_mutation():
     users, auth, uid = Mock(), Mock(), uuid4()
     users.get_profile.return_value = ProfileRecord("Bao", None, None, "old@example.com")
     users.update_profile.side_effect = Conflict("phone_change_unavailable")
-    with pytest.raises(Conflict, match="phone_change_unavailable"):
+    with pytest.raises(Conflict, match="email_change_verification_required"):
         update_profile(
             users,
             auth,
@@ -225,10 +225,8 @@ def test_phone_conflict_restores_simultaneously_changed_email():
             phone_number="0912345678",
             at=datetime(2026, 1, 1),
         )
-    assert auth.update_email.call_args_list == [
-        ((uid, "new@example.com"),),
-        ((uid, "old@example.com"),),
-    ]
+    auth.update_email.assert_not_called()
+    users.update_profile.assert_not_called()
 
 
 def test_phone_propagates_through_identity_adapter_and_medication_read(monkeypatch):

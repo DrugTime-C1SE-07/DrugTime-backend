@@ -102,6 +102,29 @@ class SupabaseAuth:
                 raise Conflict("email_change_unavailable")
         _translate(r, credentials=False)
 
+    def verified_email(self, user_id: UUID) -> str | None:
+        if not self._service:
+            raise ServiceUnavailable("service_unavailable")
+        headers = {"apikey": self._service, "Authorization": f"Bearer {self._service}"}
+        try:
+            r = self._send("GET", f"{self._base}/admin/users/{user_id}", headers=headers)
+        except ServiceUnavailable:
+            raise ServiceUnavailable("service_unavailable") from None
+        if r.status_code == 404:
+            return None
+        if r.is_error:
+            raise ServiceUnavailable("service_unavailable")
+        try:
+            data = r.json()
+            if UUID(data["id"]) != user_id:
+                raise ValueError("unexpected account")
+            email = data.get("email")
+            if data.get("email_confirmed_at") and isinstance(email, str) and email.strip():
+                return email.strip()
+            return None
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise ServiceUnavailable("service_unavailable") from None
+
     def delete_account(self, user_id: UUID) -> None:
         headers = {"apikey": self._service, "Authorization": f"Bearer {self._service}"}
         r = self._request("DELETE", f"{self._base}/admin/users/{user_id}", headers=headers)

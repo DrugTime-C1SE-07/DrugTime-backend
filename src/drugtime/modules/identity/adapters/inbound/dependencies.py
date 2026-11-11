@@ -7,7 +7,7 @@ from fastapi import Depends, Header
 from drugtime.modules.identity.adapters.outbound.sql_users import SqlUsers
 from drugtime.modules.identity.application.sign_in import decode_app_session
 from drugtime.modules.identity.domain.user import CurrentUser, SessionType
-from drugtime.shared.db import SqlUnitOfWork, get_uow
+from drugtime.shared.db import SqlUnitOfWork, get_uow, unit_of_work
 from drugtime.shared.errors import Forbidden, Unauthorized
 
 _SESSION_TYPES = {str(t) for t in SessionType}
@@ -42,3 +42,14 @@ def require_admin(user: CurrentUser = Depends(current_user)) -> CurrentUser:
     if not user.is_admin:
         raise Forbidden("admin_only")
     return user
+
+
+def current_mobile_user(
+    authorization: str | None = Header(None),
+) -> CurrentUser:
+    with unit_of_work() as uow:
+        user = current_user(authorization, uow)
+        _, _, token = (authorization or "").partition(" ")
+        if user.is_admin or _decode(token).get("typ") != SessionType.MOBILE:
+            raise Forbidden("khong_co_quyen")
+        return user

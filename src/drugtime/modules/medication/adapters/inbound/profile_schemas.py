@@ -57,7 +57,7 @@ class ProfileUpdateRequest(BaseModel):
         max_length=254,
         json_schema_extra={"format": "email"},
         description=(
-            "Optional immediate login email change. Omit to preserve the current email; "
+            "Omit to preserve the current email; changing it requires email verification. "
             "null is invalid."
         ),
     )

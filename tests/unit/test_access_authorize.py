@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from drugtime.modules.access.application.authorize import authorize
+from drugtime.modules.access.application.authorize import authorize, authorized_caregivers
 from drugtime.modules.access.domain.rules import AccessFacts, Action, ActorRole, Scope
 from drugtime.shared.errors import Forbidden
 
@@ -77,6 +77,23 @@ def test_family_read_appends_allowed():
     log = Log()
     _call(Facts(), log)
     assert log.allowed == [(C, ActorRole.FAMILY, P, Scope.MEDICATIONS)] and log.denied == []
+
+
+def test_pending_deletion_denies_and_audits_family_read():
+    log = Log()
+    with pytest.raises(Forbidden, match="khong_co_quyen"):
+        _call(Facts(pending_deletion=True), log)
+    assert not log.allowed
+    assert log.denied == [(C, ActorRole.FAMILY, P, Scope.MEDICATIONS, "khong_co_quyen")]
+
+
+def test_worker_does_not_resolve_recipients_for_pending_deletion():
+    class PendingFacts:
+        def pending_deletion(self, uow, patient_id):
+            assert patient_id == P
+            return True
+
+    assert authorized_caregivers(object(), PendingFacts(), P) == []
 
 
 def test_denied_write_appends_denied_and_raises():

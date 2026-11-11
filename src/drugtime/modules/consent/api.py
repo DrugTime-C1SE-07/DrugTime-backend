@@ -3,11 +3,13 @@
 from collections.abc import Sequence
 from uuid import UUID
 
+from drugtime.modules.consent.adapters.inbound.deletion_http import router as deletion_router
 from drugtime.modules.consent.adapters.inbound.http import router
 from drugtime.modules.consent.adapters.outbound.sql_consent import (
     SqlConsents,
     SqlDeletionRequests,
 )
+from drugtime.modules.consent.adapters.outbound.sql_deletion_creation import SqlDeletionCreation
 from drugtime.modules.consent.application import execute_erasure as _erasure
 from drugtime.modules.consent.application.ports import AccountRemover, UserDataEraser
 from drugtime.modules.consent.domain.consent import check_document_version
@@ -22,9 +24,17 @@ __all__ = [
     "UserDataEraser",
     "execute_erasure",
     "has_active_consent",
+    "is_pending_deletion",
     "pending_erasure_ids",
     "router",
 ]
+
+router.include_router(deletion_router)
+
+
+def is_pending_deletion(uow: UnitOfWork, user_id: UUID) -> bool:
+    pending = SqlDeletionCreation().pending(uow, user_id)
+    return pending is not None and pending.scheduled_deletion_at is not None
 
 
 def has_active_consent(uow: UnitOfWork, user_id: UUID, purpose: Purpose | str) -> bool:

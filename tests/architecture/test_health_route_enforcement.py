@@ -74,3 +74,11 @@ def test_scoped_health_routes_have_registry_entries():
         for method in route.methods
     }
     assert declared == set(PROTECTED_HEALTH_ROUTES)
+
+
+@pytest.mark.parametrize("path", ["/data-deletion-requests", "/data-deletion-requests/otp"])
+def test_deletion_routes_require_mobile_identity(path):
+    app = create_app()
+    route, = [r for r in api_routes(app) if r.path == path and "POST" in r.methods]
+    assert identity.current_mobile_user in list(dependencies(route.dependant))
+    assert app.openapi()["paths"][path]["post"]["security"] == [{"bearerAuth": []}]

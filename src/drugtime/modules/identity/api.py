@@ -3,9 +3,20 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from drugtime.modules.identity.adapters.inbound.dependencies import current_user, require_admin
+from drugtime.modules.identity.adapters.inbound.dependencies import (
+    current_mobile_user,
+    current_user,
+    require_admin,
+)
+from drugtime.modules.identity.adapters.inbound.email_change_http import (
+    get_email_change,
+)
+from drugtime.modules.identity.adapters.inbound.email_change_http import (
+    router as email_change_router,
+)
 from drugtime.modules.identity.adapters.inbound.http import router
 from drugtime.modules.identity.adapters.outbound.sql_device_tokens import SqlDeviceTokens
+from drugtime.modules.identity.adapters.outbound.sql_email_change import SqlEmailChange
 from drugtime.modules.identity.adapters.outbound.sql_users import SqlUsers
 from drugtime.modules.identity.adapters.outbound.supabase_auth import SupabaseAuth
 from drugtime.modules.identity.application import erase_user as _erase
@@ -20,12 +31,12 @@ __all__ = [
     "ProfileUpdateResult",
     "get_profile",
     "update_profile",
-    "restore_profile_email",
     "CurrentUser",
     "account_remover",
     "android_tokens",
     "remove_device_tokens",
     "current_user",
+    "current_mobile_user",
     "eraser",
     "require_admin",
     "router",
@@ -33,7 +44,25 @@ __all__ = [
     "user_names",
     "user_emails",
     "user_exists",
+    "verified_email",
+    "email_change_applying",
+    "reconcile_email_change",
 ]
+
+router.include_router(email_change_router)
+
+
+def email_change_applying(uow: UnitOfWork, user_id: UUID) -> bool:
+    return SqlEmailChange().applying(uow, user_id)
+
+
+def reconcile_email_change(user_id: UUID) -> None:
+    """Trusted internal recovery; never expose this operation to app sessions."""
+    get_email_change().reconcile(user_id)
+
+
+def verified_email(user_id: UUID) -> str | None:
+    return SupabaseAuth().verified_email(user_id)
 
 
 def user_exists(uow: UnitOfWork, user_id: UUID) -> bool:
@@ -70,11 +99,6 @@ def update_profile(
 
 
 ProfileUpdateResult = _profile.ProfileUpdateResult
-
-
-def restore_profile_email(user_id: UUID, email: str | None) -> None:
-    """Compensate an Auth email update when the profile DB transaction fails."""
-    SupabaseAuth().update_email(user_id, email)
 
 
 def user_emails(uow: UnitOfWork, user_ids: list[UUID]) -> dict[UUID, str | None]:

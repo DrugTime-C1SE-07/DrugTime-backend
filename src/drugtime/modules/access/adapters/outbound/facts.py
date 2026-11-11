@@ -29,7 +29,12 @@ class ModuleFactsReader:
             family_sharing_consent=(not is_self)
             and consent.has_active_consent(uow, patient_id, consent.Purpose.FAMILY_SHARING),
             patient_exists=is_self or identity.user_exists(uow, patient_id),
+            pending_deletion=(not is_self or scope is Scope.MEAL)
+            and self.pending_deletion(uow, patient_id),
         )
+
+    def pending_deletion(self, uow: UnitOfWork, patient_id: UUID) -> bool:
+        return consent.is_pending_deletion(uow, patient_id)
 
     def sharing_family_ids(self, uow: UnitOfWork, patient_id: UUID) -> list[UUID]:
         return family.sharing_family_ids(uow, patient_id)

@@ -1,4 +1,3 @@
-import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -30,9 +29,7 @@ from drugtime.modules.medication.application.manage_user_conditions import (
 )
 from drugtime.modules.medication.domain.user_condition import NewUserCondition
 from drugtime.shared.db import unit_of_work
-from drugtime.shared.errors import DomainError, ServiceUnavailable
-
-_LOGGER = logging.getLogger(__name__)
+from drugtime.shared.errors import DomainError
 
 # Authentication remains in identity.current_user; this declares its bearer contract.
 router = APIRouter(
@@ -102,35 +99,21 @@ def put_profile(
     user: identity.CurrentUser = Depends(identity.current_user),
 ):
     _self_only(request)
-    change = None
-    try:
-        with unit_of_work() as uow:
-            change = update_profile(
-                uow,
-                user_id=user.id,
-                is_admin=user.is_admin,
-                access=_ACCESS,
-                profiles=_PROFILES,
-                full_name=body.full_name,
-                date_of_birth=body.date_of_birth,
-                gender=body.gender,
-                email=body.email,
-                phone_number=body.phone_number,
-                at=datetime.now(UTC),
-            )
-            response = Response(status_code=204)
-    except Exception:
-        if change is not None and change[1]:
-            try:
-                identity.restore_profile_email(user.id, change[0])
-            except Exception as rollback_error:
-                _LOGGER.error(
-                    "Could not restore Auth email after profile transaction failure for user %s",
-                    user.id,
-                )
-                raise ServiceUnavailable("auth_provider_unavailable") from rollback_error
-        raise
-    return response
+    with unit_of_work() as uow:
+        update_profile(
+            uow,
+            user_id=user.id,
+            is_admin=user.is_admin,
+            access=_ACCESS,
+            profiles=_PROFILES,
+            full_name=body.full_name,
+            date_of_birth=body.date_of_birth,
+            gender=body.gender,
+            email=body.email,
+            phone_number=body.phone_number,
+            at=datetime.now(UTC),
+        )
+    return Response(status_code=204)
 
 
 @router.post(

@@ -68,6 +68,23 @@ def test_profile_get_put_incomplete_complete__AC01_AC04(client, db, make, auth, 
         assert client.get("/profile", headers=headers).json() == profile
 
 
+def test_profile_rejects_unverified_email_change_and_preserves_fields__AC2(client, make, auth):
+    user = make.user()
+    headers = auth(user)
+    before = client.get("/profile", headers=headers).json()
+    body = {"full_name": "Changed", "date_of_birth": "2000-01-01", "gender": "male"}
+    change = client.put(
+        "/profile", json={**body, "email": "replacement@example.test"}, headers=headers
+    )
+    assert change.status_code == 409
+    assert change.json() == {"detail": "email_change_verification_required"}
+    assert client.get("/profile", headers=headers).json() == before
+    assert client.put(
+        "/profile", json={**body, "email": before["email"]}, headers=headers
+    ).status_code == 204
+    assert client.get("/profile", headers=headers).json() == {**before, **body}
+
+
 def test_conditions_pagination_no_patient_data__AC05(client, db, make, auth):
     user = make.user(consents=())
     ids = [condition(db), condition(db)]
