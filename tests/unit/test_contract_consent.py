@@ -8,7 +8,14 @@ import json
 import pytest
 
 from drugtime.main import create_app
-from tests.unit.test_contract_medication import CONTRACT, _object, _request, _response, _shape
+from tests.unit.test_contract_medication import (
+    CONTRACT,
+    _object,
+    _query_params,
+    _request,
+    _response,
+    _shape,
+)
 
 OPERATIONS = [
     ("get", "/consents"),
@@ -39,6 +46,30 @@ def test_operations_match_contract(specs, method, path):
             assert _shape(contract, _response(contract, c_op, code)) == _shape(
                 app, _response(app, a_op, code)
             ), (method, path, code)
+
+
+def test_pending_deletion_queue_matches_contract(specs):
+    contract, app = specs
+    path = "/admin/deletion-requests"
+    c_op, a_op = (spec["paths"][path]["get"] for spec in specs)
+
+    assert c_op["operationId"] == a_op["operationId"]
+    assert c_op["security"] == a_op["security"]
+    assert _query_params(c_op) == _query_params(a_op)
+    assert "requestBody" not in a_op
+    assert set(c_op["responses"]) == set(a_op["responses"])
+    assert c_op["responses"]["200"]["headers"] == a_op["responses"]["200"]["headers"]
+
+    c_page = _object(contract, _response(contract, c_op, "200"))
+    a_page = _object(app, _response(app, a_op, "200"))
+    c_item = _object(contract, c_page["properties"]["items"]["items"])
+    a_item = _object(app, a_page["properties"]["items"]["items"])
+    for expected, actual in ((c_page, a_page), (c_item, a_item)):
+        assert set(expected["required"]) == set(actual["required"])
+        assert expected["additionalProperties"] == actual["additionalProperties"]
+        for name, field in expected["properties"].items():
+            for constraint in ("type", "format", "minimum", "maxItems", "const"):
+                assert field.get(constraint) == actual["properties"][name].get(constraint)
 
 
 def test_grant_body_forbids_unknown_fields_and_bounds_version(specs):

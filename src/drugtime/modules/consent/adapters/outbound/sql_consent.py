@@ -3,7 +3,11 @@ from uuid import UUID
 from sqlalchemy import text
 
 from drugtime.modules.consent.domain.consent import ActiveConsent
-from drugtime.modules.consent.domain.deletion_request import DeletionRequest, DeletionStatus
+from drugtime.modules.consent.domain.deletion_request import (
+    DeletionRequest,
+    DeletionStatus,
+    PendingDeletionRequest,
+)
 from drugtime.modules.consent.domain.purpose import Purpose
 from drugtime.shared.uow import UnitOfWork
 
@@ -92,6 +96,35 @@ class SqlConsents:
 
 
 class SqlDeletionRequests:
+    def list_pending(
+        self, uow: UnitOfWork, *, skip: int, limit: int
+    ) -> tuple[list[PendingDeletionRequest], int]:
+        rows = uow.connection.execute(
+            text(
+                """
+                SELECT page.id, page.user_id, page.requested_at, counts.total
+                FROM (
+                    SELECT count(*) AS total
+                    FROM data_deletion_requests WHERE status = 'cho_duyet'
+                ) AS counts
+                LEFT JOIN (
+                    SELECT id, user_id, requested_at
+                    FROM data_deletion_requests WHERE status = 'cho_duyet'
+                    ORDER BY requested_at, id
+                    LIMIT :limit OFFSET :skip
+                ) AS page ON true
+                ORDER BY page.requested_at, page.id
+                """
+            ),
+            {"limit": limit, "skip": min(skip, 2**63 - 1)},
+        ).all()
+        items = [
+            PendingDeletionRequest(row.id, row.user_id, row.requested_at)
+            for row in rows
+            if row.id is not None
+        ]
+        return items, rows[0].total
+
     def get(self, uow: UnitOfWork, request_id: UUID) -> DeletionRequest | None:
         row = uow.connection.execute(
             text("SELECT id, user_id, status FROM data_deletion_requests WHERE id = :id"),

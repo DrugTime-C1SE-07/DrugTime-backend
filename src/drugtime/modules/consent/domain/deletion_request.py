@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
@@ -18,3 +19,10 @@ class DeletionRequest:
 
     def can_execute(self) -> bool:
         return self.status is DeletionStatus.APPROVED
+
+
+@dataclass(frozen=True)
+class PendingDeletionRequest:
+    id: int
+    user_id: UUID
+    requested_at: datetime
