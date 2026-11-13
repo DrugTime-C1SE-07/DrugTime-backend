@@ -1,12 +1,21 @@
-from fastapi import APIRouter, Depends, Response
+from collections.abc import Iterator
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 
 from drugtime.modules.consent.adapters.inbound.schemas import (
     Consent,
     ConsentGrantRequest,
     ConsentList,
+    PendingDataDeletionRequest,
+    PendingDataDeletionRequestPage,
+    PendingDeletionQueueQuery,
 )
-from drugtime.modules.consent.adapters.outbound.sql_consent import SqlConsents
+from drugtime.modules.consent.adapters.outbound.sql_consent import SqlConsents, SqlDeletionRequests
 from drugtime.modules.consent.application.manage_consents import (
     grant_consent,
     list_consents,
@@ -14,7 +23,8 @@ from drugtime.modules.consent.application.manage_consents import (
 )
 from drugtime.modules.consent.domain.purpose import Purpose
 from drugtime.modules.identity import api as identity
-from drugtime.shared.db import SqlUnitOfWork, get_uow
+from drugtime.shared.db import SqlUnitOfWork, get_uow, unit_of_work
+from drugtime.shared.errors import ServiceUnavailable
 
 router = APIRouter(tags=["consent"])
 
@@ -91,6 +101,74 @@ def post_withdraw_consent(
     return Consent.from_state(state)
 
 
-# TODO: POST /deletion-requests, Admin: GET /admin/deletion-requests,
-#       POST /admin/deletion-requests/{id}/approve
+def get_deletion_queue_uow() -> Iterator[SqlUnitOfWork]:
+    try:
+        with unit_of_work() as uow:
+            yield uow
+    except SQLAlchemyError as exc:
+        raise ServiceUnavailable("service_unavailable") from exc
+
+
+DeletionQueueUow = Annotated[SqlUnitOfWork, Depends(get_deletion_queue_uow, scope="function")]
+
+
+def require_deletion_queue_admin(
+    uow: DeletionQueueUow, authorization: str | None = Header(None)
+) -> identity.CurrentUser:
+    user = identity.current_user(authorization=authorization, uow=uow)
+    return identity.require_admin(user)
+
+
+async def validate_deletion_queue_input(request: Request) -> None:
+    errors = [
+        {
+            "loc": ("query", key),
+            "type": "value_error",
+            "msg": "Query parameter must not be repeated",
+        }
+        for key in ("skip", "limit")
+        if len(request.query_params.getlist(key)) > 1
+    ]
+    if await request.body():
+        errors.append(
+            {"loc": ("body",), "type": "extra_forbidden", "msg": "Request body is not allowed"}
+        )
+    if errors:
+        raise RequestValidationError(errors)
+
+
+@router.get(
+    "/admin/deletion-requests",
+    response_model=PendingDataDeletionRequestPage,
+    responses={
+        200: {
+            "headers": {
+                "Cache-Control": {
+                    "required": True,
+                    "schema": {"type": "string", "const": "no-store"},
+                }
+            }
+        },
+        **_UNAUTHORIZED,
+        403: {"model": ErrorDetail, "description": "Chỉ Admin (`admin_only`)"},
+        503: {"model": ErrorDetail, "description": "Không thể đọc hàng chờ"},
+    },
+    dependencies=[
+        Depends(HTTPBearer(auto_error=False, scheme_name="bearerAuth", bearerFormat="JWT")),
+        Depends(require_deletion_queue_admin),
+        Depends(validate_deletion_queue_input),
+    ],
+    operation_id="listPendingDataDeletionRequests",
+)
+def list_pending_deletion_requests(
+    response: Response, uow: DeletionQueueUow, query: Annotated[PendingDeletionQueueQuery, Query()]
+) -> PendingDataDeletionRequestPage:
+    records, total = SqlDeletionRequests().list_pending(uow, skip=query.skip, limit=query.limit)
+    response.headers["Cache-Control"] = "no-store"
+    return PendingDataDeletionRequestPage(
+        items=[PendingDataDeletionRequest.from_record(record) for record in records], total=total
+    )
+
+
+# TODO: POST /deletion-requests and POST /admin/deletion-requests/{id}/approve
 #       (approve: set da_duyet trong transaction, rồi job_queue.enqueue_erasure)

@@ -1,12 +1,14 @@
-"""Request/response của /consents, khớp api_contract/openapi.json (task 1.14)."""
+"""Request/response của module consent, khớp api_contract/openapi.json."""
 
 from datetime import datetime
 from typing import Annotated, Literal
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from drugtime.modules.consent.domain.consent import ConsentState
+from drugtime.modules.consent.domain.deletion_request import PendingDeletionRequest
 from drugtime.modules.consent.domain.purpose import Purpose
 from drugtime.shared.config import get_settings
 
@@ -41,3 +43,35 @@ class Consent(BaseModel):
 
 class ConsentList(BaseModel):
     items: list[Consent]
+
+
+class PendingDeletionQueueQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    skip: Annotated[int, Field(ge=0)] = 0
+    limit: Annotated[int, Field(ge=1, le=100)] = 20
+
+
+class PendingDataDeletionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Annotated[int, Field(ge=1, json_schema_extra={"format": "int64"})]
+    user_id: UUID
+    requested_at: datetime
+    status: Literal["cho_duyet"]
+
+    @classmethod
+    def from_record(cls, record: PendingDeletionRequest) -> "PendingDataDeletionRequest":
+        return cls(
+            id=record.id,
+            user_id=record.user_id,
+            requested_at=record.requested_at.astimezone(ZoneInfo(get_settings().timezone)),
+            status="cho_duyet",
+        )
+
+
+class PendingDataDeletionRequestPage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: Annotated[list[PendingDataDeletionRequest], Field(max_length=100)]
+    total: Annotated[int, Field(ge=0)]
