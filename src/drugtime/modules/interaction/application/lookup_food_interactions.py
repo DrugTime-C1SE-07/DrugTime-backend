@@ -87,6 +87,29 @@ def lookup_food_interactions(
         action=Action.READ,
         audit_self=True,
     )
+    return build_food_report(
+        uow,
+        patient_id=patient_id,
+        user_medication_id=user_medication_id,
+        medications=medications,
+        catalog=catalog,
+        ingredients=ingredients,
+        rules=rules,
+    )
+
+
+def build_food_report(
+    uow: UnitOfWork,
+    *,
+    patient_id: UUID,
+    user_medication_id: int | None,
+    medications: PatientMedicationReader,
+    catalog: CatalogMedicationReader,
+    ingredients: IngredientReader,
+    rules: FoodRuleReader,
+) -> FoodReport:
+    """Phần sau PEP của tra cứu. Không kiểm quyền: người gọi phải gọi PEP trước
+    (dùng lại cho gợi ý bữa ăn, task 4.26)."""
     if user_medication_id is None:
         refs = list(medications.active(uow, patient_id))
     else:

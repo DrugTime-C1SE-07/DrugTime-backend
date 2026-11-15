@@ -217,3 +217,29 @@ def test_empty_patient_list_is_insufficient__AC15():
     report = run(calls, meds=FakeMeds(calls, active=[]), infos={})
     assert report.medications == () and report.status is CheckResult.INSUFFICIENT_DATA
     assert ("ingredients.names", ()) not in calls
+
+
+def test_build_food_report_skips_pep__4_26():
+    """Task 4.26: phần sau PEP dùng lại cho gợi ý bữa ăn; không tự kiểm quyền hay ghi log."""
+    calls = Calls()
+    with patch.object(uc.access, "authorize", side_effect=AssertionError("PEP must not run")):
+        report = uc.build_food_report(
+            object(),
+            patient_id=PATIENT,
+            user_medication_id=None,
+            medications=FakeMeds(calls, active=[]),
+            catalog=FakeCatalog(calls, {}),
+            ingredients=FakeIngredients(calls, {}, {}),
+            rules=FakeRules(calls, []),
+        )
+    assert report.status is CheckResult.INSUFFICIENT_DATA
+    assert not any(isinstance(c, tuple) and c[0] == "authorize" for c in calls)
+
+
+def test_patient_food_report_api_uses_build_without_pep__4_26():
+    from drugtime.modules.interaction import api
+
+    with patch.object(api, "build_food_report", return_value="report") as build:
+        assert api.patient_food_report("uow", PATIENT) == "report"
+    assert build.call_args.kwargs["patient_id"] == PATIENT
+    assert build.call_args.kwargs["user_medication_id"] is None

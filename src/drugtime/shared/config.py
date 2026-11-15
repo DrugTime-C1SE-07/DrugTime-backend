@@ -1,6 +1,7 @@
 from functools import lru_cache
 from threading import BoundedSemaphore
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 EMAIL_SEND_SLOTS = BoundedSemaphore(5)
@@ -35,8 +36,14 @@ class Settings(BaseSettings):
     deletion_smtp_username: str = ""
     deletion_smtp_password: str = ""
 
+    # Gợi ý bữa ăn bằng Claude (task 4.26). Rỗng URL = endpoint mặc định của Anthropic.
+    # Key là SecretStr để repr(Settings) và log không lộ giá trị.
     llm_api_url: str = ""
-    llm_api_key: str = ""
+    llm_api_key: SecretStr = SecretStr("")
+    llm_model: str = "claude-sonnet-5-5"
+    llm_timeout_seconds: float = 8.0
+    # Tắt mặc định: chỉ bật bằng env ở môi trường đã được phép gửi dữ liệu ra LLM (QD-41).
+    ai_meal_llm_enabled: bool = False
 
     session_jwt_secret: str = ""
     mobile_session_days: int = 10

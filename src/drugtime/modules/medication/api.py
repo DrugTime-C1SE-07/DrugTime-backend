@@ -11,8 +11,12 @@ from drugtime.modules.medication.adapters.inbound.http import (
 )
 from drugtime.modules.medication.adapters.inbound.http import router as _medications_router
 from drugtime.modules.medication.adapters.inbound.profile_http import router as _profile_router
-from drugtime.modules.medication.adapters.outbound.other_modules import CatalogAdapter
+from drugtime.modules.medication.adapters.outbound.other_modules import (
+    CatalogAdapter,
+    ConditionCatalogAdapter,
+)
 from drugtime.modules.medication.adapters.outbound.sql_medication import SqlMedication
+from drugtime.modules.medication.adapters.outbound.sql_user_conditions import SqlUserConditions
 from drugtime.modules.medication.application.ports import RecordedDoses
 from drugtime.modules.medication.domain.schedule import DoseOccurrence
 from drugtime.modules.medication.domain.user_medication import PatientMedicationRef
@@ -26,6 +30,7 @@ __all__ = [
     "configure",
     "eraser",
     "occurrences_between",
+    "patient_condition_names",
     "patient_medication_ref",
     "patient_medication_refs",
     "router",
@@ -78,6 +83,13 @@ def patient_medication_ref(
 ) -> PatientMedicationRef | None:
     """Thuốc chưa xoá của đúng người bệnh, kể cả đã ngừng; None nếu không thuộc người này."""
     return SqlMedication().medication_ref(uow, patient_id, user_medication_id)
+
+
+def patient_condition_names(uow: UnitOfWork, patient_id: UUID) -> list[str]:
+    """Tên bệnh nền trong hồ sơ, sắp theo tên. Người gọi phải kiểm quyền trước (task 4.26)."""
+    ids = sorted({link.condition_id for link in SqlUserConditions().list(uow, patient_id)})
+    names = ConditionCatalogAdapter().names(uow, ids) if ids else {}
+    return sorted(names[i] for i in ids if i in names)
 
 
 class _Eraser:
