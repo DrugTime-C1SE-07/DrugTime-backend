@@ -5,6 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
+from drugtime.modules.catalog.adapters.inbound.allergens_http import router as _allergens_router
 from drugtime.modules.catalog.adapters.inbound.conditions_http import router as _conditions_router
 from drugtime.modules.catalog.adapters.inbound.http import router as _catalog_router
 from drugtime.modules.catalog.adapters.inbound.ocr_match_http import router as _ocr_match_router
@@ -18,6 +19,7 @@ from drugtime.modules.catalog.application.lookup_ocr_candidates import (
 )
 from drugtime.modules.catalog.application.normalize_ocr import normalize_ocr_text
 from drugtime.modules.catalog.application.scheduling import is_sync_due
+from drugtime.modules.catalog.domain.allergen import allergen_exists
 from drugtime.modules.catalog.domain.catalog_index import (
     MatchKind,
     MatchSource,
@@ -56,6 +58,7 @@ __all__ = [
     "lookup_ocr_candidates",
     "normalize_ocr_text",
     "Condition",
+    "allergen_exists",
     "get_condition",
     "condition_names",
     "CatalogMedication",
@@ -72,6 +75,7 @@ router = APIRouter()
 router.include_router(_catalog_router)
 router.include_router(_ocr_match_router)
 router.include_router(_conditions_router)
+router.include_router(_allergens_router)
 
 
 def lookup_ocr_candidates(uow: UnitOfWork, normalized: NormalizedOcrText) -> OcrCatalogLookup:

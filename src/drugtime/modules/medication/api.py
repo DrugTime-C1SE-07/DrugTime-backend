@@ -5,6 +5,9 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
+from drugtime.modules.medication.adapters.inbound.health_setup_http import (
+    router as _health_setup_router,
+)
 from drugtime.modules.medication.adapters.inbound.http import (
     patients_router,
     set_recorded_doses,
@@ -39,6 +42,7 @@ router = APIRouter()
 router.include_router(_medications_router)
 router.include_router(patients_router)
 router.include_router(_profile_router)
+router.include_router(_health_setup_router)
 
 
 def configure(*, recorded_doses: RecordedDoses) -> None:

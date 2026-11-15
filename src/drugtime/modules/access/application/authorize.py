@@ -1,7 +1,14 @@
 from uuid import UUID
 
 from drugtime.modules.access.application.ports import AccessLog, FactsReader
-from drugtime.modules.access.domain.rules import SCOPE_PURPOSE, Action, Decision, Scope, decide
+from drugtime.modules.access.domain.rules import (
+    SCOPE_PURPOSE,
+    Action,
+    ActorRole,
+    Decision,
+    Scope,
+    decide,
+)
 from drugtime.shared.errors import Forbidden
 from drugtime.shared.uow import UnitOfWork
 
@@ -36,6 +43,7 @@ def authorize(
     scope: Scope,
     action: Action = Action.READ,
     audit_self: bool = False,
+    rejected_owner_selector: bool = False,
 ) -> None:
     decision = resolve_access(
         uow,
@@ -47,6 +55,13 @@ def authorize(
         action=action,
         audit_self=audit_self,
     )
+    if rejected_owner_selector:
+        if decision.log_role is None:
+            patient_id = caller_id
+        role = decision.log_role or ActorRole.NO_ACCESS
+        if patient_id == caller_id:
+            role = ActorRole.ADMIN if caller_is_admin else ActorRole.PATIENT
+        decision = Decision(False, role, "khong_co_quyen")
     if decision.allowed:
         if decision.log_role is not None:
             # Cùng transaction với request: ghi log lỗi thì request lỗi (fail-closed).
