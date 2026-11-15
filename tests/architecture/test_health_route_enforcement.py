@@ -33,6 +33,12 @@ PROTECTED_HEALTH_ROUTES = {
         "checkPatientInteractions",
         True,
     ),
+    # Task 4.26: gợi ý bữa ăn, chỉ chính chủ (Action.WRITE), ghi log cả khi tự gọi.
+    ("POST", "/patients/{patient_id}/meal-suggestions"): (
+        "goi_y_bua_an",
+        "createMealSuggestions",
+        True,
+    ),
 }
 
 
