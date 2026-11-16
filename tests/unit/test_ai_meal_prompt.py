@@ -1,4 +1,4 @@
-"""Input, prompt builder và khớp chuỗi của gợi ý bữa ăn (task 4.26: AC1, AC2, AC4)."""
+"""Input, prompt builder, khớp chuỗi của gợi ý bữa ăn (4.26: AC1, AC2, AC4; 5.11: AC14, AC20)."""
 
 import json
 from uuid import uuid4
@@ -163,3 +163,57 @@ def test_contains_any_respects_word_boundaries():
     assert contains_any("Chuối tiêu", ["chuoi"])
     assert contains_any("Canh Tôm chua", ["tom"])
     assert not contains_any("Gạo lứt", ["ga"])
+
+
+# --- Task 5.11: meal-v2 ----------------------------------------------------------------------
+
+
+def test_meal_v2_version_and_schema__AC20():
+    assert PROMPT_VERSION == "meal-v2"
+    item = LLM_OUTPUT_SCHEMA["properties"]["suggestions"]["items"]
+    assert item["properties"]["dish_type"]["enum"] == [
+        "com", "mon_nuoc", "mon_man", "mon_xao", "mon_hap_luoc", "chao_sup", "salad", "khac"
+    ]
+    assert item["properties"]["image_query"] == {"type": "string"}
+    assert {"dish_type", "image_query"} <= set(item["required"])
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "MỘT NGƯỜI, MỘT BỮA",  # khẩu phần
+        "ít nhất 2 loại khác nhau",  # đa dạng
+        "nguồn tinh bột",  # trưa/tối có tinh bột
+        "phù hợp với từng bệnh nền",
+        "use_sparingly = true",
+        "chỉ số đường huyết cao",
+        "không lặp nguyên câu",
+        "tối đa 60 ký tự",  # image_query
+        "Chỉ mô tả món ăn",
+    ],
+)
+def test_meal_v2_quality_rules_in_system_prompt__AC20(phrase):
+    assert phrase in build_prompt(_input()).system
+
+
+def _context(p):
+    return json.loads(p.user.split("<ngu_canh>" + chr(10))[1].split(chr(10) + "</ngu_canh>")[0])
+
+
+def test_first_request_has_no_previous_dishes__AC14():
+    p = build_prompt(_input())
+    assert "mon_da_goi_y" not in _context(p)
+    assert "món mới" not in p.user.split("</ngu_canh>")[1]
+
+
+def test_refresh_prompt_lists_old_names_and_count__AC14():
+    names = ["Canh chua cá", " canh chua cá ", "Cơm gà"]
+    p = build_prompt(_input(), avoid_dish_names=names, count=3)
+    ctx = _context(p)
+    assert ctx["mon_da_goi_y"] == ["Canh chua cá", "Cơm gà"]
+    assert "đúng 3 món mới" in p.user
+    # Chỉ tên món: không định danh, không thêm khóa nào khác ngoài ngữ cảnh 4.26.
+    assert set(ctx) == {
+        "phien_ban_prompt", "meal_type", "bua_an", "benh_nen", "di_ung", "han_che_an_uong",
+        "thuc_pham_can_tranh", "hoat_chat_dang_dung", "so_thich", "mon_da_goi_y",
+    }

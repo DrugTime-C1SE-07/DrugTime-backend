@@ -1,4 +1,4 @@
-"""Port của ai_meal (task 4.26)."""
+"""Port của ai_meal (task 4.26; ảnh và gợi ý lại: task 5.11)."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -53,4 +53,79 @@ class ConditionReader(Protocol):
 
 
 class MealSuggestionStore(Protocol):
-    def insert(self, uow: UnitOfWork, user_id: UUID, content: dict) -> tuple[int, datetime]: ...
+    def insert(
+        self,
+        uow: UnitOfWork,
+        user_id: UUID,
+        content: dict,
+        previous_suggestion_id: int | None = None,
+    ) -> tuple[int, datetime]: ...
+
+    def find_previous(self, uow: UnitOfWork, suggestion_id: int, user_id: UUID) -> dict | None:
+        """`suggestion_content` của bản ghi thuộc đúng `user_id`; None nếu không có."""
+        ...
+
+    def count_refreshes(
+        self, uow: UnitOfWork, user_id: UUID, since: datetime, *, lock: bool
+    ) -> int:
+        """Số lần gợi ý lại thành công từ `since`. `lock`: giữ khóa theo user tới hết
+        transaction để request đồng thời không vượt giới hạn (AC27)."""
+        ...
+
+
+@dataclass(frozen=True)
+class ImageReservation:
+    image_id: int
+    status: str  # pending | ready | failed
+    enqueue: bool
+
+
+@dataclass(frozen=True)
+class ImageState:
+    """Trạng thái hiệu lực (pending quá 2 phút → failed) và thông tin ghi nguồn khi ready."""
+
+    image_id: int
+    status: str
+    storage_path: str | None = None
+    content_type: str | None = None
+    photographer_name: str | None = None
+    photographer_url: str | None = None
+    source_url: str | None = None
+
+
+class MealImageStore(Protocol):
+    def reserve(self, uow: UnitOfWork, dish_key: str, query: str) -> ImageReservation: ...
+
+    def states(self, uow: UnitOfWork, ids: list[int]) -> dict[int, ImageState]: ...
+
+
+@dataclass(frozen=True)
+class PendingImage:
+    image_id: int
+    query: str
+
+
+@dataclass(frozen=True)
+class FoundImage:
+    content: bytes
+    content_type: str
+    provider_photo_id: str
+    photographer_name: str
+    photographer_url: str
+    source_url: str
+
+
+class ImageSearch(Protocol):
+    def find(self, query: str) -> FoundImage:
+        """Raise `ImageSearchFailed`. Chỉ `query` được gửi ra nhà cung cấp."""
+        ...
+
+
+class ImageStorage(Protocol):
+    def upload(self, path: str, content: bytes, content_type: str) -> None: ...
+
+    def download(self, path: str) -> bytes: ...
+
+
+class ImageJobQueue(Protocol):
+    def enqueue(self, image_id: int) -> None: ...
