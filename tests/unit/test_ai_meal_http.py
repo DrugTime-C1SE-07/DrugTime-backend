@@ -1,4 +1,4 @@
-"""Unit test HTTP POST /patients/{patient_id}/meal-suggestions (task 4.26).
+"""Unit test HTTP POST /patients/{patient_id}/meal-suggestions (task 4.26; 5.11).
 
 AC7, AC10, AC12, AC12b, AC17, AC18 ở mức HTTP, không DB thật, không gọi Claude.
 """
@@ -36,7 +36,8 @@ CHECK = FoodCheck("co_tuong_tac", (WARNING,), ("Losartan",), ("Cozaar",))
 GOOD = json.dumps({
     "meal_type": "trua",
     "suggestions": [{
-        "name": "Cơm gà luộc", "tags": ["Ít muối"], "kcal_estimate": 500, "cook_minutes": 30,
+        "name": "Cơm gà luộc", "dish_type": "com", "image_query": "boiled chicken rice",
+        "tags": ["Ít muối"], "kcal_estimate": 500, "cook_minutes": 30,
         "benefits": [{"text": "Ít muối, tốt cho huyết áp", "related_to": "condition:1"},
                      {"text": "Tốt cho tim", "related_to": "general"}],
         "ingredients": [{"name": "Gà", "amount": "120 g", "group": "chinh",
@@ -81,12 +82,28 @@ class Uow:
 
 
 class Store:
-    def __init__(self):
-        self.rows = []
+    def __init__(self, previous=None, used=0):
+        self.rows, self.previous, self.used = [], previous, used
 
-    def insert(self, uow, user_id, content):
+    def insert(self, uow, user_id, content, previous_suggestion_id=None):
         self.rows.append(content)
         return 3051, T0
+
+    def find_previous(self, uow, suggestion_id, user_id):
+        return self.previous
+
+    def count_refreshes(self, uow, user_id, since, *, lock):
+        return self.used
+
+
+class Queue:
+    def __init__(self, fail=False):
+        self.fail, self.sent = fail, []
+
+    def enqueue(self, image_id):
+        if self.fail:
+            raise ConnectionError("broker down amqp://guest:secret@host")
+        self.sent.append(image_id)
 
 
 def _user(patient=PATIENT):
@@ -97,10 +114,13 @@ def _fake_get_uow():
     yield MagicMock()
 
 
-def _client(suggester, user=True):
+def _client(suggester, user=True, images=None, queue=None, limit=2):
     app = create_app()
     app.dependency_overrides[get_uow] = _fake_get_uow
     app.dependency_overrides[http.get_meal_suggester] = lambda: suggester
+    app.dependency_overrides[http.get_meal_images] = lambda: images
+    app.dependency_overrides[http.get_image_queue] = lambda: queue or Queue()
+    app.dependency_overrides[http.get_refresh_limit] = lambda: limit
     if user:
         app.dependency_overrides[identity.current_user] = _user
     return TestClient(app, raise_server_exceptions=False)
@@ -140,7 +160,10 @@ def test_success_payload_with_backend_disclaimer__AC7_AC11():
     meal, = data["suggestions"]
     assert meal["benefits"][0]["related_to"] == {"type": "condition", "label": "Tăng huyết áp"}
     assert meal["benefits"][1]["related_to"] == {"type": "general", "label": None}
-    assert set(meal) == {"name", "tags", "kcal_estimate", "cook_minutes", "benefits", "ingredients"}
+    assert set(meal) == {"name", "dish_type", "is_new", "tags", "kcal_estimate", "cook_minutes",
+                         "image", "benefits", "ingredients"}
+    assert (meal["dish_type"], meal["is_new"], meal["image"]) == ("com", True, None)
+    assert data["refreshes_remaining"] == 2 and "image_query" not in r.text
     assert data["food_check"] == {
         "status": "co_tuong_tac",
         "warnings": [{"rule_id": 81, "version_id": 930,
@@ -207,7 +230,7 @@ def test_allowed_log_failure_returns_503_no_data__AC17_M2():
 
 def test_store_failure_returns_503_and_rolls_back__AC17_M2():
     class Broken(Store):
-        def insert(self, uow, user_id, content):
+        def insert(self, uow, user_id, content, previous_suggestion_id=None):
             raise _db_error()
 
     r, uow, _ = _post(_client(FakeSuggester()), store=Broken())
@@ -290,3 +313,110 @@ def test_get_meal_suggester_respects_flag_and_key__AC10():
     assert isinstance(suggester, ClaudeMealSuggester)
     assert suggester._client.max_retries == 0 and suggester._client.timeout == 8.0
     http._claude.cache_clear()
+
+
+# --- Task 5.11 -----------------------------------------------------------------------------
+
+from drugtime.modules.ai_meal.application.ports import (  # noqa: E402
+    ImageReservation,
+    ImageState,
+)
+
+PREVIOUS = {"meal_type": "trua", "suggestions": []}
+
+
+def test_previous_not_found_422_string_detail_commits_allowed_log__AC16():
+    sug = FakeSuggester()
+    r, uow, store = _post(_client(sug), body={**BODY, "previous_suggestion_id": 77},
+                          store=Store(previous=None))
+    assert (r.status_code, r.json()) == (422, {"detail": "previous_suggestion_not_found"})
+    assert r.headers["cache-control"] == "no-store"
+    assert sug.calls == 0 and store.rows == [] and uow.outcome == "commit"
+
+
+def test_refresh_limit_429_with_retry_after__AC27():
+    sug = FakeSuggester()
+    r, uow, store = _post(_client(sug), body={**BODY, "previous_suggestion_id": 77},
+                          store=Store(previous=PREVIOUS, used=2))
+    assert (r.status_code, r.json()) == (429, {"detail": "refresh_limit_reached"})
+    assert r.headers["cache-control"] == "no-store"
+    assert 1 <= int(r.headers["retry-after"]) <= 86400
+    assert sug.calls == 0 and store.rows == []
+
+
+def test_refresh_success_reports_remaining__AC27():
+    r, _, _ = _post(_client(FakeSuggester()), body={**BODY, "previous_suggestion_id": 77},
+                    store=Store(previous=PREVIOUS, used=1))
+    assert r.status_code == 200 and r.json()["refreshes_remaining"] == 0
+
+
+@pytest.mark.parametrize("value", [None, 0, "77", 1.5])
+def test_bad_previous_suggestion_id_422__AC16(value):
+    sug = FakeSuggester()
+    r, _, _ = _post(_client(sug), body={**BODY, "previous_suggestion_id": value})
+    assert r.status_code == 422 and sug.calls == 0
+
+
+class Images:
+    def __init__(self, state):
+        self.state = state
+
+    def reserve(self, uow, dish_key, query):
+        state = self.state
+        return ImageReservation(state.image_id, state.status, state.status == "pending")
+
+    def states(self, uow, ids):
+        return {self.state.image_id: self.state}
+
+
+READY = ImageState(42, "ready", "42.jpg", "image/jpeg", "Nguyễn Văn A",
+                   "https://www.pexels.com/@a", "https://www.pexels.com/photo/42/")
+
+
+def test_ready_image_payload_and_no_enqueue__AC7():
+    queue = Queue()
+    r, _, _ = _post(_client(FakeSuggester(), images=Images(READY), queue=queue))
+    image = r.json()["suggestions"][0]["image"]
+    assert image == {"image_id": 42, "status": "ready", "url": "/meal-images/42",
+                     "attribution": {"provider": "pexels", "photographer_name": "Nguyễn Văn A",
+                                     "photographer_url": "https://www.pexels.com/@a",
+                                     "source_url": "https://www.pexels.com/photo/42/"}}
+    assert queue.sent == []
+
+
+def test_pending_image_enqueued_after_commit__AC7():
+    queue = Queue()
+    r, uow, _ = _post(_client(FakeSuggester(), images=Images(ImageState(5, "pending")),
+                              queue=queue))
+    assert r.json()["suggestions"][0]["image"] == {
+        "image_id": 5, "status": "pending", "url": None, "attribution": None}
+    assert queue.sent == [5] and uow.outcome == "commit"
+
+
+def test_no_enqueue_when_commit_fails__AC7():
+    class FailingCommit(Uow):
+        @contextmanager
+        def __call__(self):
+            yield MagicMock()
+            raise _db_error()
+
+    queue = Queue()
+    r, _, _ = _post(_client(FakeSuggester(), images=Images(ImageState(5, "pending")),
+                            queue=queue), uow=FailingCommit())
+    assert r.status_code == 503 and queue.sent == []
+
+
+def test_enqueue_failure_still_200_and_logs_no_secret__AC7(caplog):
+    caplog.set_level(logging.DEBUG)
+    r, _, _ = _post(_client(FakeSuggester(), images=Images(ImageState(5, "pending")),
+                            queue=Queue(fail=True)))
+    assert r.status_code == 200
+    assert "image_enqueue_failed" in caplog.text and "secret" not in caplog.text
+
+
+def test_get_meal_images_follows_flag__AC8():
+    with patch(f"{HTTP}.get_settings", return_value=Settings(_env_file=None)):
+        assert http.get_meal_images() is None
+    on = Settings(_env_file=None, ai_meal_image_enabled=True)
+    with patch(f"{HTTP}.get_settings", return_value=on):
+        assert http.get_meal_images() is not None

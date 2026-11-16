@@ -5,7 +5,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 # Values supplied by the operating system/deployment platform take precedence.
@@ -16,11 +15,11 @@ else:
     load_dotenv(BACKEND_ROOT / ".env.worker.production")
     load_dotenv(BACKEND_ROOT / ".env")
 
+from drugtime.modules.ai_meal import tasks as ai_meal_tasks  # noqa: E402,F401
 from drugtime.modules.catalog import tasks as catalog_tasks  # noqa: E402,F401
 from drugtime.runtime import job_runner  # noqa: E402
 from drugtime.shared.celery import celery_app  # noqa: E402
 from drugtime.shared.config import get_settings  # noqa: E402
-
 
 # Kênh báo thiếu hoặc hỏng credential: dừng khi khởi động thay vì gửi giả (3.19).
 job_runner.validate_notification_config()

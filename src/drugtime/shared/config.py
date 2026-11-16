@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 8.0
     # Tắt mặc định: chỉ bật bằng env ở môi trường đã được phép gửi dữ liệu ra LLM (QD-41).
     ai_meal_llm_enabled: bool = False
+    # Ảnh minh họa món (task 5.11): Worker tìm trên Pexels, lưu Supabase Storage (bucket riêng).
+    # Tắt mặc định; key là SecretStr như key LLM.
+    ai_meal_image_enabled: bool = False
+    pexels_api_key: SecretStr = SecretStr("")
+    pexels_timeout_seconds: float = 10.0
+    ai_meal_image_bucket: str = "meal-images"
+    # Số lần "Gợi ý khác" tối đa mỗi tài khoản mỗi ngày (giờ Asia/Ho_Chi_Minh).
+    ai_meal_refresh_daily_limit: int = 2
 
     session_jwt_secret: str = ""
     mobile_session_days: int = 10

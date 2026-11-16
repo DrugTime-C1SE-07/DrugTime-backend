@@ -24,6 +24,19 @@ class MealType(StrEnum):
     TOI = "toi"
 
 
+class MealDishType(StrEnum):
+    """Loại món để đa dạng hóa gợi ý (task 5.11). Không mang ý nghĩa an toàn."""
+
+    COM = "com"
+    MON_NUOC = "mon_nuoc"
+    MON_MAN = "mon_man"
+    MON_XAO = "mon_xao"
+    MON_HAP_LUOC = "mon_hap_luoc"
+    CHAO_SUP = "chao_sup"
+    SALAD = "salad"
+    KHAC = "khac"
+
+
 def clean_list(values: Iterable[str]) -> tuple[str, ...]:
     """Trim, gộp khoảng trắng, bỏ rỗng, khử trùng (không phân biệt hoa thường/dấu), sắp xếp."""
     by_key: dict[str, str] = {}
@@ -134,6 +147,13 @@ class MealSuggestion:
     cook_minutes: int
     benefits: tuple[MealBenefit, ...]
     ingredients: tuple[MealIngredient, ...]
+    dish_type: str = MealDishType.KHAC.value
+    # Cụm từ tìm ảnh tiếng Anh do LLM sinh; chỉ gửi kho ảnh, không trả client, không lưu
+    # trong `meal_suggestions` (task 5.11, AC9).
+    image_query: str | None = None
+    # True: món tạo ở request này; False: món giữ lại khi gợi ý lại (task 5.11).
+    is_new: bool = True
+    image_id: int | None = None
 
 
 @dataclass(frozen=True)

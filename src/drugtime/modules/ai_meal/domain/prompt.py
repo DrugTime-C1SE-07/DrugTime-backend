@@ -1,4 +1,4 @@
-"""Prompt gợi ý bữa ăn có phiên bản, tất định (task 4.26, AC1, AC2).
+"""Prompt gợi ý bữa ăn có phiên bản, tất định (task 4.26 AC1, AC2; task 5.11 `meal-v2`).
 
 Chỉ nội dung của `MealSuggestionInput` được gửi cho provider; không có định danh người dùng.
 Schema structured outputs chỉ dùng từ khóa API hỗ trợ (không minimum/maxLength/maxItems);
@@ -8,10 +8,19 @@ giới hạn số và độ dài do `parser.py` kiểm.
 import json
 from collections.abc import Iterable
 
-from drugtime.modules.ai_meal.domain.model import BenefitTarget, MealPrompt, MealSuggestionInput
+from drugtime.modules.ai_meal.domain.model import (
+    BenefitTarget,
+    MealDishType,
+    MealPrompt,
+    MealSuggestionInput,
+    clean_list,
+)
 from drugtime.modules.ai_meal.domain.text_match import base_names, keywords
 
-PROMPT_VERSION = "meal-v1"
+PROMPT_VERSION = "meal-v2"
+
+IMAGE_QUERY_MAX = 60
+DISH_TYPES = tuple(t.value for t in MealDishType)
 
 MEAL_TYPE_LABELS = {"sang": "bữa sáng", "trua": "bữa trưa", "toi": "bữa tối"}
 
@@ -30,6 +39,8 @@ LLM_OUTPUT_SCHEMA: dict = {
                 "additionalProperties": False,
                 "required": [
                     "name",
+                    "dish_type",
+                    "image_query",
                     "tags",
                     "kcal_estimate",
                     "cook_minutes",
@@ -38,6 +49,8 @@ LLM_OUTPUT_SCHEMA: dict = {
                 ],
                 "properties": {
                     "name": {"type": "string"},
+                    "dish_type": {"type": "string", "enum": list(DISH_TYPES)},
+                    "image_query": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "kcal_estimate": {"type": "integer"},
                     "cook_minutes": {"type": "integer"},
@@ -92,10 +105,25 @@ phần thuộc nhóm đó (tôm, cua, mực, cá biển...).
 ("condition:..", "allergy:..", "restriction:..") hoặc "general" cho lợi ích dinh dưỡng chung. \
 Không tự tạo khóa mới. Mỗi món có 1–6 lợi ích, mỗi câu tối đa 60 ký tự.
 6. Giới hạn: tên món ≤ 80 ký tự; 0–4 tag, mỗi tag ≤ 20 ký tự; kcal_estimate là số nguyên \
-50–2000 (ước tính cho một người); cook_minutes là số nguyên 1–240; 1–15 nguyên liệu, tên \
-≤ 40 ký tự, định lượng ≤ 30 ký tự; group là "chinh" (nguyên liệu chính) hoặc "gia_vi"; \
-use_sparingly = true với muối, nước mắm, đường, dầu mỡ cần dùng ít.
+50–2000; cook_minutes là số nguyên 1–240; 1–15 nguyên liệu, tên ≤ 40 ký tự, định lượng ≤ 30 ký \
+tự; group là "chinh" (nguyên liệu chính) hoặc "gia_vi"; use_sparingly = true với muối, nước \
+mắm, đường, dầu mỡ cần dùng ít.
 7. Viết bằng tiếng Việt, ngắn gọn. "meal_type" phải đúng giá trị được yêu cầu.
+8. Khẩu phần: kcal_estimate và mọi "amount" là cho MỘT NGƯỜI, MỘT BỮA (không phải cả nồi).
+9. Đa dạng: "dish_type" là một trong com, mon_nuoc, mon_man, mon_xao, mon_hap_luoc, chao_sup, \
+salad, khac. Khi có từ 3 món trở lên, các món phải thuộc ít nhất 2 loại khác nhau; không để \
+mọi món đều là canh hay món nước. Bữa trưa và bữa tối mỗi món phải có nguồn tinh bột (cơm, \
+bún, phở, miến, khoai...) hoặc ghi rõ ăn kèm cơm trong nguyên liệu.
+10. Theo bệnh nền ("benh_nen"): món phải phù hợp với từng bệnh nền. Thực phẩm nhiều đường, \
+nhiều muối/natri hoặc chỉ số đường huyết cao (ví dụ đường, mật ong, dứa, xoài chín, bí đỏ, gạo \
+trắng nhiều, đồ kho mặn) với người tiểu đường, tăng huyết áp: nếu không phù hợp thì không \
+dùng; nếu dùng một lượng nhỏ thì đặt use_sparingly = true. Khi có bệnh nền, mỗi món có ít nhất \
+một lợi ích gắn với khóa "condition:.." tương ứng, nói rõ vì sao món hợp với bệnh đó.
+11. Lợi ích cụ thể cho từng món, không lặp nguyên câu giữa các món.
+12. "image_query": cụm từ tiếng Anh ngắn (tối đa 60 ký tự) mô tả món để tìm ảnh minh họa, ví \
+dụ "vietnamese sour fish soup". Chỉ mô tả món ăn; không nhắc thuốc, bệnh hay người dùng.
+13. Nếu ngữ cảnh có "mon_da_goi_y": không lặp lại các món đó (kể cả đổi tên nhẹ) và trả đúng \
+số món được yêu cầu.
 """
 
 
@@ -103,8 +131,19 @@ def _keyed(prefix: str, values: tuple[str, ...]) -> list[tuple[str, str]]:
     return [(f"{prefix}:{i}", v) for i, v in enumerate(values, start=1)]
 
 
-def build_prompt(data: MealSuggestionInput, drug_names: Iterable[str] = ()) -> MealPrompt:
-    """`drug_names` (ví dụ tên biệt dược) chỉ dùng để lọc output, không đưa vào prompt."""
+def build_prompt(
+    data: MealSuggestionInput,
+    drug_names: Iterable[str] = (),
+    *,
+    avoid_dish_names: Iterable[str] = (),
+    count: int | None = None,
+) -> MealPrompt:
+    """`drug_names` (ví dụ tên biệt dược) chỉ dùng để lọc output, không đưa vào prompt.
+
+    Gợi ý lại (task 5.11): `avoid_dish_names` là tên các món đã gợi ý (chỉ tên món, không định
+    danh), `count` là số món mới cần sinh.
+    """
+    avoid_dishes = clean_list(avoid_dish_names)
     drugs = (*data.active_ingredients, *drug_names)
     conditions = _keyed("condition", data.conditions)
     allergies = _keyed("allergy", data.allergies)
@@ -130,12 +169,19 @@ def build_prompt(data: MealSuggestionInput, drug_names: Iterable[str] = ()) -> M
         "hoat_chat_dang_dung": list(data.active_ingredients),
         "so_thich": list(data.preferences),
     }
+    if avoid_dishes:
+        context["mon_da_goi_y"] = list(avoid_dishes)
     meal_label = MEAL_TYPE_LABELS[data.meal_type.value]
+    ask = (
+        f"Hãy gợi ý đúng {count} món mới cho {meal_label}"
+        if count is not None
+        else f"Hãy gợi ý {meal_label}"
+    )
     user = (
         "<ngu_canh>\n"
         + json.dumps(context, ensure_ascii=False, sort_keys=True, indent=1)
         + "\n</ngu_canh>\n"
-        f"Hãy gợi ý {meal_label} theo đúng quy tắc, trả JSON theo schema."
+        f"{ask} theo đúng quy tắc, trả JSON theo schema."
     )
     return MealPrompt(
         version=PROMPT_VERSION,

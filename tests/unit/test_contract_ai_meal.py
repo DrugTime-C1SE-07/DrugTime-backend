@@ -1,4 +1,4 @@
-"""Đối chiếu OpenAPI sinh từ app với hợp đồng viết tay cho gợi ý bữa ăn (task 4.26, AC19)."""
+"""Đối chiếu OpenAPI sinh từ app với hợp đồng viết tay cho gợi ý bữa ăn (task 4.26 AC19; 5.11)."""
 
 import json
 from pathlib import Path
@@ -64,7 +64,7 @@ def test_operation_matches_contract__AC19(specs):
     contract, app = specs
     c_op, a_op = contract["paths"][PATH]["post"], app["paths"][PATH]["post"]
     assert c_op["operationId"] == a_op["operationId"] == "createMealSuggestions"
-    assert set(c_op["responses"]) == {"200", "401", "403", "422", "502", "503"}
+    assert set(c_op["responses"]) == {"200", "401", "403", "422", "429", "502", "503"}
     assert set(c_op["responses"]) <= set(a_op["responses"])
     assert _shape(contract, _body(contract, c_op)) == _shape(app, _body(app, a_op))
     assert _shape(contract, _body(contract, c_op, "200")) == _shape(app, _body(app, a_op, "200"))
@@ -95,3 +95,40 @@ def test_list_bounds_match(specs, schema, field, bounds):
     for k, v in bounds.items():
         assert c[k] == a[k] == v
     assert c["items"]["maxLength"] == a["items"]["maxLength"] == 40
+
+
+# --- Task 5.11: ảnh món ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("path", "operation", "codes"),
+    [
+        ("/meal-images", "listMealImageStatuses", {"200", "401", "422", "503"}),
+        ("/meal-images/{image_id}", "getMealImage", {"200", "401", "404", "422", "503"}),
+    ],
+)
+def test_image_operations_match_contract(specs, path, operation, codes):
+    contract, app = specs
+    c_op, a_op = contract["paths"][path]["get"], app["paths"][path]["get"]
+    assert c_op["operationId"] == a_op["operationId"] == operation
+    assert set(c_op["responses"]) == codes
+    assert set(c_op["responses"]) <= set(a_op["responses"])
+    assert a_op["security"] == [{"bearerAuth": []}]
+    assert "x-health-scope" not in c_op and "x-health-scope" not in a_op
+
+
+def test_image_list_shape_matches(specs):
+    contract, app = specs
+    c_op, a_op = contract["paths"]["/meal-images"]["get"], app["paths"]["/meal-images"]["get"]
+    assert _shape(contract, _body(contract, c_op, "200")) == _shape(app, _body(app, a_op, "200"))
+    c_ids = next(p for p in c_op["parameters"] if p["name"] == "ids")["schema"]
+    a_ids = next(p for p in a_op["parameters"] if p["name"] == "ids")["schema"]
+    bounds = (a_ids["minItems"], a_ids["maxItems"])
+    assert (c_ids["minItems"], c_ids["maxItems"]) == bounds == (1, 20)
+
+
+def test_image_content_types_match(specs):
+    contract, app = specs
+    c = contract["paths"]["/meal-images/{image_id}"]["get"]["responses"]["200"]["content"]
+    a = app["paths"]["/meal-images/{image_id}"]["get"]["responses"]["200"]["content"]
+    assert set(c) == {"image/jpeg", "image/png", "image/webp"} <= set(a)

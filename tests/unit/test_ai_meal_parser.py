@@ -1,4 +1,4 @@
-"""Parser output LLM của gợi ý bữa ăn (task 4.26: AC5, AC6, AC6b, AC6c, AC6d, AC7)."""
+"""Parser output LLM của gợi ý bữa ăn (task 4.26: AC5–AC7; task 5.11: AC9, AC14, AC21)."""
 
 import copy
 import json
@@ -30,6 +30,8 @@ def _prompt(avoid=("Thực phẩm giàu kali (chuối, cam)",), allergies=("Hả
 def _meal(name="Cơm gạo lứt & ức gà áp chảo", **overrides):
     meal = {
         "name": f"  {name} ",
+        "dish_type": "com",
+        "image_query": " brown rice   grilled chicken ",
         "tags": ["Ít muối", " Nhiều rau "],
         "kcal_estimate": 480,
         "cook_minutes": 20,
@@ -56,7 +58,7 @@ def _four():
 
 def test_valid_four_meals_parsed_in_order__AC5():
     result = parse_suggestions(_raw(_four()), _prompt())
-    assert result.meal_type.value == "trua" and result.prompt_version == "meal-v1"
+    assert result.meal_type.value == "trua" and result.prompt_version == "meal-v2"
     assert [m.name for m in result.suggestions] == ["Món A", "Món B", "Món C", "Món D"]
     first = result.suggestions[0]
     assert first.tags == ("Ít muối", "Nhiều rau")
@@ -240,3 +242,63 @@ def test_nutrient_words_not_treated_as_drug_names__review_M1(ingredient, text):
 
 def test_full_salt_name_still_filtered__AC6c():
     assert not _benefit_kept("Kali clorid", [], "Hợp với kali clorid")
+
+
+# --- Task 5.11: dish_type, image_query, gợi ý lại -------------------------------------------
+
+
+def test_dish_type_and_image_query_parsed__AC21():
+    first = parse_suggestions(_raw(_four()), _prompt()).suggestions[0]
+    assert first.dish_type == "com"
+    assert first.image_query == "brown rice grilled chicken"  # gộp khoảng trắng
+    assert first.is_new is True and first.image_id is None
+
+
+@pytest.mark.parametrize("value", ["khuya", "", "COM", "soup"])
+def test_unknown_dish_type_becomes_khac__AC21(value):
+    result = parse_suggestions(_raw([_meal(dish_type=value)]), _prompt())
+    assert result.suggestions[0].dish_type == "khac"
+
+
+@pytest.mark.parametrize("value", [None, 3, ["com"]])
+def test_missing_or_non_string_dish_type_invalid__AC21(value):
+    meal = _meal(dish_type=value)
+    if value is None:
+        del meal["dish_type"]
+    with pytest.raises(LlmInvalidOutput):
+        parse_suggestions(_raw([meal]), _prompt())
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["x" * 61, "   ", "", "chicken with losartan sauce", "cozaar rice bowl", None, 42],
+)
+def test_bad_image_query_dropped_meal_kept__AC9(query):
+    meal = _meal(image_query=query)
+    if query is None:
+        del meal["image_query"]
+    result = parse_suggestions(_raw([meal]), _prompt())
+    assert len(result.suggestions) == 1
+    assert result.suggestions[0].image_query is None
+
+
+def test_image_query_at_limit_kept__AC9():
+    result = parse_suggestions(_raw([_meal(image_query="y" * 60)]), _prompt())
+    assert result.suggestions[0].image_query == "y" * 60
+
+
+def test_refresh_drops_old_names_and_caps_new__AC14():
+    names = ("Món A", "Món mới 1", "món a", "Món mới 2", "Món mới 3", "Món mới 4")
+    meals = [_meal(n) for n in names]
+    result = parse_suggestions(
+        _raw(meals), _prompt(), avoid_dish_names=("Món A", "Món B"), max_new=3
+    )
+    assert [m.name for m in result.suggestions] == ["Món mới 1", "Món mới 2", "Món mới 3"]
+
+
+def test_refresh_only_old_names_is_invalid__AC14():
+    with pytest.raises(LlmInvalidOutput) as exc:
+        parse_suggestions(
+            _raw([_meal("Món A")]), _prompt(), avoid_dish_names=("mon a",), max_new=3
+        )
+    assert exc.value.reason == "no_valid_suggestion"

@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 from test_meal_suggestions_api import (
+    BODY,
     create_patient,
     disable_real_llm,
     install_fake_llm,
@@ -74,6 +75,33 @@ def test_cross_patient_denied__AC14(client, db, make, auth, llm, patient, case):
     assert llm.prompts == [] and meal_rows(db, p) == []
     if case == "other_patient":
         assert make.access_logs(caller) == [] and meal_rows(db, caller) == []
+
+
+@pytest.mark.parametrize(
+    "case", ["family_with_full_consent", "family_without_link", "admin", "other_patient"]
+)
+def test_cross_patient_refresh_denied_before_previous_lookup__5_11_AC17(
+    client, db, make, auth, llm, patient, case
+):
+    """Có previous_suggestion_id (của chính P) vẫn bị PEP chặn trước khi đọc gợi ý trước."""
+    p = patient["id"]
+    first = suggest(client, auth, p, p)
+    assert first.status_code == 200, first.text
+    previous_id = first.json()["suggestion_id"]
+    caller, role = _caller(case, make, p)
+    r = suggest(client, auth, caller, p, body={**BODY, "previous_suggestion_id": previous_id})
+    assert (r.status_code, r.json()) == (403, {"detail": "khong_co_quyen"})
+    assert make.access_logs(p)[-1] == log(caller, role, "denied", "khong_co_quyen")
+    assert len(llm.prompts) == 1 and len(meal_rows(db, p)) == 1  # chỉ lần gợi ý đầu của P
+
+
+def test_refresh_after_consent_revoked_denied__5_11_AC17(client, db, make, auth, llm, patient):
+    p = patient["id"]
+    previous_id = suggest(client, auth, p, p).json()["suggestion_id"]
+    make.revoke_consent(p, "ai_meal")
+    r = suggest(client, auth, p, p, body={**BODY, "previous_suggestion_id": previous_id})
+    assert (r.status_code, r.json()) == (403, {"detail": "consent_revoked"})
+    assert len(llm.prompts) == 1 and len(meal_rows(db, p)) == 1
 
 
 def test_unknown_patient_403_no_log(client, make, auth, llm):

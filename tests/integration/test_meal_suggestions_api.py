@@ -18,9 +18,16 @@ from drugtime.shared.config import get_settings
 
 
 def disable_real_llm(monkeypatch):
-    """Biến môi trường thắng giá trị trong .env (pydantic-settings)."""
+    """Biến môi trường thắng giá trị trong .env (pydantic-settings).
+
+    Task 5.11: tắt luôn ảnh (không gọi Pexels, không đẩy job lên broker) và cố định giới hạn
+    gợi ý lại, để test không phụ thuộc `.env` của máy dev.
+    """
     monkeypatch.setenv("AI_MEAL_LLM_ENABLED", "false")
     monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("AI_MEAL_IMAGE_ENABLED", "false")
+    monkeypatch.setenv("PEXELS_API_KEY", "")
+    monkeypatch.setenv("AI_MEAL_REFRESH_DAILY_LIMIT", "2")
     get_settings.cache_clear()
 
 
@@ -38,7 +45,7 @@ DISCLAIMER = (
     "chuyên gia dinh dưỡng. Hãy hỏi bác sĩ hoặc dược sĩ trước khi thay đổi chế độ ăn."
 )
 RESPONSE_KEYS = {"suggestion_id", "meal_type", "suggestions", "food_check", "disclaimer",
-                 "created_at"}
+                 "refreshes_remaining", "created_at"}
 BODY = {
     "meal_type": "trua",
     "allergies": {"none": False, "items": ["Tôm"]},
@@ -47,9 +54,11 @@ BODY = {
 }
 
 
-def meal(name, *, benefits=None, ingredients=("Gà",)):
+def meal(name, *, benefits=None, ingredients=("Gà",), dish_type="com", image_query=None):
     return {
         "name": name,
+        "dish_type": dish_type,
+        "image_query": image_query if image_query is not None else f"dish {name}"[:60],
         "tags": ["Ít muối"],
         "kcal_estimate": 480,
         "cook_minutes": 25,
@@ -180,7 +189,7 @@ def test_self_success__AC11(client, db, make, auth, llm, patient):
     [row] = meal_rows(db, p)
     assert row["served_from_cache"] is False
     content = row["suggestion_content"]
-    assert content["prompt_version"] == "meal-v1" and content["meal_type"] == "trua"
+    assert content["prompt_version"] == "meal-v2" and content["meal_type"] == "trua"
     assert data["suggestion_id"] == db.execute(
         text("SELECT id FROM meal_suggestions WHERE user_id = :u"), {"u": p}).scalar_one()
     assert "Tôm" not in json.dumps(content, ensure_ascii=False)  # không lưu dị ứng thô

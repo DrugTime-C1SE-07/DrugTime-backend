@@ -1,4 +1,4 @@
-"""Schema HTTP của gợi ý bữa ăn (task 4.26), khớp api_contract/openapi.json.
+"""Schema HTTP gợi ý bữa ăn (task 4.26; 5.11: gợi ý lại, ảnh món), khớp api_contract/openapi.json.
 
 Field lạ bị từ chối (`extra="forbid"`). Khai báo dị ứng / hạn chế chỉ có hai dạng hợp lệ (QD-40).
 """
@@ -24,6 +24,9 @@ def _text(max_length: int):
 
 
 MealTypeValue = Literal["sang", "trua", "toi"]
+DishTypeValue = Literal[
+    "com", "mon_nuoc", "mon_man", "mon_xao", "mon_hap_luoc", "chao_sup", "salad", "khac"
+]
 
 
 class ErrorDetail(BaseModel):
@@ -54,6 +57,8 @@ class MealSuggestionRequest(BaseModel):
     allergies: DietaryDeclaration
     dietary_restrictions: DietaryDeclaration
     preferences: list[_text(40)] = Field(default_factory=list, max_length=5)
+    # Tùy chọn; gửi `null` tường minh bị từ chối như contract (kiểu không nhận None).
+    previous_suggestion_id: Annotated[int, Field(ge=1, strict=True)] = None  # type: ignore[assignment]
 
     @field_validator("preferences")
     @classmethod
@@ -86,13 +91,40 @@ class MealIngredient(BaseModel):
     use_sparingly: bool
 
 
+class MealImageAttribution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["pexels"]
+    photographer_name: str
+    photographer_url: str
+    source_url: str
+
+
+class MealImage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image_id: int
+    status: Literal["pending", "ready", "failed"]
+    url: str | None
+    attribution: MealImageAttribution | None
+
+
+class MealImageStatusList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[MealImage]
+
+
 class MealSuggestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+    dish_type: DishTypeValue
+    is_new: bool
     tags: list[str]
     kcal_estimate: int
     cook_minutes: int
+    image: MealImage | None
     benefits: list[MealBenefit]
     ingredients: list[MealIngredient]
 
@@ -133,6 +165,7 @@ class MealSuggestionResponse(BaseModel):
     suggestions: list[MealSuggestion]
     food_check: MealFoodCheck
     disclaimer: str
+    refreshes_remaining: int = Field(ge=0)
     created_at: datetime
 
     @field_validator("created_at")

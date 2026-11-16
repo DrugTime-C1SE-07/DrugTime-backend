@@ -80,6 +80,7 @@ def create_app() -> FastAPI:
         )
     # medication đọc liều đã ghi qua port; adherence sở hữu dose_logs (task 2.04).
     medication.configure(recorded_doses=adherence.recorded_doses)
+    ai_meal.log_effective_config()  # task 5.11 AC22: URL/model/timeout hiệu lực, không có key
     for module in MODULES:
         app.include_router(module.router)
 
