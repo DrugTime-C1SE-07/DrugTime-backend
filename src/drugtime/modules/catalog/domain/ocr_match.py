@@ -106,6 +106,8 @@ class FuzzyHit:
 class FuzzyLookup:
     hits: tuple[FuzzyHit, ...] = ()
     truncated: bool = False
+    # adhoc-20261116 B3: which keys were cut, so only a cut key of the top candidate blocks.
+    truncated_keys: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)

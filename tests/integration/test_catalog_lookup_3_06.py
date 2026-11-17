@@ -46,7 +46,8 @@ def test_seed_paracetamol_queries_match_id__SCRUM_167(client, make, auth, tag):
     """Seed 'Paracetamol' với tag ở đầu tên thuốc:
     f'{tag} Paracetamol 500mg'
     - 'tag paracetamol', 'tag Paracetamol', 'tag para', '  tag Paracetamol  ' đều trả đúng thuốc (assert ID cụ thể).
-    - AC4: Khoảng trắng giữa chuỗi được giữ nguyên: 'tag  paracetamol' (2 khoảng trắng) không khớp thuốc (trả về rỗng).
+    - Contract adhoc-20261116 (thay AC4 cũ): tìm theo từ, nhiều khoảng trắng bên trong tính
+      như một, nên 'tag  paracetamol' (2 khoảng trắng) vẫn khớp thuốc.
     """
     user = make.user()
     med_id = make.catalog_medication(
@@ -72,19 +73,16 @@ def test_seed_paracetamol_queries_match_id__SCRUM_167(client, make, auth, tag):
         item_ids = [m["id"] for m in items]
         assert med_id in item_ids, f"Expected med_id {med_id} in {item_ids} for query '{q}'"
 
-    # AC4: Khẳng định khoảng trắng giữa chuỗi KHÔNG gộp.
-    # f"{tag}  paracetamol" (2 khoảng trắng giữa) không khớp "{tag} Paracetamol 500mg" (1 khoảng trắng)
+    # Contract adhoc-20261116: khoảng trắng bên trong được gộp (tìm theo từ).
     r_double_space = client.get(
         "/catalog/medications",
         params={"q": f"{tag}  paracetamol"},
         headers=auth(user),
     )
     assert r_double_space.status_code == 200, r_double_space.text
-    double_space_items = r_double_space.json()["items"]
-    double_space_ids = [m["id"] for m in double_space_items]
-    assert med_id not in double_space_ids, (
-        f"AC4 violation: query with 2 internal spaces '{tag}  paracetamol' "
-        f"unexpectedly matched medication {med_id}"
+    double_space_ids = [m["id"] for m in r_double_space.json()["items"]]
+    assert med_id in double_space_ids, (
+        f"query with 2 internal spaces '{tag}  paracetamol' should match {med_id}"
     )
 
 

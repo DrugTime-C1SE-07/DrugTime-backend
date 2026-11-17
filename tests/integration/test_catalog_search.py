@@ -7,6 +7,7 @@ cùng DB (danh mục dùng chung).
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import text
 
 
 @pytest.fixture(params=["/catalog/medications", "/medications/search"])
@@ -76,18 +77,28 @@ def test_unaccented_and_case_insensitive__AC5c(client, make, auth, tag, search_p
 
 
 def test_prefix_first_then_name_order__AC5(client, make, auth, tag, search_path):
+    """Tên bắt đầu bằng q đứng trước tên chỉ chứa q; trong mỗi nhóm thứ tự theo độ giống rồi
+    theo tên (contract adhoc-20261116), nên chỉ kiểm theo nhóm và kiểm bậc cuối riêng."""
     user = make.user()
     make.catalog_medication(name=f"B chứa {tag}")
     make.catalog_medication(name=f"A chứa {tag}")
     make.catalog_medication(name=f"{tag} Z bắt đầu")
     make.catalog_medication(name=f"{tag} Y bắt đầu")
 
-    assert _names(_search(client, auth, user, search_path, tag)) == [
-        f"{tag} Y bắt đầu",
-        f"{tag} Z bắt đầu",
-        f"A chứa {tag}",
-        f"B chứa {tag}",
-    ]
+    names = _names(_search(client, auth, user, search_path, tag))
+    assert set(names[:2]) == {f"{tag} Y bắt đầu", f"{tag} Z bắt đầu"}
+    assert set(names[2:]) == {f"A chứa {tag}", f"B chứa {tag}"}
+
+
+def test_equal_rank_falls_back_to_name_then_id__AC5(client, make, auth, tag, search_path):
+    user = make.user()
+    second = make.catalog_medication(name=f"{tag} cùng tên")
+    first = make.catalog_medication(name=f"{tag} cùng tên")
+    make.catalog_medication(name=f"{tag} cung ten")  # bỏ dấu giống hệt: cùng mọi bậc trừ tên
+    r = _search(client, auth, user, search_path, f"{tag} cung ten")
+    ids = [m["id"] for m in r.json()["items"] if m["name"] == f"{tag} cùng tên"]
+    assert ids == sorted([first, second])
+    assert _names(r)[0] == f"{tag} cung ten"  # "cung" < "cùng" theo collation tên
 
 
 def test_like_wildcards_are_literal__AC6(client, make, auth, tag, search_path):
@@ -102,9 +113,14 @@ def test_like_wildcards_are_literal__AC6(client, make, auth, tag, search_path):
     ]
     assert _names(_search(client, auth, user, search_path, f"{tag} a_b")) == [f"{tag} a_b"]
     assert _names(_search(client, auth, user, search_path, f"{tag} a\\b")) == [f"{tag} a\\b"]
-    # '%' và '_' đứng một mình không khớp mọi thứ.
-    assert all("%" in n for n in _names(_search(client, auth, user, search_path, "%", limit=50)))
-    assert all("_" in n for n in _names(_search(client, auth, user, search_path, "_", limit=50)))
+    # '%' và '_' đứng một mình không khớp mọi thứ: mỗi kết quả chứa đúng ký tự đó ở một trường
+    # được tìm (tên, hoạt chất hoặc hàm lượng; danh mục thật có '%' trong hoạt chất).
+    for ch in ("%", "_"):
+        r = _search(client, auth, user, search_path, ch, limit=50)
+        assert r.status_code == 200, r.text
+        for m in r.json()["items"]:
+            fields = (m["name"], m["active_ingredient"] or "", m["strength_text"] or "")
+            assert any(ch in f for f in fields), (ch, m)
 
 
 def test_query_is_trimmed(client, make, auth, tag, search_path):
@@ -181,13 +197,71 @@ def test_query_length_boundaries__AC5(client, make, auth, search_path, length):
     assert len(response.json()["items"]) <= 1
 
 
-def test_internal_whitespace_is_preserved__AC4(client, make, auth, tag, search_path):
+def test_multiple_spaces_count_as_one__AC14(client, make, auth, tag, search_path):
+    """Contract adhoc-20261116: tách theo từ, nhiều khoảng trắng như một."""
     user = make.user()
     make.catalog_medication(name=f"{tag} Thuốc ho")
-    assert _names(_search(client, auth, user, search_path, f"{tag} thuoc ho")) == [
-        f"{tag} Thuốc ho"
-    ]
-    assert _names(_search(client, auth, user, search_path, f"{tag} thuoc  ho")) == []
+    for q in (f"{tag} thuoc ho", f"{tag} thuoc  ho", f"  {tag}	THUỐC   ho "):
+        assert _names(_search(client, auth, user, search_path, q)) == [f"{tag} Thuốc ho"], q
+
+
+def _strength(db, mid, value):
+    db.execute(
+        text("UPDATE medications SET strength_text = :s WHERE id = :id"), {"s": value, "id": mid}
+    )
+
+
+def test_ingredient_and_strength_words_match_brand_row__AC12(
+    client, make, auth, tag, db, search_path
+):
+    """ "metformin 500 mg": hoạt chất + hàm lượng khớp dòng nhãn hiệu mà tên không chứa
+    hoạt chất; hàm lượng khác không khớp; "500 mg" = "500mg"."""
+    user = make.user()
+    brand = make.catalog_medication(
+        name=f"Glucophage{tag} 500 mg", active_ingredient=f"Metformin{tag} hydroclorid"
+    )
+    _strength(db, brand, "500 mg")
+    other = make.catalog_medication(
+        name=f"Metformin{tag} Stada 850mg", active_ingredient=f"Metformin{tag}"
+    )
+    _strength(db, other, "850mg")
+    joined = make.catalog_medication(
+        name=f"Gluphakaps{tag}", active_ingredient=f"Metformin{tag} HCl"
+    )
+    _strength(db, joined, "500mg")
+
+    for q in (f"metformin{tag} 500 mg", f"Metformin{tag} 500MG", f"metformin{tag}  500 mg"):
+        names = _names(_search(client, auth, user, search_path, q))
+        assert sorted(names) == sorted([f"Glucophage{tag} 500 mg", f"Gluphakaps{tag}"]), q
+
+
+def test_brand_word_and_number_ranks_brand_first__AC12(client, make, auth, tag, db, search_path):
+    user = make.user()
+    target = make.catalog_medication(
+        name=f"Glucophage{tag} XR 500 mg", active_ingredient="Metformin"
+    )
+    _strength(db, target, "500 mg")
+    for s in ["850 mg", "1000 mg"]:
+        mid = make.catalog_medication(name=f"Glucophage{tag} {s}", active_ingredient="Metformin")
+        _strength(db, mid, s)
+    # Dòng chỉ có số 500 trong tên của thuốc khác không được vượt lên.
+    make.catalog_medication(name=f"Zz {tag} 500", active_ingredient=f"Glucophage{tag}")
+
+    names = _names(_search(client, auth, user, search_path, f"glucophage{tag} 500"))
+    assert names[0] == f"Glucophage{tag} XR 500 mg"
+    assert f"Glucophage{tag} 850 mg" not in names
+
+
+def test_number_word_matches_strength_and_name_without_spaces__AC12(
+    client, make, auth, tag, db, search_path
+):
+    user = make.user()
+    in_strength = make.catalog_medication(name=f"Panfor{tag} PR", active_ingredient="Metformin")
+    _strength(db, in_strength, "500 mg")
+    in_name = make.catalog_medication(name=f"Panfor{tag} 500 mg", active_ingredient="Metformin")
+    _strength(db, in_name, None)
+    names = _names(_search(client, auth, user, search_path, f"panfor{tag} 500mg"))
+    assert sorted(names) == sorted([f"Panfor{tag} PR", f"Panfor{tag} 500 mg"])
 
 
 def test_invalid_token_is_rejected__AC2(client, search_path):
@@ -195,3 +269,13 @@ def test_invalid_token_is_rejected__AC2(client, search_path):
         search_path, params={"q": "amlo"}, headers={"Authorization": "Bearer not-a-real-token"}
     )
     assert response.status_code == 401
+
+
+def test_letter_word_also_matches_strength_text__AC12(client, make, auth, tag, db, search_path):
+    """Contract: mỗi từ, kể cả từ không có chữ số, có thể nằm ở hàm lượng."""
+    user = make.user()
+    mid = make.catalog_medication(name=f"Axore{tag}", active_ingredient="Atorvastatin Calcium")
+    _strength(db, mid, "Atorvastatin 20mg/ viên")
+    assert _names(_search(client, auth, user, search_path, f"axore{tag} 20mg vien")) == [
+        f"Axore{tag}"
+    ]

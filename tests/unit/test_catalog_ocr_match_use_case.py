@@ -59,3 +59,17 @@ def test_ocr_text_never_logged__AC7(caplog):
     message = lines[0].getMessage()
     for field in ("status=", "top_score=", "candidates=", "reasons=", "elapsed_ms="):
         assert field in message
+
+
+def test_fuzzy_records_truncated_keys__AC4b():
+    from drugtime.modules.catalog.application.lookup_ocr_candidates import lookup_ocr_candidates
+    from drugtime.modules.catalog.application.match_ocr_text import _fuzzy
+    from drugtime.modules.catalog.application.normalize_ocr import normalize_ocr_text
+
+    reader = FakeReader([med(1, "Panadol", "500 mg")], fuzzy_truncated={"cty tnhh united"})
+    lookup = lookup_ocr_candidates(
+        None, normalize_ocr_text("PANAD0L 500mg\nCTY TNHH UNITED"), reader
+    )
+    fuzzy = _fuzzy(None, lookup, reader, MatchPolicy())
+    assert fuzzy.truncated is True
+    assert fuzzy.truncated_keys == frozenset({"cty tnhh united"})

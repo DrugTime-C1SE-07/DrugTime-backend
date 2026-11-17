@@ -56,21 +56,22 @@ def _fuzzy(
     lines = {line.line_id: line for line in lookup.normalized.lines}
     clusters = {c.cluster_id: c for c in lookup.normalized.clusters}
     queried: dict[str, tuple[tuple[CatalogMedication, ...], bool]] = {}
-    hits, truncated = [], False
+    hits, cut_keys = [], set()
     for cluster_id, key in _keys_without_hits(lookup):
         if key not in queried:
             queried[key] = reader.find_fuzzy_name_matches(
                 uow, key, threshold=policy.fuzzy_similarity, limit=policy.fuzzy_limit
             )
         found, cut = queried[key]
-        truncated |= cut
+        if cut:
+            cut_keys.add(key)
         line_ids = tuple(
             line_id
             for line_id in clusters[cluster_id].member_line_ids
             if lines[line_id].query_eligible and lines[line_id].name_key == key
         )
         hits.extend(FuzzyHit(med, key, cluster_id, line_ids) for med in found)
-    return FuzzyLookup(tuple(hits), truncated)
+    return FuzzyLookup(tuple(hits), bool(cut_keys), frozenset(cut_keys))
 
 
 def match_ocr_text(

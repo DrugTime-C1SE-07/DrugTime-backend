@@ -174,7 +174,8 @@ def test_catalog_search_alias_returns_same_catalog_without_id_collision(
         }
     )
     assert search.call_count == 2
-    assert all(call.args[1:] == ("amlo", 20) for call in search.call_args_list)
+    # Port tìm theo từ (contract adhoc-20261116): (uow, terms, query, limit).
+    assert all(call.args[1:] == (["amlo"], "amlo", 20) for call in search.call_args_list)
 
 
 @pytest.mark.parametrize("path", ["/catalog/medications", "/medications/search"])
