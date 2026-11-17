@@ -35,6 +35,30 @@ _SALT_NOTE = re.compile(r"\([^()]*?(?:duoi dang|tuong duong)[^()]*\)")
 # C3: name evidence a brand line needs before ingredient lines lose their name credit.
 # Chosen on the pilot-002 raw set; to be calibrated in 4.17.
 _BRAND_SIMILARITY = 0.5
+# adhoc-20261116 B1 (03-plan §1.1): word-level similarity for a misread word of a name, the
+# weaker one when the top is ingredient-named, and the length of a word that may be an
+# unreadable brand. Chosen on the pilot-002 raw set and the 4.13 bench (04 §5).
+_TOKEN_SIMILARITY = 0.6
+_GENERIC_TOKEN_SIMILARITY = 0.4
+_INGREDIENT_TOKEN_SIMILARITY = 0.5  # long ingredient words misread ("chionpheniramine")
+_BRAND_WORD_MIN = 5
+# Words of company, pharmacy, prescription, standard and packaging lines: never the name of
+# a medicine, so they are no evidence of another medicine (01 NN3). Generic words, not
+# names of companies or products.
+_NOISE_WORDS = frozenset({
+    "cty", "cong", "ty", "tnhh", "jsc", "ltd", "co", "corp", "phan", "duoc", "pham",
+    "pharma", "pharm", "pharmaceutical", "pharmaceuticals", "international", "nha", "thuoc",
+    "hotline", "chinh", "hang", "gmp", "who", "rx", "ke", "don", "ban", "theo", "box", "of",
+    "blister", "blisters", "each", "contains", "indication", "indications", "made", "in",
+    "viet", "nam", "vietnam", "san", "xuat", "boi", "dia", "chi", "tinh", "huyen", "quan",
+    "duong", "so", "lo", "hsd", "nsx", "exp", "mfg", "batch", "lot", "reg", "no", "sdk",
+    "effervescent", "effervescents", "manufactured", "marketed", "distributed", "prescription",
+    "composition", "directed", "physician", "dosage", "warning", "store", "protect",
+    "www", "com", "vn", "net",
+})
+# Misreads of the longer noise words ("manutechro", "effervescen") are noise too.
+_LONG_NOISE_WORDS = tuple(w for w in _NOISE_WORDS if len(w) >= 6)
+_NOISE_SIMILARITY = 0.5
 
 
 def _components(text: str) -> str:
@@ -122,8 +146,14 @@ class _Entry:
 
     @property
     def identity(self) -> tuple:
+        """Same medicine: same name words (adhoc-20261116 B2: "Atorvastatin 10" and
+        "Atorvastatin 10mg" are registrations of one medicine), strength and dosage form."""
         form = normalize_key(self.medication.dosage_form or "")
-        return (self.name_key, self.strength, form)
+        return (self.name_words, self.strength, form)
+
+    @property
+    def name_words(self) -> tuple[str, ...]:
+        return tuple(_name_tokens(self.name_key))
 
     def add_name(self, key: str) -> None:
         self.name_keys.add(key)
@@ -184,16 +214,97 @@ def _ingredient_keys(
     return retrieved | similar
 
 
+def _is_noise(word: str) -> bool:
+    return word in _NOISE_WORDS or (
+        len(word) >= 6
+        and any(trigram_similarity(word, w) >= _NOISE_SIMILARITY for w in _LONG_NOISE_WORDS)
+    )
+
+
+def _name_tokens(text: str) -> list[str]:
+    """Words that can name a medicine: `_tokens` without company, pharmacy, prescription and
+    packaging words (adhoc-20261116 01 NN3). Used by R2 and `suggested_query` only."""
+    return [t for t in _tokens(text) if not _is_noise(t)]
+
+
+def _token_close(word: str, words: list[str], threshold: float = _TOKEN_SIMILARITY) -> bool:
+    return any(trigram_similarity(word, w) >= threshold for w in words)
+
+
+def _fragment_of(tokens: list[str], text: str, threshold: float = _TOKEN_SIMILARITY) -> bool:
+    """Every word read is (a misread of) a word of `text`: "decolgeni", "forte" of
+    "Decolgen Forte"; "alorvastatin" of the top's ingredient "Atorvastatin"."""
+    words = _tokens(text)
+    return bool(tokens) and all(_token_close(t, words, threshold) for t in tokens)
+
+
 def _brand_line_conflict(
     lookup: OcrCatalogLookup, ranked: list[_Entry], top: _Entry, ingredient_keys: set[str]
 ) -> bool:
-    """R2 (4.13 03-plan §1): an OCR name line that is not an ingredient line is a brand
-    line; `top` must be among the medicines most similar to it."""
+    """R2 (4.13 03-plan §1), narrowed by adhoc-20261116 B1 (03-plan §1.1, 04 §5): a line that
+    is not an ingredient line blocks only when it reads, by its name words (no numbers, no
+    company or packaging words), as another medicine better than as the top, shares a word
+    with it, and is no fragment of the top's name or ingredient. When the top is
+    ingredient-named (a generic box), weaker evidence blocks, and so does a short unreadable
+    brand-like line: the brand of the same ingredient may be the medicine (C4, QD-39)."""
+    ingredient_text = normalize_key(top.medication.active_ingredient or "")
+    ingredient_words = _tokens(ingredient_text)
+    generic_top = _ingredient_named(top, ingredient_keys) or any(
+        len(t) >= 4 and _token_close(t, ingredient_words) for t in _tokens(top.name_key)
+    )  # also "Finasteride" whose catalog ingredient is spelled "Finasterid"
+    top_words = " ".join(_name_tokens(top.name_key))
+
+    def brand_like_unreadable(key: str) -> bool:
+        tokens = _name_tokens(key)
+        return (
+            generic_top
+            and bool(tokens)
+            and not any(_is_noise(t) for t in _tokens(key))
+            and len(tokens) <= 2
+            # letters, not length: "apo1ets" is a misread brand (bench 4.13 C4)
+            and any(sum(c.isalpha() for c in t) >= _BRAND_WORD_MIN for t in tokens)
+            and not _fragment_of(tokens, top.name_key)
+            and not (ingredient_text and _fragment_of(
+                tokens, ingredient_text, _INGREDIENT_TOKEN_SIMILARITY))
+        )
+
+    # A line too garbled to be looked up ("APO1ETS") may still be the brand on a generic box.
+    if any(
+        brand_like_unreadable(line.name_key)
+        for line in lookup.normalized.lines
+        if not line.query_eligible
+    ):
+        return True
     for key in sorted({c.query_key for c in lookup.coverage} - ingredient_keys):
+        tokens = _name_tokens(key)
+        if not tokens or _fragment_of(tokens, top.name_key):
+            continue
+        if ingredient_text and _fragment_of(tokens, ingredient_text, _INGREDIENT_TOKEN_SIMILARITY):
+            continue  # a misread ingredient line of the top itself
+        candidates = [e for e in ranked if key in e.name_keys]
+        if not candidates:
+            # Names nothing in the catalog: only a short brand-like line on a generic box.
+            if brand_like_unreadable(key):
+                return True
+            continue
+        words = " ".join(tokens)
         similarity = {
-            id(e): trigram_similarity(key, e.name_key) for e in ranked if key in e.name_keys
+            id(e): (trigram_similarity(words, " ".join(_name_tokens(e.name_key))), e)
+            for e in candidates
         }
-        if id(top) not in similarity or similarity[id(top)] < max(similarity.values()) - _EPS:
+        best, other = max(similarity.values(), key=lambda pair: (pair[0], -pair[1].medication.id))
+        top_similarity = trigram_similarity(words, top_words) if top_words else 0.0
+        if other is top or best <= top_similarity + _EPS:
+            continue
+        # A generic top accepts weaker word evidence of a brand ("konlcmax" ~ "konlemax").
+        threshold = _GENERIC_TOKEN_SIMILARITY if generic_top else _TOKEN_SIMILARITY
+        other_words = _name_tokens(other.name_key)
+        shares_word = any(
+            len(t) >= 4 and _token_close(t, other_words, threshold) for t in tokens
+        )
+        if not shares_word:
+            continue  # e.g. "nha thuoc ngoc anh" vs "Thuốc cảm lạnh an nhân"
+        if generic_top or best >= _BRAND_SIMILARITY:
             return True
     return False
 
@@ -208,14 +319,38 @@ def _best_name_has_several_strengths(ranked: list[_Entry]) -> bool:
     )
 
 
-def _suggested_query(lookup: OcrCatalogLookup) -> str | None:
+def _suggested_query(
+    lookup: OcrCatalogLookup, fuzzy: FuzzyLookup, ranked: list[_Entry], policy: MatchPolicy
+) -> str | None:
+    """adhoc-20261116 B6: the medicine name read most reliably, for the manual search.
+    (1) the top candidate's name; (2) the most repeated line whose name found catalog
+    medicines; (3) the most repeated line that can name a medicine (no company, pharmacy,
+    prescription or packaging word); otherwise None."""
+
+    def cut(key: str) -> str | None:
+        return key.strip()[:_SUGGESTED_QUERY_MAX].strip() or None
+
+    if ranked and ranked[0].score >= policy.low_threshold:
+        return cut(catalog_name_key(ranked[0].medication.name))
+    named = {
+        source.cluster_id
+        for cluster in lookup.clusters
+        for candidate in cluster.candidates
+        for source in candidate.sources
+        if source.kind == MatchKind.NAME
+    } | {hit.cluster_id for hit in fuzzy.hits}
     clusters = sorted(
-        (c for c in lookup.normalized.clusters if c.query_eligible and c.name_key.strip()),
-        key=lambda c: (-c.count, c.cluster_id),
+        (
+            c
+            for c in lookup.normalized.clusters
+            if c.query_eligible and _name_tokens(c.name_key)
+        ),
+        key=lambda c: (c.cluster_id not in named, -c.count, c.cluster_id),
     )
-    if not clusters:
-        return None
-    return clusters[0].name_key.strip()[:_SUGGESTED_QUERY_MAX].strip() or None
+    for c in clusters:
+        if c.cluster_id in named or not any(_is_noise(t) for t in _tokens(c.name_key)):
+            return cut(c.name_key)
+    return None
 
 
 def _apply_strength_rules(
@@ -359,7 +494,7 @@ def score_ocr_matches(
         e.score = round(min(max(raw, 0.0), 1.0), 3)
 
     ranked = sorted(remaining, key=lambda e: (-e.score, e.medication.id))
-    suggested = _suggested_query(lookup)
+    suggested = _suggested_query(lookup, fuzzy, ranked, policy)
     reasons: set[OcrMatchReason] = set()
 
     if not ranked:
@@ -372,9 +507,21 @@ def score_ocr_matches(
         return OcrMatchOutcome(OcrMatchStatus.NO_MATCH, (), None, suggested, frozenset(reasons))
 
     blocked = False
-    if top.strength is None or top.derived:
-        blocked = True  # B3-7; the contract has no dedicated code (03-plan Q2)
-    if evidence.has_unparsed:
+    # B3-7. adhoc-20261116 B4: a strength read from the ingredient text (derived) may match
+    # once the box states every one of its strengths and nothing else.
+    derived_verified = (
+        top.derived and bool(ocr_parts) and top.strength == ocr_parts and not top.conflict
+    )
+    if top.strength is None or (top.derived and not derived_verified):
+        blocked = True  # the contract has no dedicated code (03-plan Q2)
+    # adhoc-20261116 B5: an unreadable strength blocks only on a line about the top (its name
+    # or ingredient line) or on a line that names nothing (a strength printed on its own);
+    # a number misread on a company or packaging line says nothing about the medicine.
+    if any(
+        line.unparsed_strengths
+        and (line.line_id in top.line_ids or not line.query_eligible)
+        for line in normalized.lines
+    ):
         blocked = True
         reasons.add(OcrMatchReason.STRENGTH_UNPARSED)
     if not ocr_parts and top.strength is not None and not top.unverified:
@@ -387,7 +534,9 @@ def score_ocr_matches(
     # C4: so can a cut ingredient lookup when the top is ingredient-named: a brand of the
     # same ingredient, whose line was unreadable, may be the medicine on the box (QD-39).
     top_ingredient_named = _ingredient_named(top, ingredient_keys)
-    if fuzzy.truncated or any(
+    # adhoc-20261116 B3: a cut fuzzy lookup of a key that did not bring the top hides no
+    # competitor of it (same narrowing as NN5 for exact lookups).
+    if fuzzy.truncated_keys & top.name_keys or any(
         c.truncated
         and (
             (c.kind == MatchKind.NAME and c.query_key in top.name_keys)
@@ -405,11 +554,29 @@ def score_ocr_matches(
         blocked = True  # R2; no dedicated reason code (03-plan Q2)
     if name_removed and top.name < 1.0 - _EPS:
         blocked = True  # Q2 ranked on a brand line read only approximately; no reason code
-    runner_up = next((e for e in ranked[1:] if e.identity != top.identity), None)
+    # B2: once the box's strength verified the top, a registration of the same name whose
+    # strength or form the catalog leaves empty is no different medicine.
+    verified = bool(ocr_parts) and top.strength_score >= 1.0 - _EPS and not top.unverified
+
+    def same_medicine(e: _Entry) -> bool:
+        if e.identity == top.identity:
+            return True
+        return (
+            verified
+            and e.name_words == top.name_words
+            and (e.strength is None or not e.medication.dosage_form)
+            and e.strength in (None, top.strength)
+        )
+
+    runner_up = next((e for e in ranked[1:] if not same_medicine(e)), None)
     if runner_up is not None and top.score - runner_up.score < policy.margin:
         blocked = True
-        if runner_up.name_key != top.name_key:
+        if runner_up.name_words != top.name_words:
             reasons.add(OcrMatchReason.LASA_CLOSE)
+    if top.unverified and any(
+        e.name_words == top.name_words and e.strength is None for e in ranked[1:]
+    ):
+        blocked = True  # T6: an unread strength may be the catalog row without one (QD-39)
     if sum(1 for e in ranked if e.identity == top.identity and e.score == top.score) > 1:
         reasons.add(OcrMatchReason.TIE)  # B1: same name, strength, form; may still match
 

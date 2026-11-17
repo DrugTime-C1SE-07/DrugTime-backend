@@ -179,12 +179,18 @@ def test_newlines_preserved_votes__AC16(client, make, auth, db, tag):
     # Line breaks reach 4.12 intact: the suggested query is the name line alone, while on
     # one line the expiry date pollutes it. (adhoc-20261106: name scores are word coverage,
     # so a score difference no longer shows the line breaks.)
-    unknown = [f"XYLOQUANT {tag}", "HSD 12/2027"]
+    # adhoc-20261116 B6: with a candidate the query is its name, so use a word that shares
+    # no trigram-close catalog row (a fresh tag) to still see the OCR lines themselves.
+    other = "qv" + "".join(chr(ord("a") + int(c, 16) % 26) for c in uuid4().hex[:8]) + "x"
+    unknown = [f"XYLOQUANT {other}", "HSD 12/2027"]
     for separator in ("\n", "\r\n"):
         body = ok(match(client, headers, {"text": separator.join(unknown)}))
-        assert body["suggested_query"] == f"xyloquant {tag}"
+        assert body["items"] == [], body
+        assert body["suggested_query"] == f"xyloquant {other}"
+    # On one line the expiry date pollutes the name line, so it is not suggested as is (B6
+    # skips clusters with packaging/expiry words): the line breaks are what make it usable.
     joined = ok(match(client, headers, {"text": " ".join(unknown)}))
-    assert joined["suggested_query"] == f"xyloquant {tag} hsd 12/2027"
+    assert joined["suggested_query"] != f"xyloquant {other}"
 
 
 def test_fuzzy_finds_misread_name__AC17(client, make, auth, db, tag):
@@ -298,3 +304,43 @@ def test_generic_top_with_cut_ingredient_lookup_not_matched__AC7(client, make, a
     )
     assert body["status"] != "matched" and body["preselected_id"] is None, body
     assert "truncated" in body["reasons"]
+
+
+# --- adhoc-20261116: noise lines and registration variants on PostgreSQL (I5) ---
+
+
+def test_noise_lines_and_registration_variants_matched__AC3_AC4a(client, make, auth, db, tag):
+    """Name split over two lines, company/pharmacy/packaging lines around it, and two catalog
+    rows of the same medicine (registration variants "… 10" / "… 10mg", same strength and
+    form). Expected: matched to the first variant; the noise lines block nothing (AC3) and
+    the variants do not count as two close medicines (AC4a)."""
+    first = add_med(db, make, f"Atoris{tag} Forte{tag} 10", "10 mg", ingredient="Atorvastatin")
+    second = add_med(db, make, f"Atoris{tag} Forte{tag} 10mg", "10 mg", ingredient="Atorvastatin")
+    add_med(db, make, f"Atoris{tag}", "20 mg", ingredient="Atorvastatin")
+    text_ = "\n".join(
+        [
+            f"ATORIS{tag.upper()}",
+            f"FORTE{tag.upper()}",
+            "10 mg",
+            "CTY TNHH UNITED INTERNATIONAL PHARMA",
+            "NHA THUOC NGOC ANH",
+            "Hop 3 vi x 10 vien nen bao phim",
+        ]
+    )
+    body = ok(match(client, auth(make.user()), {"text": text_}))
+    assert body["status"] == "matched", body
+    assert body["preselected_id"] == min(first, second), body
+    assert {first, second} <= set(item_ids(body))
+    assert body["suggested_query"] is None
+
+
+def test_low_confidence_returns_items_for_the_one_card__AC2(client, make, auth, db, tag):
+    """Contract adhoc-20261116: low_confidence keeps items (the app shows items[0] with a
+    check reminder) and a name to search with."""
+    mid = add_med(db, make, f"Hapacol{tag}", "250 mg")
+    add_med(db, make, f"Hapacol{tag}", "500 mg")
+    body = ok(match(client, auth(make.user()), {"text": f"HAPACOL{tag.upper()}"}))
+    assert body["status"] == "low_confidence", body
+    assert body["items"] and mid in item_ids(body)
+    assert body["preselected_id"] is None
+    assert body["suggested_query"] == f"hapacol{tag}"

@@ -91,7 +91,13 @@ class FakeReader:
         found = sorted(
             (m for m in self.catalog if sim(m) >= threshold), key=lambda m: (-sim(m), m.id)
         )
-        return tuple(found[:limit]), self.fuzzy_truncated or len(found) > limit
+        # `fuzzy_truncated`: True cuts every fuzzy lookup; a collection cuts only those keys.
+        cut = (
+            query_key in self.fuzzy_truncated
+            if isinstance(self.fuzzy_truncated, (set, frozenset, list, tuple))
+            else bool(self.fuzzy_truncated)
+        )
+        return tuple(found[:limit]), cut or len(found) > limit
 
 
 def run(text, catalog, *, policy=POLICY, limit=5, **reader_kwargs):
@@ -145,7 +151,8 @@ def test_low_band_low_confidence_with_query__AC3():
     assert outcome.status == S.LOW_CONFIDENCE
     assert outcome.preselected_id is None and ids(outcome) == [1]
     assert outcome.reasons == frozenset({R.BELOW_THRESHOLD})
-    assert outcome.suggested_query == "cefuroxim"
+    # adhoc-20261116 B6 (02 contract): the top candidate's name, not the OCR line.
+    assert outcome.suggested_query == "cefuroxim kabi"
 
 
 def test_threshold_from_policy_changes_status__AC10():
@@ -437,8 +444,12 @@ def test_combination_ingredient_line_not_brand__R2():
 def test_ingredient_line_threshold_from_settings__R2_AC10():
     catalog = [med(10, "Panadol Extra", "500 mg + 65 mg", "Paracetamol, Cafein")]
     strict = replace(POLICY, ingredient_line_similarity=1.0)
-    outcome, _ = run("PANADOL EXTRA\nParacetamol 500mg Caffeine 65mg", catalog, policy=strict)
-    assert outcome.status == S.LOW_CONFIDENCE and outcome.preselected_id is None
+    text = "PANADOL EXTRA\nParacetamol 500mg Caffeine 65mg"
+    default, _ = run(text, catalog)
+    outcome, _ = run(text, catalog, policy=strict)
+    # adhoc-20261116 B1: a line naming no catalog medicine no longer blocks a brand top (02
+    # contract), so the setting is observed through the evidence the ingredient line grants.
+    assert score_of(outcome, 10) < score_of(default, 10)
 
 
 # --- adhoc-20261106: brand vs active-ingredient evidence (NN1-NN5, YT1) ---
@@ -675,3 +686,178 @@ def test_brand_with_salt_note_strength_ranks_first__C5_C6():
     ]
     outcome, _ = run("ATORIS\nAtorvastatin 10mg\nator", catalog)
     assert ids(outcome)[0] == 20
+
+
+# --- adhoc-20261116: blocking rules react to evidence about the top candidate only ---
+# Real packaging always carries company, pharmacy and packaging lines; they are no evidence
+# of another medicine (01 NN3, NN4). Traps T1-T6 keep QD-39: never preselect a near medicine.
+
+COMBINATION_STRENGTHS = (
+    "Paracetamol 500mg\nPhenylephrine HCl 10mg\nChlorpheniramine maleate 2mg"
+)
+DECOLGEN_CATALOG = [
+    med(1, "Fortec", "10 mg", "Amlodipin"),
+    med(2, "Decolgen", None, "Paracetamol 500mg, Phenylephrin HCl 5mg", form="Sirô"),
+    med(3, "Paracetamol 500mg", "500 mg", PARA),
+    med(4, "Decolgen Forte", None, DECOLGEN_FORTE_INGR),
+    med(5, "Thuốc cảm lạnh an nhân", "0,48 g", "Cam thảo"),
+]
+
+
+def test_noise_lines_do_not_block_brand__AC3():
+    text = f"DECOLGEN\nFORTE\n{COMBINATION_STRENGTHS}\nCTY TNHH UNITED\nNHA THUOC NGOC ANH"
+    outcome, _ = run(text, DECOLGEN_CATALOG)
+    assert outcome.status == S.MATCHED and outcome.preselected_id == 4
+
+
+def test_misread_fragment_of_top_does_not_block__AC3():
+    # AC3: R2 does not block and the brand ranks first. Whether it is preselected also
+    # depends on R1 (another name may read closer to "decolgeni"), which is unchanged.
+    from drugtime.modules.catalog.application import score_ocr_matches as scoring
+
+    outcome, _ = run(f"DECOLGENI\nFORTE\n{COMBINATION_STRENGTHS}", DECOLGEN_CATALOG)
+    assert ids(outcome)[0] == 4
+    top = scoring._Entry(DECOLGEN_CATALOG[3], "decolgen forte", None)
+    top.name_keys = {"decolgeni", "forte"}
+    keys = [
+        QueryCoverage(1, "decolgeni", MatchKind.NAME, False),
+        QueryCoverage(2, "forte", MatchKind.NAME, False),
+    ]
+    fortec = scoring._Entry(DECOLGEN_CATALOG[0], "fortec", frozenset({"10 mg"}))
+    fortec.name_keys = {"forte"}
+    decolgen = scoring._Entry(DECOLGEN_CATALOG[1], "decolgen", None)
+    decolgen.name_keys = {"decolgeni"}
+    normalized = normalize_ocr_text("DECOLGENI\nFORTE")
+    fake = OcrCatalogLookup(normalized, (), tuple(keys))
+    assert not scoring._brand_line_conflict(fake, [top, decolgen, fortec], top, set())
+
+
+ATORVASTATIN_VARIANTS = [
+    med(1, "Atorvastatin 10", "10mg", "Atorvastatin", form="Viên nén bao phim"),
+    med(2, "Atorvastatin 10mg", "10 mg", "Atorvastatin", form="Viên nén bao phim"),
+    med(3, "Atorvastatin Tablets 10 mg", "10 mg", "Atorvastatin", form="Viên nén bao phim"),
+]
+
+
+def test_registration_variants_are_one_medicine__AC4a():
+    text = "ATORVASTATIN 10 mg\nAtorvastatin 10 mg\nHop 3 vi x 10 vien nen bao phim"
+    outcome, _ = run(text, ATORVASTATIN_VARIANTS)
+    assert outcome.status == S.MATCHED and outcome.preselected_id == ids(outcome)[0]
+    assert R.LASA_CLOSE not in outcome.reasons
+
+
+def test_fuzzy_cut_on_noise_key_does_not_block__AC4b():
+    catalog = [med(1, "Panadol", "500 mg", PARA)]
+    text = "PANADOL 500mg\nParacetamol\nCTY TNHH UNITED"
+    outcome, reader = run(text, catalog, fuzzy_truncated={"cty tnhh united"})
+    assert "cty tnhh united" in reader.fuzzy_calls
+    assert outcome.status == S.MATCHED and outcome.preselected_id == 1
+    assert R.TRUNCATED not in outcome.reasons
+
+
+def test_fuzzy_cut_on_top_key_blocks__AC4b():
+    catalog = [med(1, "Panadol", "500 mg", PARA)]
+    outcome, _ = run("PANAD0L 500mg\nParacetamol", catalog, fuzzy_truncated={"panad0l"})
+    assert outcome.status == S.LOW_CONFIDENCE and R.TRUNCATED in outcome.reasons
+
+
+def test_derived_combination_full_strength_matched__AC4c():
+    catalog = [med(4, "Decolgen Forte", None, DECOLGEN_FORTE_INGR)]
+    outcome, _ = run(f"DECOLGEN FORTE\n{COMBINATION_STRENGTHS}", catalog)
+    assert outcome.status == S.MATCHED and outcome.preselected_id == 4
+
+
+def test_derived_without_ocr_strength_not_matched__AC4c():
+    catalog = [med(4, "Decolgen Forte", None, DECOLGEN_FORTE_INGR)]
+    outcome, _ = run("DECOLGEN FORTE\nDecolgen Forte", catalog)
+    assert outcome.status != S.MATCHED and outcome.preselected_id is None
+
+
+def test_unparsed_on_noise_line_does_not_block__AC4d():
+    catalog = [med(1, "Panadol", "500 mg", PARA)]
+    outcome, _ = run("PANADOL 500mg\nParacetamol\nCTY TNHH UNITED 5O0 mg", catalog)
+    assert outcome.status == S.MATCHED and outcome.preselected_id == 1
+    assert R.STRENGTH_UNPARSED not in outcome.reasons
+
+
+def test_unparsed_on_top_line_blocks__AC4d():
+    catalog = [med(1, "Panadol", "500 mg", PARA)]
+    outcome, _ = run("PANADOL 5O0 mg\nParacetamol 500mg", catalog)
+    assert outcome.status == S.LOW_CONFIDENCE and R.STRENGTH_UNPARSED in outcome.reasons
+
+
+def test_suggested_query_is_top_name__AC5():
+    text = "DECOLGEN\nFORTE\nCTY TNHH UNITED\nCTY TNHH UNITED\nCTY TNHH UNITED"
+    outcome, _ = run(text, DECOLGEN_CATALOG)
+    assert outcome.status != S.MATCHED
+    assert outcome.suggested_query == "decolgen forte"
+
+
+def test_suggested_query_prefers_name_hit_cluster__AC5():
+    catalog = [med(1, "Zyrtec", "10 mg", "Cetirizin")]
+    outcome, _ = run("ZYRTEC 5 mg\nCTY TNHH\nCTY TNHH", catalog)
+    assert outcome.status == S.NO_MATCH
+    assert outcome.suggested_query == "zyrtec"
+
+
+def test_suggested_query_none_for_company_only__AC5():
+    outcome, _ = run("CTY TNHH UNITED\nCTY TNHH UNITED", DECOLGEN_CATALOG)
+    assert outcome.status == S.NO_MATCH and outcome.suggested_query is None
+
+
+def test_same_name_other_strength_unread_not_matched__AC6():  # T1
+    catalog = [
+        med(1, "Metformin", "500 mg", "Metformin"),
+        med(2, "Metformin", "850 mg", "Metformin"),
+    ]
+    outcome, _ = run("METFORMIN\nMetformin\nCTY TNHH", catalog)
+    assert outcome.status != S.MATCHED and outcome.preselected_id is None
+
+
+def test_lasa_brands_close_not_matched__AC6():  # T2
+    catalog = [
+        med(1, "Losartan", "50 mg", "Losartan kali"),
+        med(2, "Lostatin", "50 mg", "Lovastatin"),
+    ]
+    outcome, _ = run("LOSATIN 50mg\nCTY TNHH", catalog)
+    assert outcome.status != S.MATCHED and outcome.preselected_id is None
+
+
+def test_generic_top_with_unreadable_brand_line_not_matched__AC6():  # T3
+    catalog = [med(3, "Paracetamol 500mg", "500 mg", PARA), EFFERALGAN]
+    outcome, _ = run("XQZWVKTP\nParacetamol 500mg\nCTY TNHH", catalog)
+    assert outcome.status != S.MATCHED and outcome.preselected_id is None
+
+
+def test_two_real_brand_lines_block__AC6():  # T4
+    catalog = [
+        med(4, "Decolgen Forte", None, DECOLGEN_FORTE_INGR),
+        med(6, "Tiffy", None, TIFFY_DEY_INGR),
+    ]
+    outcome, _ = run(f"DECOLGEN FORTE\nTIFFY\n{COMBINATION_STRENGTHS}", catalog)
+    assert outcome.status != S.MATCHED and outcome.preselected_id is None
+
+
+def test_strength_mismatch_still_no_match__AC6():  # T5
+    catalog = [med(1, "Zyrtec", "10 mg", "Cetirizin")]
+    outcome, _ = run("ZYRTEC 5mg\nCetirizin\nCTY TNHH UNITED", catalog)
+    assert outcome.status == S.NO_MATCH and R.STRENGTH_MISMATCH in outcome.reasons
+
+
+def test_same_name_unknown_strength_row_blocks_when_top_unverified__AC6():  # T6
+    catalog = [med(1, "Metformin", "500 mg", "Metformin"), med(2, "Metformin", None, "Metformin")]
+    outcome, _ = run("METFORMIN\nMetformin", catalog)
+    assert outcome.status != S.MATCHED and outcome.preselected_id is None
+
+
+def test_unlookupable_brand_line_blocks_generic_registrations__AC6():
+    # Bench 4.13 C4 after B2: registrations of one generic no longer block each other, so the
+    # garbled brand line ("APO1ETS", not looked up) must block the generic top by itself.
+    catalog = [
+        med(1, "Clopidogrel 75 mg", "75 mg", "Clopidogrel"),
+        med(2, "Clopidogrel tablets 75mg", "75 mg", "Clopidogrel"),
+        med(9, "Apolets", "75mg", "Clopidogrel (dưới dạng Clopidogrel bisulfate) 75mg"),
+    ]
+    text = "APO1ETS\nClopidogrel (dưới dạng Clopidogrel bisul 75mg\nSĐK: VD-12345-21"
+    outcome, _ = run(text, catalog)
+    assert outcome.status != S.MATCHED and outcome.preselected_id is None

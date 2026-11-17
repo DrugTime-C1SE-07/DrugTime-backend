@@ -350,3 +350,55 @@ def test_read_only_lookup_and_client_grants_remain_closed__AC21(make, db):
             assert not db.execute(
                 text("SELECT has_table_privilege(:r, :t, 'SELECT')"), {"r": role, "t": table}
             ).scalar_one()
+
+
+def test_strength_search_index_ready_and_used__AC13(make, db):
+    """adhoc-20261116: word search ORs name, ingredient and strength for every word; the
+    strength index (migration 20261117060411) lets that OR use indexes instead of a scan."""
+    from drugtime.modules.catalog.application.search_medications import search_medications
+
+    key = "strengthprobe" + uuid4().hex
+    mid = make.catalog_medication(name=f"{key} Brand", active_ingredient=key)
+    db.execute(
+        text("UPDATE medications SET strength_text = :s WHERE id = :i"),
+        {"s": f"{key} 500 mg", "i": mid},
+    )
+    db.execute(
+        text("SELECT gin_clean_pending_list(CAST(:i AS regclass))"),
+        {"i": "medications_strength_search_idx"},
+    )
+    db.execute(text("ANALYZE medications"))
+    with unit_of_work() as uow:
+        row = uow.connection.execute(
+            text(
+                "SELECT i.indisvalid, i.indisready, pg_get_indexdef(c.oid) AS definition "
+                "FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
+                "WHERE c.relname = 'medications_strength_search_idx'"
+            )
+        ).one()
+        assert row.indisvalid and row.indisready
+        assert "USING gin" in row.definition
+        assert "catalog_search_key(strength_text)" in row.definition
+        found = search_medications(uow, f"{key} 500 mg", 20, SqlCatalog())
+        assert [m.id for m in found] == [mid]
+        # The strength predicate exactly as SqlCatalog.search writes it for a letter word. On
+        # a small test DB the planner may prefer other indexes for the whole query (on the
+        # real catalog it uses a BitmapOr of name, ingredient and strength indexes, evidence
+        # implement-P4c.log), so check that this predicate alone can use the new index.
+        uow.connection.execute(text("SET LOCAL enable_seqscan = off"))
+        uow.connection.execute(text("SET LOCAL enable_indexscan = off"))
+        plan = uow.connection.execute(
+            text(
+                "EXPLAIN (FORMAT JSON) SELECT m.id FROM medications m WHERE "
+                "public.catalog_search_key(m.strength_text) LIKE :p ESCAPE '\'"
+            ),
+            {"p": f"%{key}%"},
+        ).scalar_one()
+
+        def names(node):
+            found_names = {node["Index Name"]} if "Index Name" in node else set()
+            for child in node.get("Plans", []):
+                found_names |= names(child)
+            return found_names
+
+        assert "medications_strength_search_idx" in names(plan[0]["Plan"]), plan

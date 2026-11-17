@@ -139,28 +139,65 @@ class SqlCatalog:
             active_ingredient=row.raw_active_ingredient,
         )
 
-    def search(self, uow: UnitOfWork, escaped: str, limit: int) -> list[CatalogMedication]:
-        """`escaped`: chuỗi tìm đã escape `\\ % _` (xem search_medications). Cả hai phía so
-        trên catalog_search_key (bỏ dấu, chữ thường), đúng biểu thức của index trigram."""
+    def search(
+        self, uow: UnitOfWork, terms: list[str], query: str, limit: int
+    ) -> list[CatalogMedication]:
+        """Tìm theo từ (contract `GET /catalog/medications`). `terms`, `query`: đã escape
+        `\\ % _` (xem search_medications). Mọi phía so trên catalog_search_key (bỏ dấu, chữ
+        thường); từ chữ đi qua index trigram của tên và hoạt chất. Từ có chữ số so sau khi bỏ
+        khoảng trắng, thêm cột hàm lượng ("500mg" khớp "500 mg")."""
+        if not terms:
+            return []
         c = uow.connection
-        key = c.execute(
-            text("SELECT public.catalog_search_key(:q)"), {"q": escaped}
-        ).scalar_one()
+        # Chuẩn hóa trong DB (đúng hàm của index), một lần cho mọi từ, để mẫu LIKE là hằng.
+        selects = ", ".join(f"public.catalog_search_key(:w{i})" for i in range(len(terms)))
+        keys = c.execute(
+            text(f"SELECT public.catalog_search_key(:q), {selects}"),
+            {"q": query, **{f"w{i}": t for i, t in enumerate(terms)}},
+        ).one()
+        query_key, term_keys = keys[0], keys[1:]
+
+        name = "public.catalog_search_key(m.name)"
+        ingredient = "public.catalog_search_key(m.raw_active_ingredient)"
+        strength = "replace(public.catalog_search_key(m.strength_text), ' ', '')"
+        params: dict[str, object] = {"prefix": f"{query_key}%", "q": query_key, "limit": limit}
+        where, in_name, in_strength = [], [], []
+        for i, key in enumerate(term_keys):
+            p = f":p{i}"
+            if any(ch.isdigit() for ch in key):
+                params[f"p{i}"] = f"%{key.replace(' ', '')}%"
+                where.append(
+                    f"(replace({name}, ' ', '') LIKE {p} ESCAPE '\\' "
+                    f"OR replace({ingredient}, ' ', '') LIKE {p} ESCAPE '\\' "
+                    f"OR {strength} LIKE {p} ESCAPE '\\')"
+                )
+                in_strength.append(f"coalesce({strength} LIKE {p} ESCAPE '\\', false)")
+            else:
+                params[f"p{i}"] = f"%{key}%"
+                where.append(
+                    f"({name} LIKE {p} ESCAPE '\\' OR {ingredient} LIKE {p} ESCAPE '\\' "
+                    f"OR public.catalog_search_key(m.strength_text) LIKE {p} ESCAPE '\\')"
+                )
+                in_name.append(f"{name} LIKE {p} ESCAPE '\\'")
+        # Thứ tự (contract): tên bắt đầu bằng q; mọi từ chữ nằm trong tên; mọi từ số khớp hàm
+        # lượng; độ giống tên–q; tên, id. Nhóm từ rỗng thì bỏ bậc đó (Postgres không cho hằng
+        # trong ORDER BY, và hằng cũng không đổi thứ tự).
+        ranks = "".join(
+            f"({' AND '.join(group)}) DESC, " for group in (in_name, in_strength) if group
+        )
         rows = c.execute(
             text(
                 "SELECT m.id, m.name, m.raw_active_ingredient, m.strength_text, m.dosage_form, "
                 "EXISTS (SELECT 1 FROM medication_active_ingredients mai "
                 "        WHERE mai.medication_id = m.id) AS has_active_ingredients "
                 "FROM medications m "
-                "WHERE m.deleted_at IS NULL "
-                "AND (public.catalog_search_key(m.name) LIKE :contains ESCAPE '\\' "
-                "  OR public.catalog_search_key(m.raw_active_ingredient) LIKE :contains "
-                "     ESCAPE '\\') "
-                "ORDER BY (public.catalog_search_key(m.name) LIKE :prefix ESCAPE '\\') DESC, "
+                "WHERE m.deleted_at IS NULL AND " + " AND ".join(where) + " "
+                f"ORDER BY ({name} LIKE :prefix ESCAPE '\\') DESC, {ranks}"
+                f"extensions.similarity({name}, :q) DESC, "
                 "m.name, m.id "
                 "LIMIT :limit"
             ),
-            {"contains": f"%{key}%", "prefix": f"{key}%", "limit": limit},
+            params,
         )
         return [
             CatalogMedication(
