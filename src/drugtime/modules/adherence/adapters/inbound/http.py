@@ -146,6 +146,12 @@ def get_checkpoint_uow() -> Iterator[SqlUnitOfWork]:
 CheckpointUow = Annotated[SqlUnitOfWork, Depends(get_checkpoint_uow, scope="function")]
 
 
+def checkpoint_user(
+    uow: CheckpointUow, authorization: str | None = Header(None)
+) -> identity.CurrentUser:
+    return identity.current_user(authorization=authorization, uow=uow)
+
+
 @router.post(
     "/doses/sync-checkpoints",
     status_code=204,
@@ -156,7 +162,7 @@ CheckpointUow = Annotated[SqlUnitOfWork, Depends(get_checkpoint_uow, scope="func
 )
 def post_sync_checkpoint(
     uow: CheckpointUow,
-    user: identity.CurrentUser = Depends(identity.current_user),
+    user: identity.CurrentUser = Depends(checkpoint_user),
 ) -> Response:
     record_sync_checkpoint(
         uow,

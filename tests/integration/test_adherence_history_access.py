@@ -14,7 +14,7 @@ from drugtime.main import create_app
 from drugtime.modules.adherence.adapters.inbound import history_http
 from drugtime.modules.identity.application.sign_in import issue_app_session
 from drugtime.modules.identity.domain.user import SessionType
-from drugtime.shared.db import get_engine
+from drugtime.shared.db import get_denied_audit_engine, get_engine
 
 SCOPE = "lich_su_tuan_thu"
 history_data = _history_data
@@ -212,7 +212,7 @@ def test_audit_permission_and_commit_failure_fail_closed_without_health__AC13(
 
     if failure == "commit":
         monkeypatch.setattr(history_http, "unit_of_work", failed_commit)
-    engine = get_engine()
+    engine = get_denied_audit_engine() if failure == "denied_insert" else get_engine()
     event.listen(engine, "before_cursor_execute", fail_or_record)
     try:
         response = TestClient(create_app(), raise_server_exceptions=False).get(

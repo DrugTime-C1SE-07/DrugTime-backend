@@ -132,18 +132,26 @@ def test_record_failure_params_have_no_code__AC18(monkeypatch):
     assert "code" not in signature.parameters
 
 
-def test_failure_engine_is_separate_small_pool__AC13():
+def test_failure_engine_is_separate_small_pool__AC13(monkeypatch):
     """Lượt sai không lấy kết nối từ pool chính mà request đợi khóa người gửi đang giữ (H1)."""
+    from drugtime.shared.config import Settings
     from drugtime.shared.db import get_engine
 
-    sql_link_attempts._failure_engine.cache_clear()
+    monkeypatch.setenv("DB_LINK_FAILURE_POOL_SIZE", "1")
+    monkeypatch.setenv("DB_LINK_FAILURE_MAX_OVERFLOW", "0")
+    monkeypatch.setenv("DB_LINK_FAILURE_POOL_TIMEOUT", "6")
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(sql_link_attempts, "get_settings", lambda: settings)
+
+    sql_link_attempts._cached_failure_engine.cache_clear()
     try:
         engine = sql_link_attempts._failure_engine()
 
         assert engine is not get_engine()
         assert engine is sql_link_attempts._failure_engine()
-        assert engine.pool.size() == 2
-        assert engine.pool._max_overflow == 3
+        assert engine.pool.size() == 1
+        assert engine.pool._max_overflow == 0
+        assert engine.pool.timeout() == 6
     finally:
         sql_link_attempts._failure_engine().dispose()
-        sql_link_attempts._failure_engine.cache_clear()
+        sql_link_attempts._cached_failure_engine.cache_clear()

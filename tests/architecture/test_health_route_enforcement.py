@@ -9,7 +9,9 @@ from fastapi import routing
 from fastapi.security import HTTPBearer
 
 from drugtime.main import create_app
+from drugtime.modules.adherence.adapters.inbound.http import checkpoint_user, get_checkpoint_uow
 from drugtime.modules.identity import api as identity
+from drugtime.shared.db import get_uow
 
 # (scope, operationId, audit_self): ghi liều và checkpoint chính chủ không ghi access_logs khi
 # được phép (theo PEP chung); đọc lịch sử thì có (3.23).
@@ -65,7 +67,24 @@ def test_adherence_health_route_registered_with_bearer_identity_and_scope(method
     assert route.openapi_extra["x-health-scope"] == scope
     assert route.openapi_extra["x-health-audit-self"] is audit_self
     calls = list(dependencies(route.dependant))
-    assert identity.current_user in calls
+    auth_for_route = {
+        "/doses/batch": identity.current_user,
+        "/doses/sync-checkpoints": checkpoint_user,
+    }
+    auth = auth_for_route.get(path, identity.current_user_short_uow)
+    assert auth in calls
+    if auth is identity.current_user_short_uow:
+        assert get_uow not in calls
+    if path == "/doses/sync-checkpoints":
+        auth_dependency = next(
+            dep for dep in route.dependant.dependencies if dep.call is checkpoint_user
+        )
+        checkpoint_dependency = next(
+            dep for dep in route.dependant.dependencies if dep.call is get_checkpoint_uow
+        )
+        (auth_uow,) = auth_dependency.dependencies
+        assert auth_uow.call is checkpoint_dependency.call
+        assert auth_uow.use_cache and checkpoint_dependency.use_cache
     assert any(isinstance(call, HTTPBearer) and call.scheme_name == "bearerAuth" for call in calls)
     op = app.openapi()["paths"][path][method.lower()]
     assert op["operationId"] == operation and op["security"] == [{"bearerAuth": []}]

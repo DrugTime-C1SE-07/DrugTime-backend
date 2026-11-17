@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -24,7 +24,9 @@ OPERATIONS = [
 @pytest.fixture
 def client(monkeypatch):
     app = create_app()
-    app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(uuid4(), False)
+    app.dependency_overrides[identity.current_user_short_uow] = (
+        lambda: identity.CurrentUser(uuid4(), False)
+    )
 
     @contextmanager
     def transaction():
@@ -244,6 +246,7 @@ def test_invalid_or_erased_auth(method, path, body, kind, monkeypatch):
         users = Mock()
         users.get.return_value = Mock(erased=True)
         monkeypatch.setattr(dependencies, "SqlUsers", lambda _: users)
+        monkeypatch.setattr(dependencies, "read_unit_of_work", lambda: nullcontext(object()))
     response = TestClient(app).request(
         method, path, json=body, headers={"Authorization": "Bearer not-a-real-token"}
     )
@@ -280,7 +283,9 @@ def test_commit_precedes_asgi_response_start(monkeypatch, commit_failure):
         http, "get_profile", lambda *a, **k: HealthProfile(None, None, None, None, [])
     )
     app = create_app()
-    app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(uuid4(), False)
+    app.dependency_overrides[identity.current_user_short_uow] = (
+        lambda: identity.CurrentUser(uuid4(), False)
+    )
 
     async def observe(scope, receive, send):
         async def recorded_send(message):

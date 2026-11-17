@@ -8,7 +8,7 @@ from sqlalchemy import event, text
 
 from drugtime.main import create_app
 from drugtime.modules.medication.adapters.inbound import profile_http
-from drugtime.shared.db import get_engine
+from drugtime.shared.db import get_denied_audit_engine, get_engine
 
 OPS = [
     ("get", "/profile", None),
@@ -178,7 +178,7 @@ def test_denied_audit_failure_fails_closed__AC15(db, make, auth):
         if "INSERT INTO access_logs" in statement:
             raise RuntimeError("audit unavailable")
 
-    event.listen(get_engine(), "before_cursor_execute", fail)
+    event.listen(get_denied_audit_engine(), "before_cursor_execute", fail)
     try:
         response = TestClient(create_app(), raise_server_exceptions=False).get(
             "/profile", headers=auth(user)
@@ -187,4 +187,4 @@ def test_denied_audit_failure_fails_closed__AC15(db, make, auth):
         assert response.json() == {"detail": "Internal server error"}
         assert snapshot(db, user) == before
     finally:
-        event.remove(get_engine(), "before_cursor_execute", fail)
+        event.remove(get_denied_audit_engine(), "before_cursor_execute", fail)

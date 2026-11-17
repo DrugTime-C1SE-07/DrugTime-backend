@@ -79,7 +79,7 @@ _NO_STORE = {"Cache-Control": {"schema": {"type": "string", "const": "no-store"}
 def check_interactions_endpoint(
     patient_id: UUID,
     body: InteractionCheckRequest,
-    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    user: Annotated[identity.CurrentUser, Depends(identity.current_user_short_uow)],
 ) -> JSONResponse:
     # Fail-closed (task 4.05, AC24): dựng response trong transaction, nên dòng access_logs
     # `allowed` commit xong mới trả dữ liệu. `Depends(get_uow)` commit sau khi đã gửi response.
@@ -150,7 +150,7 @@ def _interaction_check_response(res) -> InteractionCheckResponse:
 )
 def list_food_interactions_endpoint(
     patient_id: UUID,
-    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    user: Annotated[identity.CurrentUser, Depends(identity.current_user_short_uow)],
     user_medication_id: Annotated[int | None, Query(ge=1)] = None,
 ) -> JSONResponse:
     as_of = now()

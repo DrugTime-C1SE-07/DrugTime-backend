@@ -71,7 +71,9 @@ def _json(model: HealthProfileResponse | UserConditionResponse, status: int = 20
     responses={**_ERRORS, 200: _NO_STORE},
     operation_id="getOwnHealthProfile",
 )
-def read_profile(request: Request, user: identity.CurrentUser = Depends(identity.current_user)):
+def read_profile(
+    request: Request, user: identity.CurrentUser = Depends(identity.current_user_short_uow)
+):
     _self_only(request)
     with unit_of_work() as uow:
         result = get_profile(
@@ -96,7 +98,7 @@ def read_profile(request: Request, user: identity.CurrentUser = Depends(identity
 def put_profile(
     body: ProfileUpdateRequest,
     request: Request,
-    user: identity.CurrentUser = Depends(identity.current_user),
+    user: identity.CurrentUser = Depends(identity.current_user_short_uow),
 ):
     _self_only(request)
     with unit_of_work() as uow:
@@ -126,7 +128,7 @@ def put_profile(
 def post_condition(
     body: UserConditionCreateRequest,
     request: Request,
-    user: identity.CurrentUser = Depends(identity.current_user),
+    user: identity.CurrentUser = Depends(identity.current_user_short_uow),
 ):
     _self_only(request)
     with unit_of_work() as uow:
@@ -153,7 +155,7 @@ def patch_condition(
     id: LinkId,
     body: UserConditionUpdateRequest,
     request: Request,
-    user: identity.CurrentUser = Depends(identity.current_user),
+    user: identity.CurrentUser = Depends(identity.current_user_short_uow),
 ):
     _self_only(request)
     with unit_of_work() as uow:
@@ -178,7 +180,9 @@ def patch_condition(
     operation_id="deleteOwnCondition",
 )
 def remove_condition(
-    id: LinkId, request: Request, user: identity.CurrentUser = Depends(identity.current_user)
+    id: LinkId,
+    request: Request,
+    user: identity.CurrentUser = Depends(identity.current_user_short_uow),
 ):
     _self_only(request)
     with unit_of_work() as uow:

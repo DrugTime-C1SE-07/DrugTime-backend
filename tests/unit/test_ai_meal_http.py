@@ -102,7 +102,7 @@ def _client(suggester, user=True):
     app.dependency_overrides[get_uow] = _fake_get_uow
     app.dependency_overrides[http.get_meal_suggester] = lambda: suggester
     if user:
-        app.dependency_overrides[identity.current_user] = _user
+        app.dependency_overrides[identity.current_user_short_uow] = _user
     return TestClient(app, raise_server_exceptions=False)
 
 

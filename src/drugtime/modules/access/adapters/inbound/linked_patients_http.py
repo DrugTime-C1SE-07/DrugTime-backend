@@ -81,7 +81,7 @@ _RESPONSES[422] = {"model": PatientListValidationError, "headers": _HEADERS}
 
 async def validate_input(
     request: Request,
-    _user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    _user: Annotated[identity.CurrentUser, Depends(identity.current_user_short_uow)],
 ) -> None:
     errors = [
         {"type": "extra_forbidden", "loc": ("query", key), "msg": "Extra inputs are not permitted"}
@@ -103,7 +103,7 @@ async def validate_input(
     openapi_extra={"x-health-scope": Scope.LINKED_PATIENTS.value, "x-health-audit-self": False},
 )
 def get_linked_patients(
-    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    user: Annotated[identity.CurrentUser, Depends(identity.current_user_short_uow)],
     validated: Annotated[None, Depends(validate_input)],
 ) -> JSONResponse:
     with unit_of_work() as uow:

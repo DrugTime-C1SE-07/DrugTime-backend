@@ -22,6 +22,37 @@ python main.py
 python -m uvicorn drugtime.main:app --host 0.0.0.0 --port 8000
 ```
 
+### Giới hạn kết nối PostgreSQL
+
+Các biến sau áp dụng cho từng process backend. Khởi động lại process sau khi
+đổi cấu hình.
+
+| Biến | Mặc định | Phạm vi |
+| --- | ---: | --- |
+| `DB_POOL_SIZE` | 3 | Pool chính, tối thiểu 2 |
+| `DB_MAX_OVERFLOW` | 0 | Kết nối vượt pool chính, tối thiểu 0 |
+| `DB_POOL_TIMEOUT` | 30 | Thời gian chờ slot pool chính (giây) |
+| `DB_LINK_FAILURE_POOL_SIZE` | 2 | Pool ghi lượt nhập sai mã liên kết, tối thiểu 1 |
+| `DB_LINK_FAILURE_MAX_OVERFLOW` | 0 | Kết nối vượt pool ghi lượt sai, tối thiểu 0 |
+| `DB_LINK_FAILURE_POOL_TIMEOUT` | 30 | Thời gian chờ slot pool ghi lượt sai (giây) |
+| `DB_DENIED_AUDIT_POOL_SIZE` | 1 | Pool ghi audit bị từ chối, tối thiểu 1 |
+| `DB_DENIED_AUDIT_MAX_OVERFLOW` | 0 | Kết nối vượt pool audit, tối thiểu 0 |
+| `DB_DENIED_AUDIT_POOL_TIMEOUT` | 30 | Thời gian chờ slot pool audit (giây) |
+
+Với Supavisor session mode, cộng giới hạn của các pool đang dùng trong từng
+process, rồi cộng toàn bộ API replica, worker và công cụ dùng cùng database
+role/database. Mặc định một process có thể dùng tối đa 6 kết nối nếu cả ba
+pool đều hoạt động. Với giới hạn 15, hai process ở mặc định có trần 12,
+còn 3 slot cho client khác. Tính cả process cũ và mới khi deploy cuốn chiếu.
+
+Các endpoint tự quản lý giao dịch trả kết nối xác thực trước khi mở giao
+dịch nghiệp vụ. Checkpoint dùng cùng kết nối cho xác thực và ghi.
+Trước rollout, kiểm thử tình huống ghi audit bị từ chối và ghi lượt sai khi
+pool chính bận. Sau rollout, kiểm tra Pooler Logs và thử
+`POST /catalog/medications/match` với catalog thật. Nếu cần khôi phục cấu hình,
+khôi phục các giá trị môi trường tương ứng rồi khởi động lại các process
+đã đổi.
+
 - **Swagger UI Interactive:** [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
 - **OpenAPI JSON Spec:** [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)

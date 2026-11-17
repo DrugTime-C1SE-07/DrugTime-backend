@@ -2,7 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-from drugtime.shared.db import unit_of_work
+from drugtime.shared.db import denied_audit_unit_of_work as unit_of_work
 from drugtime.shared.uow import UnitOfWork
 
 _INSERT = text(

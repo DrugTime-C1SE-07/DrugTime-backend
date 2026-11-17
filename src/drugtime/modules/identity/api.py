@@ -6,6 +6,7 @@ from uuid import UUID
 from drugtime.modules.identity.adapters.inbound.dependencies import (
     current_mobile_user,
     current_user,
+    current_user_short_uow,
     require_admin,
 )
 from drugtime.modules.identity.adapters.inbound.email_change_http import (
@@ -37,6 +38,7 @@ __all__ = [
     "remove_device_tokens",
     "current_user",
     "current_mobile_user",
+    "current_user_short_uow",
     "eraser",
     "require_admin",
     "router",

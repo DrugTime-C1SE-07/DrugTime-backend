@@ -15,7 +15,7 @@ from drugtime.modules.adherence.adapters.outbound.other_modules import (
 )
 from drugtime.modules.adherence.adapters.outbound.sql_adherence import SqlNotifications
 from drugtime.modules.adherence.application.manage_notifications import get_notification
-from drugtime.shared.db import get_engine, unit_of_work
+from drugtime.shared.db import get_denied_audit_engine, get_engine, unit_of_work
 from drugtime.shared.errors import Forbidden
 
 AT = datetime(2026, 10, 20, 1, tzinfo=UTC)
@@ -194,7 +194,7 @@ def test_access_audit_commit_failure_returns_503_without_health_or_write__AC5(
     def fail_commit(conn):
         raise RuntimeError("injected commit failure")
 
-    engine = get_engine()
+    engine = get_denied_audit_engine() if failure == "denied_insert" else get_engine()
     event.listen(engine, "before_cursor_execute", inject)
     if failure == "commit":
         event.listen(engine, "commit", fail_commit)

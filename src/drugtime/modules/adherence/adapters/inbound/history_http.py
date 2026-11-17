@@ -47,7 +47,7 @@ def read_history(
     end: Annotated[QueryDate, Query(alias="to")] = None,
     patient_id: UUID | None = None,
     group_by: GroupBy = GroupBy.DATE,
-    user: identity.CurrentUser = Depends(identity.current_user),
+    user: identity.CurrentUser = Depends(identity.current_user_short_uow),
 ):
     as_of = now()
     with unit_of_work() as uow:

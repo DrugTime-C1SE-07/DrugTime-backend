@@ -54,18 +54,26 @@ def admin_engine():
 def app_settings(admin_engine):
     """Trỏ app vào DB local bằng api_role; secret phiên chỉ dùng cho test."""
     from drugtime.shared.config import get_settings
-    from drugtime.shared.db import get_engine
+    from drugtime.shared.db import (
+        _denied_audit_engine,
+        _primary_engine,
+        get_denied_audit_engine,
+        get_engine,
+    )
 
     os.environ["DATABASE_URL"] = _api_url()
     os.environ["SESSION_JWT_SECRET"] = secrets.token_hex(32)
     os.environ["SUPABASE_JWKS_URL"] = ""
     os.environ["SUPABASE_JWT_SECRET"] = secrets.token_hex(32)
     get_settings.cache_clear()
-    get_engine.cache_clear()
+    _primary_engine.cache_clear()
+    _denied_audit_engine.cache_clear()
     with get_engine().connect() as c:
         assert c.execute(text("SELECT current_user")).scalar_one() == "api_role"
     yield
     get_engine().dispose()
+    get_denied_audit_engine().dispose()
+    _denied_audit_engine.cache_clear()
 
 
 @pytest.fixture

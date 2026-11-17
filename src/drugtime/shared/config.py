@@ -1,7 +1,7 @@
 from functools import lru_cache
 from threading import BoundedSemaphore
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 EMAIL_SEND_SLOTS = BoundedSemaphore(5)
@@ -11,6 +11,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+psycopg://api_role:postgres@127.0.0.1:54322/postgres"
+    # Limits are per process. Denied audit writes can require a second connection.
+    db_pool_size: int = Field(default=3, ge=2)
+    db_max_overflow: int = Field(default=0, ge=0)
+    db_pool_timeout: float = Field(default=30, gt=0, allow_inf_nan=False)
+    db_denied_audit_pool_size: int = Field(default=1, ge=1)
+    db_denied_audit_max_overflow: int = Field(default=0, ge=0)
+    db_denied_audit_pool_timeout: float = Field(default=30, gt=0, allow_inf_nan=False)
+    db_link_failure_pool_size: int = Field(default=2, ge=1)
+    db_link_failure_max_overflow: int = Field(default=0, ge=0)
+    db_link_failure_pool_timeout: float = Field(default=30, gt=0, allow_inf_nan=False)
     redis_url: str = "redis://127.0.0.1:6379/0"
     celery_broker_url: str = "amqp://guest:guest@127.0.0.1:5672//"
     catalog_dav_drugbank_url: str = (

@@ -443,7 +443,10 @@ def test_concurrent_wrong_codes_at_most_five_404__AC13(
     codes = [_wrong_code() for _ in range(10)]
     sends = [lambda c=c: _send(client, auth, family, c) for c in codes]
     threads, results = _run_parallel(sends)
-    wait_for_lock_waiters(10)
+    from drugtime.shared.db import get_engine
+
+    pool = get_engine().pool
+    wait_for_lock_waiters(min(10, pool.size() + pool._max_overflow))
     tx.commit()
     for t in threads:
         t.join(timeout=30)
@@ -463,7 +466,7 @@ def test_burst_beyond_pool_no_500__AC13(
     from drugtime.shared.db import get_engine
 
     pool = get_engine().pool
-    capacity = pool.size() + pool._max_overflow  # mặc định 5 + 10
+    capacity = pool.size() + pool._max_overflow
     family = make.user()
     other = make.user(consents=("family_sharing",))
     frozen_clock(NOON_VN)

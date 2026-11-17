@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from functools import lru_cache
+from threading import Lock
 from uuid import UUID
 
 from sqlalchemy import Engine, create_engine, text
@@ -31,8 +32,16 @@ ON CONFLICT (family_user_id, client_uuid) DO NOTHING
 """)
 
 
-@lru_cache
+_failure_engine_lock = Lock()
+
+
 def _failure_engine() -> Engine:
+    with _failure_engine_lock:
+        return _cached_failure_engine()
+
+
+@lru_cache
+def _cached_failure_engine() -> Engine:
     """Pool riêng, nhỏ, chỉ để ghi lượt sai.
 
     Request đợi khóa người gửi vẫn giữ kết nối của pool chính. Nếu lượt sai cũng lấy từ pool
@@ -40,8 +49,13 @@ def _failure_engine() -> Engine:
     ghi được, chờ pool_timeout rồi lỗi, cả API treo theo (review 3.13, H1). Kết nối ở đây chỉ
     chạy một câu INSERT không chờ khóa nào, nên người giữ khóa luôn ghi xong rồi nhả khóa.
     """
+    settings = get_settings()
     return create_engine(
-        get_settings().database_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+        settings.database_url,
+        pool_size=settings.db_link_failure_pool_size,
+        max_overflow=settings.db_link_failure_max_overflow,
+        pool_timeout=settings.db_link_failure_pool_timeout,
+        pool_pre_ping=True,
     )
 
 

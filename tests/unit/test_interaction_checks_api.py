@@ -48,7 +48,7 @@ def _client(user=None):
     app = create_app()
     app.dependency_overrides[get_uow] = _fake_uow
     if user is not None:
-        app.dependency_overrides[identity.current_user] = lambda: user
+        app.dependency_overrides[identity.current_user_short_uow] = lambda: user
     return TestClient(app)
 
 
@@ -380,7 +380,7 @@ def test_interaction_checks_preserves_existing_medication_doses_with_medication_
 
     app = create_app()
     app.dependency_overrides[get_uow] = _custom_fake_uow
-    app.dependency_overrides[identity.current_user] = lambda: caller
+    app.dependency_overrides[identity.current_user_short_uow] = lambda: caller
     client = TestClient(app)
 
     med_a = CatalogMedication(

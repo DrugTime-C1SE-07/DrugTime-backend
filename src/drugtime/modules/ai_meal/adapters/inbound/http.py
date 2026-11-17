@@ -44,7 +44,7 @@ _log = logging.getLogger(__name__)
 
 # Đăng ký với tests/architecture/test_health_route_enforcement.py (task 4.26).
 _HEALTH_EXTRA = {"x-health-scope": "goi_y_bua_an", "x-health-audit-self": True}
-# Chỉ để OpenAPI khai báo `security: bearerAuth`; xác thực thật ở identity.current_user.
+# Chỉ để OpenAPI khai báo `security: bearerAuth`; xác thực thật ở identity.current_user_short_uow.
 _BEARER = Depends(HTTPBearer(auto_error=False, scheme_name="bearerAuth", bearerFormat="JWT"))
 _NO_STORE = {"Cache-Control": "no-store"}
 _NO_STORE_DOC = {"Cache-Control": {"schema": {"type": "string", "const": "no-store"}}}
@@ -119,7 +119,7 @@ def _payload(outcome: MealOutcome) -> dict:
 def create_meal_suggestions_endpoint(
     patient_id: UUID,
     body: MealSuggestionRequest,
-    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    user: Annotated[identity.CurrentUser, Depends(identity.current_user_short_uow)],
     suggester: Annotated[MealSuggester | None, Depends(get_meal_suggester)],
 ) -> JSONResponse:
     request = MealRequest(

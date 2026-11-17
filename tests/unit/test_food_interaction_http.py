@@ -39,7 +39,7 @@ def _client(user=None):
     app = create_app()
     app.dependency_overrides[get_uow] = _fake_get_uow
     if user is not None:
-        app.dependency_overrides[identity.current_user] = lambda: user
+        app.dependency_overrides[identity.current_user_short_uow] = lambda: user
     return TestClient(app, raise_server_exceptions=False)
 
 

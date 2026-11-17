@@ -1,5 +1,5 @@
 import secrets
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
@@ -34,7 +34,9 @@ def harness(monkeypatch):
         rows=[LinkedPatientView(P, "An")],
         calls=[],
     )
-    app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(C, False)
+    app.dependency_overrides[identity.current_user_short_uow] = (
+        lambda: identity.CurrentUser(C, False)
+    )
     app.dependency_overrides[get_uow] = lambda: object()
 
     @contextmanager
@@ -109,7 +111,9 @@ def test_all_bodies_rejected(harness, body):
 
 
 def test_admin_error_and_rollback(harness):
-    harness.app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(C, True)
+    harness.app.dependency_overrides[identity.current_user_short_uow] = (
+        lambda: identity.CurrentUser(C, True)
+    )
     harness.fail = Forbidden("khong_co_quyen")
     response = harness.client.get("/family/patients")
     assert response.status_code == 403 and response.json() == {"detail": "khong_co_quyen"}
@@ -131,7 +135,7 @@ def test_dependency_sql_failure_returns_503_no_store(harness):
     def unavailable():
         raise SQLAlchemyError("database unavailable")
 
-    harness.app.dependency_overrides[identity.current_user] = unavailable
+    harness.app.dependency_overrides[identity.current_user_short_uow] = unavailable
     response = harness.client.get("/family/patients")
     assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
@@ -148,11 +152,12 @@ def test_audit_sql_failure_rolls_back(harness):
 
 
 def test_http_auth_validation_errors_no_store(harness, monkeypatch):
-    harness.app.dependency_overrides.pop(identity.current_user)
+    harness.app.dependency_overrides.pop(identity.current_user_short_uow)
     monkeypatch.setenv("SESSION_JWT_SECRET", secrets.token_hex(32))
     get_settings.cache_clear()
     user = SimpleNamespace(id=C, is_admin=False, erased=False)
     monkeypatch.setattr(auth, "SqlUsers", lambda uow: SimpleNamespace(get=lambda uid: user))
+    monkeypatch.setattr(auth, "read_unit_of_work", lambda: nullcontext(object()))
     try:
         token = issue_app_session(C, SessionType.MOBILE, datetime.now(UTC)).token
         foreign = jwt.encode({"sub": str(C), "aud": "authenticated"}, secrets.token_hex(32))

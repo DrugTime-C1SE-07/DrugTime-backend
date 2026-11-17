@@ -21,7 +21,12 @@ NOW = datetime(2026, 10, 19, 12, tzinfo=VIETNAM)
 @pytest.fixture
 def client(monkeypatch):
     app = create_app()
-    app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(USER, False)
+
+    def current_user():
+        return identity.CurrentUser(USER, False)
+
+    app.dependency_overrides[identity.current_user] = current_user
+    app.dependency_overrides[identity.current_user_short_uow] = current_user
     app.dependency_overrides[get_uow] = lambda: object()
     events = []
 
