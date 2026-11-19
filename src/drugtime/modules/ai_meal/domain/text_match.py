@@ -9,8 +9,10 @@ import unicodedata
 from collections.abc import Iterable
 
 _SPACES = re.compile(r"\s+")
-# Tách câu `food_to_avoid` tự do ("Thực phẩm giàu kali (chuối, cam)") thành từ khóa.
-_SEPARATORS = re.compile(r"[,;()/\[\]]|\s+(?:và|hoặc|hay)\s+", re.IGNORECASE)
+# Tách câu `food_to_avoid` tự do ("Thực phẩm giàu kali (chuối, cam)") và tên danh mục dị ứng
+# ("Hải sản (tôm, cua, sò, mực…)") thành từ khóa. Dấu lửng "…"/"..." cũng là ranh giới, nếu không
+# phần tử cuối thành "mực…" và không bao giờ khớp.
+_SEPARATORS = re.compile(r"[,;()/\[\]…]|\.{3}|\s+(?:và|hoặc|hay)\s+", re.IGNORECASE)
 _MIN_KEYWORD = 2
 
 

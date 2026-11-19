@@ -6,6 +6,7 @@ from uuid import UUID
 from drugtime.modules.access import api as access
 from drugtime.modules.catalog import api as catalog
 from drugtime.modules.identity import api as identity
+from drugtime.modules.medication.domain.health_setup import AllergenLabel
 from drugtime.modules.medication.domain.user_condition import PersonalProfile
 from drugtime.modules.medication.domain.user_medication import MedicationInfo
 from drugtime.shared.uow import UnitOfWork
@@ -62,6 +63,26 @@ class CatalogAdapter:
 
 
 class HealthProfileAccessAdapter:
+    def authorize_setup(
+        self,
+        uow: UnitOfWork,
+        user_id: UUID,
+        is_admin: bool,
+        *,
+        writes: bool,
+        rejected_owner_selector: bool,
+        target_id: UUID,
+    ) -> None:
+        access.authorize(
+            uow,
+            caller_id=user_id,
+            caller_is_admin=is_admin,
+            patient_id=target_id,
+            scope=access.Scope.HEALTH_PROFILE,
+            action=access.Action.WRITE if writes else access.Action.READ,
+            rejected_owner_selector=rejected_owner_selector,
+        )
+
     def authorize_read(self, uow: UnitOfWork, user_id: UUID, is_admin: bool) -> None:
         access.authorize(
             uow,
@@ -120,6 +141,15 @@ class IdentityProfileAdapter:
 
 
 class ConditionCatalogAdapter:
+    def active_allergen_ids(self, uow: UnitOfWork, ids: list[str]) -> set[str]:
+        return catalog.active_allergen_ids(uow, ids)
+
+    def allergen_labels(self, uow: UnitOfWork, ids: list[str]) -> dict[str, AllergenLabel]:
+        return {
+            allergen_id: AllergenLabel(item.id, item.category, item.name)
+            for allergen_id, item in catalog.allergen_labels(uow, ids).items()
+        }
+
     def get_name(self, uow: UnitOfWork, condition_id: int) -> str | None:
         condition = catalog.get_condition(uow, condition_id)
         return None if condition is None else condition.name

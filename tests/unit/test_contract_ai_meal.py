@@ -85,6 +85,7 @@ def test_request_forbids_unknown_fields(specs):
     "schema,field,bounds",
     [
         ("DietaryDeclaration", "items", {"maxItems": 10}),
+        ("AllergyDeclaration", "items", {"maxItems": 45}),
         ("MealSuggestionRequest", "preferences", {"maxItems": 5}),
     ],
 )
