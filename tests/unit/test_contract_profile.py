@@ -113,3 +113,35 @@ def test_request_and_success_response_shapes_match_contract(path, method, succes
             assert (
                 a["headers"]["Cache-Control"]["schema"] == (e["headers"]["Cache-Control"]["schema"])
             )
+
+
+def test_health_setup_physiological_step_matches_contract__AC25():
+    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    runtime = create_app().openapi()
+    path = "/profile/health-setup"
+    c_get = _resolve(contract, contract["paths"][path]["get"]["responses"]["200"])
+    r_get = _resolve(runtime, runtime["paths"][path]["get"]["responses"]["200"])
+    c_resp = _resolve(contract, c_get["content"]["application/json"]["schema"])
+    r_resp = _resolve(runtime, r_get["content"]["application/json"]["schema"])
+    assert (
+        set(c_resp["required"])
+        == set(r_resp["required"])
+        == {
+            "revision",
+            "allergies",
+            "conditions",
+            "physiological_states",
+        }
+    )
+    c_put = _resolve(
+        contract, contract["paths"][path]["put"]["requestBody"]["content"]["application/json"]
+    )["schema"]
+    r_put = runtime["paths"][path]["put"]["requestBody"]["content"]["application/json"]["schema"]
+    assert set(_resolve(contract, c_put)["properties"]) == set(r_put["properties"])
+    assert "physiological_states" in r_put["properties"]
+    # Condition catalog items and profile links both carry the same category enum.
+    for name in ("ConditionResponse", "UserConditionResponse"):
+        category = _resolve(
+            contract, contract["components"]["schemas"][name]["properties"]["category"]
+        )
+        assert sorted(category["enum"]) == ["chronic_disease", "physiological_state"]

@@ -95,6 +95,11 @@ def condition_names(uow: UnitOfWork, ids: list[int]) -> dict[int, str]:
     return SqlConditions().names(uow, ids)
 
 
+def conditions_by_id(uow: UnitOfWork, ids: list[int]) -> dict[int, Condition]:
+    """Catalog rows (name and category) for the given ids; missing ids are absent."""
+    return SqlConditions().get_many(uow, ids)
+
+
 def list_active_allergens(uow: UnitOfWork) -> list[Allergen]:
     """Active allergen catalog in display order (drug, then food)."""
     return SqlAllergens().list_active(uow)

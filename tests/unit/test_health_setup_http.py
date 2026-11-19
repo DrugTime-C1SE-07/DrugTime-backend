@@ -183,3 +183,52 @@ def test_missing_label_returns_500_without_body_data(monkeypatch):
     assert response.status_code == 500
     assert set(response.json()) == {"detail"}
     assert "penicillin" not in response.text and "ghost" not in response.text
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"status": "reported", "catalog_ids": []},
+        {"status": "reported", "catalog_ids": [3], "custom_names": ["x"]},
+        {"status": "reported", "catalog_ids": [3, 3]},
+        {"status": "unreported"},
+        None,
+    ],
+)
+def test_physiological_step_rejects_invalid_shapes__AC25(step):
+    with pytest.raises(ValueError):
+        HealthSetupRequest.model_validate({"revision": "1", "physiological_states": step})
+
+
+def test_physiological_step_alone_is_a_valid_request__AC25():
+    for step in ({"status": "none_known"}, {"status": "reported", "catalog_ids": [3, 4]}):
+        body = HealthSetupRequest.model_validate({"revision": "1", "physiological_states": step})
+        assert body.physiological_states is not None
+
+
+def test_response_carries_physiological_step__AC25(monkeypatch):
+    snapshot = HealthSetup(
+        "4",
+        SetupStep("none_known"),
+        SetupStep("none_known"),
+        SetupStep("reported", (3, 4)),
+    )
+    client, _ = _client_reading(monkeypatch, snapshot, {})
+    with client:
+        body = client.get("/profile/health-setup").json()
+    assert body["conditions"] == {"status": "none_known"}
+    assert body["physiological_states"] == {"status": "reported", "catalog_ids": [3, 4]}
+
+    unreported = HealthSetup("0", SetupStep("unreported"), SetupStep("unreported"))
+    client, _ = _client_reading(monkeypatch, unreported, {})
+    with client:
+        body = client.get("/profile/health-setup").json()
+    assert body["physiological_states"] == {"status": "unreported"}
+
+
+def test_openapi_put_declares_physiological_step_without_custom_names():
+    spec = create_app().openapi()
+    body = spec["paths"]["/profile/health-setup"]["put"]["requestBody"]["content"]
+    props = body["application/json"]["schema"]["properties"]
+    options = props["physiological_states"]["anyOf"]
+    assert all("custom_names" not in option.get("properties", {}) for option in options)

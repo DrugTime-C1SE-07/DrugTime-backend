@@ -7,7 +7,7 @@ from drugtime.modules.access import api as access
 from drugtime.modules.catalog import api as catalog
 from drugtime.modules.identity import api as identity
 from drugtime.modules.medication.domain.health_setup import AllergenLabel
-from drugtime.modules.medication.domain.user_condition import PersonalProfile
+from drugtime.modules.medication.domain.user_condition import ConditionLabel, PersonalProfile
 from drugtime.modules.medication.domain.user_medication import MedicationInfo
 from drugtime.shared.uow import UnitOfWork
 
@@ -156,3 +156,11 @@ class ConditionCatalogAdapter:
 
     def names(self, uow: UnitOfWork, ids: list[int]) -> dict[int, str]:
         return catalog.condition_names(uow, ids)
+
+    def labels(self, uow: UnitOfWork, ids: list[int]) -> dict[int, ConditionLabel]:
+        if not ids:
+            return {}
+        return {
+            condition_id: ConditionLabel(item.name, item.category)
+            for condition_id, item in catalog.conditions_by_id(uow, ids).items()
+        }

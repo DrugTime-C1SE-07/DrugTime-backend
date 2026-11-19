@@ -18,10 +18,12 @@ from drugtime.shared.uow import UnitOfWork
 def _view(
     uow: UnitOfWork, catalog: ConditionCatalog, link: UserConditionRecord
 ) -> UserConditionView:
-    name = catalog.get_name(uow, link.condition_id)
-    if name is None:
+    label = catalog.labels(uow, [link.condition_id]).get(link.condition_id)
+    if label is None:
         raise RuntimeError("Linked condition is missing")
-    return UserConditionView(link.id, link.condition_id, name, link.subtype, link.stage)
+    return UserConditionView(
+        link.id, link.condition_id, label.name, link.subtype, link.stage, label.category
+    )
 
 
 def create_condition(
@@ -36,7 +38,8 @@ def create_condition(
     setup: HealthSetupStore | None = None,
 ) -> UserConditionView:
     access.authorize_write(uow, user_id, is_admin)
-    if catalog.get_name(uow, cmd.condition_id) is None:
+    label = catalog.labels(uow, [cmd.condition_id]).get(cmd.condition_id)
+    if label is None:
         raise DomainError("condition_not_found")
     if setup is not None:
         setup.lock(uow, user_id)
@@ -44,7 +47,8 @@ def create_condition(
     if link is None:
         raise Conflict("condition_already_exists")
     if setup is not None:
-        setup.touch_condition_links(uow, user_id)
+        # Only this link's category loses its none_known declaration (AC17).
+        setup.touch_condition_links(uow, user_id, label.category)
     return _view(uow, catalog, link)
 
 
@@ -71,7 +75,7 @@ def update_condition(
     if link is None:
         raise NotFound("user_condition_not_found")
     if setup is not None:
-        setup.touch_condition_links(uow, user_id)
+        setup.touch_condition_links(uow, user_id, None)
     return _view(uow, catalog, link)
 
 
@@ -91,4 +95,4 @@ def delete_condition(
     if not conditions.delete(uow, user_id, link_id):
         raise NotFound("user_condition_not_found")
     if setup is not None:
-        setup.touch_condition_links(uow, user_id)
+        setup.touch_condition_links(uow, user_id, None)

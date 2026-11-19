@@ -11,6 +11,7 @@ from drugtime.modules.medication.application.manage_user_conditions import (
     update_condition,
 )
 from drugtime.modules.medication.domain.user_condition import (
+    ConditionLabel,
     NewUserCondition,
     PersonalProfile,
     UserConditionRecord,
@@ -34,12 +35,19 @@ def test_profile_nullable_and_batched_names(deps):
         UserConditionRecord(2, 3, None, "A"),
         UserConditionRecord(5, 7, "", None),
     ]
-    deps["catalog"].names.return_value = {3: "Diabetes", 7: "Hypertension"}
+    deps["catalog"].labels.return_value = {
+        3: ConditionLabel("Diabetes", "chronic_disease"),
+        7: ConditionLabel("Đang mang thai", "physiological_state"),
+    }
     result = get_profile(**deps, profiles=profiles)
     assert result.full_name is None
     assert result.email == "current@example.com"
     assert [link.id for link in result.conditions] == [2, 5]
-    deps["catalog"].names.assert_called_once_with(deps["uow"], [3, 7])
+    assert [link.category for link in result.conditions] == [
+        "chronic_disease",
+        "physiological_state",
+    ]
+    deps["catalog"].labels.assert_called_once_with(deps["uow"], [3, 7])
     deps["access"].authorize_read.assert_called_once_with(deps["uow"], USER, False)
 
 
@@ -60,11 +68,11 @@ def test_put_only_updates_personal_profile(deps):
 
 
 def test_create_duplicate_and_missing_catalog(deps):
-    deps["catalog"].get_name.return_value = None
+    deps["catalog"].labels.return_value = {}
     with pytest.raises(DomainError, match="condition_not_found"):
         create_condition(**deps, cmd=NewUserCondition(1))
     deps["conditions"].insert.assert_not_called()
-    deps["catalog"].get_name.return_value = "Diabetes"
+    deps["catalog"].labels.return_value = {1: ConditionLabel("Diabetes", "chronic_disease")}
     deps["conditions"].insert.return_value = None
     with pytest.raises(Conflict, match="condition_already_exists"):
         create_condition(**deps, cmd=NewUserCondition(1))

@@ -24,7 +24,7 @@ def get_profile(
     access.authorize_read(uow, user_id, is_admin)
     profile = profiles.get(uow, user_id)
     links = conditions.list(uow, user_id)
-    names = catalog.names(uow, [link.condition_id for link in links])
+    labels = catalog.labels(uow, [link.condition_id for link in links])
     return HealthProfile(
         profile.full_name,
         profile.date_of_birth,
@@ -32,7 +32,12 @@ def get_profile(
         profile.email,
         [
             UserConditionView(
-                link.id, link.condition_id, names[link.condition_id], link.subtype, link.stage
+                link.id,
+                link.condition_id,
+                labels[link.condition_id].name,
+                link.subtype,
+                link.stage,
+                labels[link.condition_id].category,
             )
             for link in links
         ],

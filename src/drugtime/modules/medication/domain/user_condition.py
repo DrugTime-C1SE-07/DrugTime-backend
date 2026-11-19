@@ -1,5 +1,16 @@
 from dataclasses import dataclass
 from datetime import date
+from typing import Literal
+
+ConditionCategory = Literal["chronic_disease", "physiological_state"]
+
+
+@dataclass(frozen=True)
+class ConditionLabel:
+    """Catalog name and category of a condition id."""
+
+    name: str
+    category: ConditionCategory
 
 
 @dataclass(frozen=True)
@@ -17,6 +28,7 @@ class UserConditionView:
     condition_name: str
     subtype: str | None
     stage: str | None
+    category: ConditionCategory = "chronic_disease"
 
 
 @dataclass(frozen=True)

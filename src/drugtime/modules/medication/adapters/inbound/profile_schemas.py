@@ -101,6 +101,7 @@ class UserConditionResponse(BaseModel):
     condition_name: str
     subtype: str | None
     stage: str | None
+    category: Literal["chronic_disease", "physiological_state"]
 
 
 class HealthProfileResponse(BaseModel):

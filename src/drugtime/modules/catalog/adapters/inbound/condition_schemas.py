@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -5,6 +7,7 @@ class ConditionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
     id: int = Field(ge=1, le=9223372036854775807, json_schema_extra={"format": "int64"})
     name: str
+    category: Literal["chronic_disease", "physiological_state"]
 
 
 class ConditionListResponse(BaseModel):

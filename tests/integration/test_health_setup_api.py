@@ -394,3 +394,213 @@ def test_transaction_failure_after_writes_rolls_back_both_steps__AC09(
         == 0
     )
     assert snapshot(client, headers) == before
+
+
+# --- Chronic diseases vs physiological states (adhoc-20261119-home-ui-feedback) ---------
+
+
+def physiological(db):
+    return db.execute(
+        text(
+            "INSERT INTO conditions (name, medical_nature, data_role) "
+            "VALUES (:name, 'sinh_ly_binh_thuong', 'dieu_chinh_thuoc_khac') RETURNING id"
+        ),
+        {"name": f"Sinh lý {uuid4()}"},
+    ).scalar_one()
+
+
+def physiological_reported(ids):
+    return {"status": "reported", "catalog_ids": list(ids)}
+
+
+def save(client, headers, **steps):
+    body = {"revision": snapshot(client, headers)["revision"], **steps}
+    response = client.put(PATH, headers=headers, json=body)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def link(db, user, cid):
+    db.execute(
+        text("INSERT INTO user_conditions (user_id, condition_id) VALUES (:u, :c)"),
+        {"u": user, "c": cid},
+    )
+
+
+def test_profile_and_setup_split_by_category__AC16(client, db, make, auth):
+    user = make.user()
+    headers = auth(user)
+    chronic, pregnant = condition(db), physiological(db)
+    link(db, user, chronic)
+    link(db, user, pregnant)
+
+    rows = client.get("/profile", headers=headers).json()["conditions"]
+    assert {(row["condition_id"], row["category"]) for row in rows} == {
+        (chronic, "chronic_disease"),
+        (pregnant, "physiological_state"),
+    }
+    current = snapshot(client, headers)
+    assert current["conditions"] == reported([chronic])
+    assert current["physiological_states"] == physiological_reported([pregnant])
+
+
+def test_new_user_physiological_step_is_unreported__AC25(client, make, auth):
+    current = snapshot(client, auth(make.user()))
+    assert current["physiological_states"] == {"status": "unreported"}
+
+
+def test_physiological_none_removes_pregnancy_and_keeps_diseases__AC25(client, db, make, auth):
+    user = make.user()
+    headers = auth(user)
+    chronic, pregnant = condition(db), physiological(db)
+    saved = save(
+        client,
+        headers,
+        conditions=reported([chronic]),
+        physiological_states=physiological_reported([pregnant]),
+    )
+    assert saved["physiological_states"] == physiological_reported([pregnant])
+
+    cleared = save(client, headers, physiological_states=NONE)
+    assert cleared["physiological_states"] == NONE
+    assert cleared["conditions"] == reported([chronic])
+    assert snapshot(client, headers) == cleared
+    linked = (
+        db.execute(text("SELECT condition_id FROM user_conditions WHERE user_id = :u"), {"u": user})
+        .scalars()
+        .all()
+    )
+    assert linked == [chronic]
+    flags = db.execute(
+        text(
+            "SELECT conditions_none_known, physiological_none_known "
+            "FROM health_profile_setup WHERE user_id = :u"
+        ),
+        {"u": user},
+    ).one()
+    assert tuple(flags) == (False, True)
+
+    # Reporting a state again clears the explicit "none".
+    again = save(client, headers, physiological_states=physiological_reported([pregnant]))
+    assert again["physiological_states"] == physiological_reported([pregnant])
+
+
+def test_condition_none_survives_physiological_change__AC17(client, db, make, auth):
+    headers = auth(make.user())
+    chronic, nursing, pregnant = condition(db), physiological(db), physiological(db)
+    save(client, headers, conditions=NONE)
+
+    # Through health setup.
+    after = save(client, headers, physiological_states=physiological_reported([nursing]))
+    assert after["conditions"] == NONE
+    # Through the per-link endpoint used by the profile screen.
+    created = client.post("/profile/conditions", headers=headers, json={"condition_id": pregnant})
+    assert created.status_code == 201, created.text
+    assert created.json()["category"] == "physiological_state"
+    assert snapshot(client, headers)["conditions"] == NONE
+
+    # A chronic disease still clears "none" (unchanged behaviour).
+    created = client.post("/profile/conditions", headers=headers, json={"condition_id": chronic})
+    assert created.status_code == 201, created.text
+    assert created.json()["category"] == "chronic_disease"
+    current = snapshot(client, headers)
+    assert current["conditions"] == reported([chronic])
+    assert current["physiological_states"] == physiological_reported(sorted([nursing, pregnant]))
+
+
+def test_physiological_none_cleared_by_linking_a_state__AC17_AC25(client, db, make, auth):
+    headers = auth(make.user())
+    pregnant = physiological(db)
+    save(client, headers, conditions=NONE, physiological_states=NONE)
+    created = client.post("/profile/conditions", headers=headers, json={"condition_id": pregnant})
+    assert created.status_code == 201, created.text
+    current = snapshot(client, headers)
+    assert current["physiological_states"] == physiological_reported([pregnant])
+    assert current["conditions"] == NONE
+
+
+@pytest.mark.parametrize("step", ["conditions", "physiological_states"])
+def test_wrong_category_returns_422_unchanged__AC13(client, db, make, auth, step):
+    user = make.user()
+    headers = auth(user)
+    chronic, pregnant = condition(db), physiological(db)
+    before = snapshot(client, headers)
+    wrong = reported([pregnant]) if step == "conditions" else physiological_reported([chronic])
+    result = client.put(
+        PATH,
+        headers=headers,
+        json={"revision": before["revision"], "allergies": NONE, step: wrong},
+    )
+    assert result.status_code == 422
+    assert result.json() == {"detail": "condition_category_mismatch"}
+    assert snapshot(client, headers) == before
+    assert not db.execute(
+        text("SELECT 1 FROM user_conditions WHERE user_id = :u"), {"u": user}
+    ).first()
+
+
+def test_physiological_step_rejects_custom_names_and_unknown_ids__AC13(client, make, auth):
+    headers = auth(make.user())
+    before = snapshot(client, headers)
+    custom = client.put(
+        PATH,
+        headers=headers,
+        json={
+            "revision": before["revision"],
+            "physiological_states": {
+                "status": "reported",
+                "catalog_ids": [],
+                "custom_names": ["Mang thai"],
+            },
+        },
+    )
+    assert custom.status_code == 422
+    unknown = client.put(
+        PATH,
+        headers=headers,
+        json={
+            "revision": before["revision"],
+            "physiological_states": physiological_reported([9223372036854775807]),
+        },
+    )
+    assert unknown.status_code == 422
+    assert unknown.json() == {"detail": "condition_not_found"}
+    assert snapshot(client, headers) == before
+
+
+def test_cross_patient_physiological_save_denied_and_audited__AC18(client, db, make, auth):
+    owner = make.user(consents=("health_data", "family_sharing"))
+    other = make.user()
+    make.link(owner, other, status="active", sharing=True)
+    pregnant = physiological(db)
+    response = client.put(
+        PATH,
+        params={"patient_id": str(owner)},
+        headers=auth(other),
+        json={"revision": "0", "physiological_states": physiological_reported([pregnant])},
+    )
+    assert response.status_code == 403
+    assert response.json() == {"detail": "khong_co_quyen"}
+    assert [row["result"] for row in make.access_logs(owner)] == ["denied"]
+    assert not db.execute(
+        text("SELECT 1 FROM user_conditions WHERE user_id IN (:a, :b)"),
+        {"a": owner, "b": other},
+    ).first()
+
+
+def test_revoked_consent_blocks_physiological_save__AC18(client, db, make, auth):
+    user = make.user()
+    headers = auth(user)
+    before = snapshot(client, headers)
+    make.revoke_consent(user, "health_data")
+    response = client.put(
+        PATH,
+        headers=headers,
+        json={"revision": before["revision"], "physiological_states": NONE},
+    )
+    assert response.status_code == 403
+    assert response.json() == {"detail": "consent_revoked"}
+    assert make.access_logs(user)[-1]["result"] == "denied"
+    assert not db.execute(
+        text("SELECT 1 FROM health_profile_setup WHERE user_id = :u"), {"u": user}
+    ).first()
