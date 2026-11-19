@@ -6,6 +6,7 @@ from uuid import UUID
 from drugtime.modules.access import api as access
 from drugtime.modules.catalog import api as catalog
 from drugtime.modules.identity import api as identity
+from drugtime.modules.medication.domain.health_setup import AllergenLabel
 from drugtime.modules.medication.domain.user_condition import PersonalProfile
 from drugtime.modules.medication.domain.user_medication import MedicationInfo
 from drugtime.shared.uow import UnitOfWork
@@ -136,8 +137,14 @@ class IdentityProfileAdapter:
 
 
 class ConditionCatalogAdapter:
-    def allergen_exists(self, allergen_id: str) -> bool:
-        return catalog.allergen_exists(allergen_id)
+    def active_allergen_ids(self, uow: UnitOfWork, ids: list[str]) -> set[str]:
+        return catalog.active_allergen_ids(uow, ids)
+
+    def allergen_labels(self, uow: UnitOfWork, ids: list[str]) -> dict[str, AllergenLabel]:
+        return {
+            allergen_id: AllergenLabel(item.id, item.category, item.name)
+            for allergen_id, item in catalog.allergen_labels(uow, ids).items()
+        }
 
     def get_name(self, uow: UnitOfWork, condition_id: int) -> str | None:
         condition = catalog.get_condition(uow, condition_id)

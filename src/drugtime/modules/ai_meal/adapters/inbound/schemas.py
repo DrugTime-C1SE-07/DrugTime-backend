@@ -33,14 +33,14 @@ class ErrorDetail(BaseModel):
     detail: str
 
 
-class DietaryDeclaration(BaseModel):
+class _Declaration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     none: bool
-    items: list[_text(40)] = Field(max_length=10)
+    items: list[_text(40)]
 
     @model_validator(mode="after")
-    def _two_valid_shapes(self) -> "DietaryDeclaration":
+    def _two_valid_shapes(self):
         if self.none and self.items:
             raise ValueError("items must be empty when none is true")
         if not self.none and not self.items:
@@ -50,11 +50,21 @@ class DietaryDeclaration(BaseModel):
         return self
 
 
+class DietaryDeclaration(_Declaration):
+    items: list[_text(40)] = Field(max_length=10)
+
+
+class AllergyDeclaration(_Declaration):
+    """Every allergy of the health profile: 15 catalog entries + 30 custom names (QD-40)."""
+
+    items: list[_text(40)] = Field(max_length=45)
+
+
 class MealSuggestionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     meal_type: MealTypeValue
-    allergies: DietaryDeclaration
+    allergies: AllergyDeclaration
     dietary_restrictions: DietaryDeclaration
     preferences: list[_text(40)] = Field(default_factory=list, max_length=5)
     # Tùy chọn; gửi `null` tường minh bị từ chối như contract (kiểu không nhận None).

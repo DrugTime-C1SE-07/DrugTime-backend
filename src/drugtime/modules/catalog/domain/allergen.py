@@ -3,22 +3,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Allergen:
+    """Entry of the shared allergen catalog (table `allergens`).
+
+    Entries are never deleted; a retired entry has `is_active = False` and keeps its label for
+    profiles that already chose it.
+    """
+
     id: str
     category: str
     name: str
-
-
-ALLERGENS = (
-    Allergen("penicillin", "drug", "Penicillin"),
-    Allergen("aspirin", "drug", "Aspirin"),
-    Allergen("sulfa", "drug", "Sulfa"),
-    Allergen("cephalosporin", "drug", "Cephalosporin"),
-    Allergen("seafood", "food", "Hải sản"),
-    Allergen("peanuts", "food", "Đậu phộng"),
-    Allergen("eggs", "food", "Trứng"),
-    Allergen("milk", "food", "Sữa"),
-)
-
-
-def allergen_exists(allergen_id: str) -> bool:
-    return any(item.id == allergen_id for item in ALLERGENS)
+    display_order: int
+    is_active: bool

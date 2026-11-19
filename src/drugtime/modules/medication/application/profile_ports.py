@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
-from drugtime.modules.medication.domain.health_setup import HealthSetup, SetupStep
+from drugtime.modules.medication.domain.health_setup import AllergenLabel, HealthSetup, SetupStep
 from drugtime.modules.medication.domain.user_condition import (
     NewUserCondition,
     PersonalProfile,
@@ -35,6 +35,8 @@ class PersonalProfiles(Protocol):
 class ConditionCatalog(Protocol):
     def get_name(self, uow: UnitOfWork, condition_id: int) -> str | None: ...
     def names(self, uow: UnitOfWork, ids: list[int]) -> dict[int, str]: ...
+    def active_allergen_ids(self, uow: UnitOfWork, ids: list[str]) -> set[str]: ...
+    def allergen_labels(self, uow: UnitOfWork, ids: list[str]) -> dict[str, AllergenLabel]: ...
 
 
 class UserConditions(Protocol):

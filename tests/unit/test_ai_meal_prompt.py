@@ -1,6 +1,8 @@
 """Input, prompt builder, khớp chuỗi của gợi ý bữa ăn (4.26: AC1, AC2, AC4; 5.11: AC14, AC20)."""
 
 import json
+import re
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -163,6 +165,46 @@ def test_contains_any_respects_word_boundaries():
     assert contains_any("Chuối tiêu", ["chuoi"])
     assert contains_any("Canh Tôm chua", ["tom"])
     assert not contains_any("Gạo lứt", ["ga"])
+
+
+@pytest.mark.parametrize(
+    ("allergy", "dish"),
+    [
+        ("Hải sản (tôm, cua, sò, mực…)", "Mực xào cần tỏi"),
+        ("Các loại hạt (điều, óc chó, hạnh nhân…)", "Salad hạnh nhân"),
+        ("Hải sản (tôm, cua, sò, mực...)", "Mực hấp gừng"),
+    ],
+)
+def test_ellipsis_is_a_keyword_boundary(allergy, dish):
+    """Review 06 round 2, M-1: the last example before "…" must still block dishes."""
+    keys = keywords([allergy])
+    parts = [k for k in keys if k != normalize(allergy)]  # the full phrase is kept as is
+    assert not any("…" in k or "..." in k for k in parts)
+    assert contains_any(dish, keys)
+
+
+_SEED = Path(__file__).resolve().parents[2] / "supabase/seeds/20_health_profile_catalog.sql"
+_SEED_NAME = re.compile(r"^\s*\('[a-z][a-z0-9_]*', '(?:drug|food)', '((?:[^']|'')*)', ", re.M)
+
+
+def test_every_example_in_seeded_allergen_names_is_blocked():
+    """Each example listed in a real catalog name (e.g. "mực" in "Hải sản (…, mực…)") becomes a
+    keyword of the backend defensive filter (task adhoc-20261118-health-profile-catalog, M-1)."""
+    block = _SEED.read_text(encoding="utf-8").split("INSERT INTO allergens", 1)[1]
+    names = [m.group(1).replace("''", "'") for m in _SEED_NAME.finditer(block)]
+    assert len(names) == 15
+    keys = keywords(names)
+    full = {normalize(n) for n in names}
+    assert not any("…" in k or "..." in k for k in keys if k not in full)
+    examples = [
+        example.strip(" …")
+        for name in names
+        if "(" in name
+        for example in name[name.index("(") + 1 : name.rindex(")")].split(",")
+    ]
+    assert "mực" in examples and "hạnh nhân" in examples
+    missed = [e for e in examples if e and not contains_any(f"Món có {e}", keys)]
+    assert missed == []
 
 
 # --- Task 5.11: meal-v2 ----------------------------------------------------------------------

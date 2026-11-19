@@ -2,11 +2,22 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from drugtime.modules.medication.domain.health_setup import HealthSetup, SetupStep
+from drugtime.modules.medication.domain.health_setup import (
+    MAX_ALLERGY_NAME,
+    MAX_CONDITION_NAME,
+    AllergenLabel,
+    HealthSetup,
+    SetupStep,
+)
 
 AllergenId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
 ConditionId = Annotated[int, Field(strict=True, ge=1)]
-CustomName = Annotated[str, Field(min_length=1, max_length=120, pattern=r"^[^\x00]+$")]
+CustomName = Annotated[
+    str, Field(min_length=1, max_length=MAX_CONDITION_NAME, pattern=r"^[^\x00]+$")
+]
+AllergyName = Annotated[
+    str, Field(min_length=1, max_length=MAX_ALLERGY_NAME, pattern=r"^[^\x00]+$")
+]
 
 
 class StepModel(BaseModel):
@@ -37,9 +48,29 @@ class Reported[CatalogId: (int, str)](StepModel):
         return self
 
 
+class AllergenCatalogItem(StepModel):
+    id: AllergenId
+    category: Literal["drug", "food"]
+    name: str = Field(min_length=1)
+
+
+class ReportedAllergySelection(Reported[AllergenId]):
+    custom_names: list[AllergyName] = Field(max_length=30)
+
+
+class ReportedAllergies(ReportedAllergySelection):
+    """Response only: labels for every stored allergen id, in catalog_ids order."""
+
+    catalog_items: list[AllergenCatalogItem] = Field(json_schema_extra={"uniqueItems": True})
+
+
+class MissingAllergenLabel(RuntimeError):
+    """A stored allergen id has no catalog row; never answer with a partial snapshot."""
+
+
 class HealthSetupRequest(StepModel):
     revision: str = Field(min_length=1, max_length=128)
-    allergies: NoneKnown | Reported[AllergenId] | None = None
+    allergies: NoneKnown | ReportedAllergySelection | None = None
     conditions: NoneKnown | Reported[ConditionId] | None = None
 
     @model_validator(mode="after")
@@ -52,11 +83,11 @@ class HealthSetupRequest(StepModel):
 
 class HealthSetupResponse(StepModel):
     revision: str = Field(min_length=1, max_length=128)
-    allergies: Unreported | NoneKnown | Reported[AllergenId]
+    allergies: Unreported | NoneKnown | ReportedAllergies
     conditions: Unreported | NoneKnown | Reported[ConditionId]
 
     @classmethod
-    def from_setup(cls, snapshot: HealthSetup):
+    def from_setup(cls, snapshot: HealthSetup, labels: dict[str, AllergenLabel]):
         def encode(step):
             if step.status != "reported":
                 return {"status": step.status}
@@ -66,10 +97,20 @@ class HealthSetupResponse(StepModel):
                 "custom_names": list(step.custom_names),
             }
 
+        allergies = encode(snapshot.allergies)
+        if snapshot.allergies.status == "reported":
+            missing = [i for i in snapshot.allergies.catalog_ids if i not in labels]
+            if missing:
+                # No ids in the message: they are the patient's health data.
+                raise MissingAllergenLabel(f"{len(missing)} stored allergen id(s) without label")
+            allergies["catalog_items"] = [
+                {"id": label.id, "category": label.category, "name": label.name}
+                for label in (labels[i] for i in snapshot.allergies.catalog_ids)
+            ]
         return cls.model_validate(
             {
                 "revision": snapshot.revision,
-                "allergies": encode(snapshot.allergies),
+                "allergies": allergies,
                 "conditions": encode(snapshot.conditions),
             }
         )

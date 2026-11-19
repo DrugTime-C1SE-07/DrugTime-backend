@@ -7,6 +7,8 @@ from drugtime.modules.medication.application.profile_ports import (
     UserConditions,
 )
 from drugtime.modules.medication.domain.health_setup import (
+    MAX_ALLERGY_NAME,
+    MAX_CONDITION_NAME,
     HealthSetup,
     SetupStep,
     normalize_custom_names,
@@ -29,7 +31,6 @@ def save_setup(
     store: HealthSetupStore,
     links: UserConditions,
     catalog: ConditionCatalog,
-    allergen_exists,
     revision: str,
     allergies: SetupStep[str] | None,
     conditions: SetupStep[int] | None,
@@ -40,12 +41,16 @@ def save_setup(
     if revision != current.revision:
         raise Conflict("health_setup_revision_conflict")
     if allergies is not None:
-        if any(not allergen_exists(item) for item in allergies.catalog_ids):
+        # An id must be an active catalog entry, unless it is already stored: the app resubmits
+        # the stored selection, which may include entries retired since they were chosen.
+        stored = set(current.allergies.catalog_ids)
+        added = sorted(set(allergies.catalog_ids) - stored)
+        if added and set(added) - catalog.active_allergen_ids(uow, added):
             raise DomainError("allergen_not_found")
         allergies = replace(
             allergies,
             catalog_ids=tuple(sorted(allergies.catalog_ids)),
-            custom_names=normalize_custom_names(allergies.custom_names),
+            custom_names=normalize_custom_names(allergies.custom_names, MAX_ALLERGY_NAME),
         )
     if conditions is not None:
         if any(catalog.get_name(uow, item) is None for item in conditions.catalog_ids):
@@ -53,7 +58,7 @@ def save_setup(
         conditions = replace(
             conditions,
             catalog_ids=tuple(sorted(conditions.catalog_ids)),
-            custom_names=normalize_custom_names(conditions.custom_names),
+            custom_names=normalize_custom_names(conditions.custom_names, MAX_CONDITION_NAME),
         )
     next_allergies = allergies or current.allergies
     next_conditions = conditions or current.conditions

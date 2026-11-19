@@ -5,8 +5,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
-from drugtime.modules.catalog.domain.allergen import ALLERGENS
+from drugtime.modules.catalog.adapters.outbound.sql_allergens import SqlAllergens
 from drugtime.modules.identity import api as identity
+from drugtime.shared.db import SqlUnitOfWork, get_uow
 
 
 class AllergenResponse(BaseModel):
@@ -45,7 +46,11 @@ router = APIRouter(
         500: {"model": CatalogError},
     },
 )
-def list_allergens(request: Request, _user: identity.CurrentUser = Depends(identity.current_user)):
+def list_allergens(
+    request: Request,
+    _user: identity.CurrentUser = Depends(identity.current_user),
+    uow: SqlUnitOfWork = Depends(get_uow),
+) -> AllergensResponse:
     if request.query_params:
         raise RequestValidationError(
             [
@@ -56,4 +61,9 @@ def list_allergens(request: Request, _user: identity.CurrentUser = Depends(ident
                 }
             ]
         )
-    return {"items": ALLERGENS}
+    return AllergensResponse(
+        items=[
+            AllergenResponse(id=item.id, category=item.category, name=item.name)
+            for item in SqlAllergens().list_active(uow)
+        ]
+    )

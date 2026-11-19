@@ -38,7 +38,8 @@ HANDLING_TYPES = {"tranh_phoi_hop", "can_theo_doi", "cach_gio", "giam_lieu"}
 FOOD_RESULTS = {"co_quy_tac", "khong_thay"}
 REVIEW_ROLES = ("Rà soát nguồn", "Dược sĩ duyệt nội dung", "Phát hành")
 PAGE_RE = re.compile(r"\btr\.\s*\d+", re.IGNORECASE)
-HEADER_RE = re.compile(r"\[([a-z_]+)\]")
+# Cho phép chữ số sau ký tự đầu, ví dụ [icd10_code] của 11_TinhTrangBenh.
+HEADER_RE = re.compile(r"\[([a-z][a-z0-9_]*)\]")
 FIRST_DATA_ROW = 4
 DATE_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
 ENTRY_DATE_COLUMNS = ("Ngày nhập", "Ngày rà")
@@ -905,26 +906,275 @@ def build(workbook_path: Path, today: date | None = None) -> BuildResult:
     return result
 
 
+# ---------------------------------------------------------------------------------------------
+# Danh mục hồ sơ sức khỏe (bệnh nền, dị ứng) — task adhoc-20261118-health-profile-catalog.
+#
+# Tách khỏi build() vì hai lý do: (1) danh mục duyệt theo từng dòng ("Trạng thái rà soát" =
+# "Dược sĩ đã duyệt") chứ không theo ngày duyệt của các vai trò ở 02_QuyUoc, nên dòng nhập mới
+# không được làm hỏng việc sinh seed tri thức; (2) file catalog phải nạp lại được lên DB đã có
+# dữ liệu (remote), nên dùng upsert và không bao giờ xóa dòng.
+
+CATALOG_SHEETS = {
+    "groups": "10_NhomBenh",
+    "conditions": "11_TinhTrangBenh",
+    "allergens": "12_DiUng",
+}
+APPROVED_REVIEW = "Dược sĩ đã duyệt"
+REVIEW_COLUMN = "Trạng thái rà soát"
+MEDICAL_NATURES = {"benh_ly", "sinh_ly_binh_thuong"}
+CONDITION_ROLES = {"sinh_hoat_chat_dieu_tri", "dieu_chinh_thuoc_khac"}
+ALLERGEN_CATEGORIES = {"drug", "food"}
+ALLERGEN_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+MAX_ALLERGEN_NAME = 40  # giới hạn mỗi mục dị ứng của API gợi ý món ăn
+MAX_DISPLAY_ORDER = 32767  # allergens.display_order là smallint
+ICD10_RE = re.compile(r"^[A-Z]\d{2}(\.\d{1,2})?$")
+CATALOG_SEED_PATH = "supabase/seeds/20_health_profile_catalog.sql"
+
+
+def _flag(value: object) -> bool | None:
+    """Ô boolean: TRUE/FALSE của Excel, hoặc chữ; trống → mặc định TRUE; khác → None (lỗi)."""
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().upper()
+    return {"TRUE": True, "FALSE": False, "1": True, "0": False}.get(text)
+
+
+def build_catalog(workbook_path: Path) -> BuildResult:
+    """Sinh seed upsert cho `conditions` và `allergens` từ sheet 11 và 12 của workbook."""
+    from openpyxl import load_workbook
+
+    data = Path(workbook_path).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    wb = load_workbook(workbook_path, data_only=False)
+    result = BuildResult()
+    errors = result.errors
+
+    missing = [s for s in CATALOG_SHEETS.values() if s not in wb.sheetnames]
+    if missing:
+        errors.append("Thiếu sheet: " + ", ".join(missing))
+        return result
+    sheet = {key: _read_sheet(wb, name) for key, name in CATALOG_SHEETS.items()}
+    group_codes = {row.text("code") for row in sheet["groups"] if row.text("code")}
+
+    def require(row: Row, *keys: str) -> bool:
+        ok = True
+        for key in keys:
+            if not row.text(key):
+                errors.append(f"{row.where}: thiếu '{key}'")
+                ok = False
+        return ok
+
+    def approved(row: Row) -> bool:
+        return row.text(REVIEW_COLUMN) == APPROVED_REVIEW
+
+    # ---- bệnh nền: kiểm mọi dòng, chỉ seed dòng đã duyệt
+    t_conditions: list[tuple] = []
+    skipped: list[tuple[str, int, str]] = []
+    seen_names: set[str] = set()
+    for row in sheet["conditions"]:
+        if not require(row, "name", "medical_nature", "data_role"):
+            continue
+        name = row.text("name")
+        if name.casefold() in seen_names:
+            errors.append(f"{row.where}: trùng tên tình trạng '{name}'")
+        seen_names.add(name.casefold())
+        if row.text("medical_nature") not in MEDICAL_NATURES:
+            errors.append(
+                f"{row.where}: medical_nature='{row.text('medical_nature')}' không hợp lệ"
+            )
+        if row.text("data_role") not in CONDITION_ROLES:
+            errors.append(f"{row.where}: data_role='{row.text('data_role')}' không hợp lệ")
+        icd = row.text("icd10_code")
+        if icd and not ICD10_RE.match(icd):
+            errors.append(f"{row.where}: mã ICD-10 '{icd}' sai định dạng (ví dụ E11, I10, E11.9)")
+        group = row.text("disease_group_id")
+        if group and group not in group_codes:
+            errors.append(
+                f"{row.where}: mã nhóm bệnh '{group}' không có ở {CATALOG_SHEETS['groups']}"
+            )
+        if not approved(row):
+            skipped.append((row.sheet, row.number, name))
+            continue
+        t_conditions.append(
+            (name, row.text("medical_nature"), row.text("data_role"), icd or None, group or None)
+        )
+
+    # ---- dị ứng
+    t_allergens: list[tuple] = []
+    seen_ids: set[str] = set()
+    seen_allergen_names: set[str] = set()
+    seen_orders: set[tuple[str, int]] = set()
+    for row in sheet["allergens"]:
+        if not require(row, "id", "category", "name", "display_order", "source"):
+            continue
+        allergen_id, category, name = row.text("id"), row.text("category"), row.text("name")
+        if not ALLERGEN_ID_RE.match(allergen_id):
+            errors.append(
+                f"{row.where}: mã dị ứng '{allergen_id}' sai mẫu ^[a-z][a-z0-9_]{{0,63}}$"
+            )
+        if allergen_id in seen_ids:
+            errors.append(f"{row.where}: trùng mã dị ứng '{allergen_id}'")
+        seen_ids.add(allergen_id)
+        if category not in ALLERGEN_CATEGORIES:
+            errors.append(f"{row.where}: category='{category}' không thuộc drug | food")
+        if name.casefold() in seen_allergen_names:
+            errors.append(f"{row.where}: trùng tên dị ứng '{name}'")
+        seen_allergen_names.add(name.casefold())
+        if len(name) > MAX_ALLERGEN_NAME:
+            # Tên dị ứng được gửi nguyên sang API gợi ý món ăn, mỗi mục <= 40 ký tự.
+            errors.append(
+                f"{row.where}: tên dị ứng dài {len(name)} ký tự, tối đa {MAX_ALLERGEN_NAME}"
+            )
+        order = _number(row.values.get("display_order"))
+        if (
+            order is None
+            or order != order.to_integral_value()
+            or not 0 < order <= MAX_DISPLAY_ORDER
+        ):
+            errors.append(
+                f"{row.where}: display_order phải là số nguyên trong 1..{MAX_DISPLAY_ORDER}"
+            )
+            order_value = None
+        else:
+            order_value = int(order)
+            if (category, order_value) in seen_orders:
+                errors.append(
+                    f"{row.where}: trùng display_order {order_value} trong nhóm {category}"
+                )
+            seen_orders.add((category, order_value))
+        active = _flag(row.values.get("is_active"))
+        if active is None:
+            errors.append(f"{row.where}: is_active phải là TRUE hoặc FALSE")
+        if not approved(row):
+            skipped.append((row.sheet, row.number, allergen_id))
+            continue
+        t_allergens.append((allergen_id, category, name, order_value, active, row.text("source")))
+
+    if errors:
+        return result
+    t_conditions.sort(key=lambda t: t[0])
+    t_allergens.sort(key=lambda t: (t[1] != "drug", t[3], t[0]))
+
+    out: list[str] = [
+        "-- FILE SINH TỰ ĐỘNG bởi backend/scripts/build_knowledge_seed.py --catalog-out"
+        " — KHÔNG SỬA TAY.",
+        "-- Nguồn: workbook dữ liệu dược",
+        "--   (docs/Team1_DTU/03_Design/Database/DrugTime_DuLieuDuoc.xlsx, sheet 11 và 12)",
+        f"-- workbook sha256: {digest}",
+        "-- Sinh lại: python scripts/build_knowledge_seed.py <workbook> "
+        f"--catalog-out {CATALOG_SEED_PATH}",
+        f"-- Chỉ chứa dòng '{REVIEW_COLUMN}' = '{APPROVED_REVIEW}' (QD-37).",
+        "-- Upsert, không xóa dòng: chạy lại an toàn trên DB đã có dữ liệu (db reset và remote).",
+        f"-- count conditions={len(t_conditions)}",
+        f"-- count allergens={len(t_allergens)}",
+        "",
+        "BEGIN;",
+    ]
+    if t_conditions:
+        out += (
+            [
+                "",
+                "-- conditions (khóa tự nhiên: name)",
+                "DO $$",
+                "BEGIN",
+                "    IF EXISTS (",
+                "        SELECT 1 FROM (VALUES "
+                + ", ".join(f"({_sql(t[4])})" for t in t_conditions if t[4])
+                + ") AS v (code)",
+                "        WHERE NOT EXISTS (",
+                "            SELECT 1 FROM disease_groups g WHERE g.code = v.code",
+                "        )",
+                "    ) THEN",
+                "        RAISE EXCEPTION",
+                "            'conditions seed: disease group code missing in disease_groups';",
+                "    END IF;",
+                "END",
+                "$$;",
+            ]
+            if any(t[4] for t in t_conditions)
+            else ["", "-- conditions (khóa tự nhiên: name)"]
+        )
+        out += [
+            "INSERT INTO conditions",
+            "    (name, medical_nature, data_role, icd10_code, disease_group_id)",
+            "SELECT v.name, v.medical_nature::medical_nature, v.data_role::condition_data_role,",
+            "    v.icd10_code::text, g.id",
+            "FROM (VALUES",
+            _values(t_conditions),
+            ") AS v (name, medical_nature, data_role, icd10_code, group_code)",
+            "LEFT JOIN disease_groups g ON g.code = v.group_code::text",
+            "ON CONFLICT (name) DO UPDATE SET",
+            "    medical_nature = EXCLUDED.medical_nature,",
+            "    data_role = EXCLUDED.data_role,",
+            "    icd10_code = EXCLUDED.icd10_code,",
+            "    disease_group_id = EXCLUDED.disease_group_id;",
+        ]
+    if t_allergens:
+        out += [
+            "",
+            "-- allergens (khóa: id; UNIQUE (category, display_order) hoãn tới COMMIT)",
+            "INSERT INTO allergens (id, category, name, display_order, is_active, source) VALUES",
+            _values(t_allergens),
+            "ON CONFLICT (id) DO UPDATE SET",
+            "    category = EXCLUDED.category,",
+            "    name = EXCLUDED.name,",
+            "    display_order = EXCLUDED.display_order,",
+            "    is_active = EXCLUDED.is_active,",
+            "    source = EXCLUDED.source;",
+        ]
+    out += ["", "COMMIT;"]
+    result.sql = "\n".join(out) + "\n"
+    lines = [
+        f"workbook sha256: {digest}",
+        "",
+        f"Danh mục sẽ seed: conditions={len(t_conditions)}, allergens={len(t_allergens)}",
+        f"Chưa duyệt, bỏ qua ({len(skipped)}):",
+    ]
+    lines += [f"  {sheet} dòng {number}: {label}" for sheet, number, label in sorted(skipped)]
+    result.report = "\n".join(lines) + "\n"
+    return result
+
+
+def _fail(result: BuildResult) -> bool:
+    if not result.errors:
+        return False
+    sys.stderr.write(f"{len(result.errors)} lỗi, không ghi file:\n")
+    for error in result.errors:
+        sys.stderr.write(f"  - {error}\n")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("workbook", type=Path)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--out", type=Path, help="seed kho tri thức (10_knowledge_base.sql)")
     parser.add_argument("--report", type=Path)
+    parser.add_argument(
+        "--catalog-out", type=Path, help=f"seed danh mục hồ sơ sức khỏe ({CATALOG_SEED_PATH})"
+    )
     args = parser.parse_args(argv)
+    if args.out is None and args.catalog_out is None:
+        parser.error("cần ít nhất một trong --out, --catalog-out")
     for stream in (sys.stdout, sys.stderr):  # console Windows mặc định cp1252, mất dấu tiếng Việt
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
 
-    result = build(args.workbook)
-    if result.errors:
-        sys.stderr.write(f"{len(result.errors)} lỗi, không ghi file:\n")
-        for error in result.errors:
-            sys.stderr.write(f"  - {error}\n")
+    # Kiểm hết trước, chỉ ghi khi mọi phần được yêu cầu đều không lỗi.
+    result = build(args.workbook) if args.out is not None else None
+    catalog = build_catalog(args.workbook) if args.catalog_out is not None else None
+    failed = [_fail(r) for r in (result, catalog) if r is not None]
+    if any(failed):
         return 1
-    args.out.write_text(result.sql, encoding="utf-8", newline="\n")
-    if args.report:
-        args.report.write_text(result.report, encoding="utf-8", newline="\n")
-    sys.stdout.write(result.report)
+    if result is not None:
+        args.out.write_text(result.sql, encoding="utf-8", newline="\n")
+        if args.report:
+            args.report.write_text(result.report, encoding="utf-8", newline="\n")
+        sys.stdout.write(result.report)
+    if catalog is not None:
+        args.catalog_out.write_text(catalog.sql, encoding="utf-8", newline="\n")
+        sys.stdout.write(catalog.report)
     return 0
 
 

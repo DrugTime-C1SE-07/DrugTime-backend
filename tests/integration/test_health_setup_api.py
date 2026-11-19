@@ -25,6 +25,16 @@ def reported(ids=(), names=()):
     return {"status": "reported", "catalog_ids": list(ids), "custom_names": list(names)}
 
 
+def reported_allergies(db, ids=(), names=()):
+    """Snapshot shape of a reported allergy step: catalog_items carries the catalog label of
+    every stored id, retired entries included, in catalog_ids order (contract 02)."""
+    rows = db.execute(
+        text("SELECT id, category, name FROM allergens WHERE id = ANY(:ids)"), {"ids": list(ids)}
+    )
+    labels = {row.id: {"id": row.id, "category": row.category, "name": row.name} for row in rows}
+    return {**reported(ids, names), "catalog_items": [labels[i] for i in ids]}
+
+
 def snapshot(client, headers):
     response = client.get(PATH, headers=headers)
     assert response.status_code == 200, response.text
@@ -46,31 +56,24 @@ def test_catalog_and_legacy_selection_roundtrip__AC04_AC05_AC06_AC10(client, db,
     current = snapshot(client, headers)
     assert current["conditions"] == reported([cid])
     assert current["allergies"] == {"status": "unreported"}
+    drug, food = make.allergen(category="drug"), make.allergen(category="food")
     catalog_headers = auth(make.user(consents=()))
     allergens = client.get("/allergens", headers=catalog_headers)
     assert allergens.status_code == 200
-    assert [r["id"] for r in allergens.json()["items"]] == [
-        "penicillin",
-        "aspirin",
-        "sulfa",
-        "cephalosporin",
-        "seafood",
-        "peanuts",
-        "eggs",
-        "milk",
-    ]
+    ids = [r["id"] for r in allergens.json()["items"]]
+    assert {drug, food} <= set(ids)
     catalog = client.get("/conditions?limit=100", headers=catalog_headers)
     assert catalog.status_code == 200
     assert cid in {row["id"] for row in catalog.json()["items"]}
     data = {
         "revision": current["revision"],
-        "allergies": reported(["seafood", "penicillin"], [" Tôm khác "]),
+        "allergies": reported([food, drug], [" Tôm khác "]),
         "conditions": reported([cid], ["Bệnh nền tự khai"]),
     }
     response = client.put(PATH, headers=headers, json=data)
     assert response.status_code == 200, response.text
     saved = response.json()
-    assert saved["allergies"] == reported(["penicillin", "seafood"], ["Tôm khác"])
+    assert saved["allergies"] == reported_allergies(db, sorted([drug, food]), ["Tôm khác"])
     assert saved["conditions"] == data["conditions"]
     assert snapshot(client, headers) == saved
     old = client.get("/profile", headers=headers).json()["conditions"]
@@ -82,6 +85,102 @@ def test_catalog_and_legacy_selection_roundtrip__AC04_AC05_AC06_AC10(client, db,
     assert response.json()["allergies"] == saved["allergies"]
     assert response.json()["conditions"] == NONE
     assert client.get("/profile", headers=headers).json()["conditions"] == []
+
+
+@pytest.mark.parametrize("kind", ["unknown", "inactive"])
+def test_put_unknown_or_inactive_allergen_returns_422_unchanged__AC3(client, db, make, auth, kind):
+    user = make.user()
+    headers = auth(user)
+    active = make.allergen()
+    stored = client.put(
+        PATH,
+        headers=headers,
+        json={"revision": snapshot(client, headers)["revision"], "allergies": reported([active])},
+    )
+    assert stored.status_code == 200, stored.text
+    before = snapshot(client, headers)
+    bad = f"t_missing_{uuid4().hex[:12]}" if kind == "unknown" else make.allergen(active=False)
+    result = client.put(
+        PATH,
+        headers=headers,
+        json={"revision": before["revision"], "allergies": reported([active, bad])},
+    )
+    assert result.status_code == 422
+    assert result.json() == {"detail": "allergen_not_found"}
+    after = snapshot(client, headers)
+    assert after == before  # same selection and same revision: nothing written
+    stored = db.execute(
+        text("SELECT allergen_ids FROM health_profile_setup WHERE user_id = :u"), {"u": user}
+    ).scalar_one()
+    assert stored == [active]
+
+
+def test_put_allergy_name_over_40_returns_422_unchanged__AC12(client, db, make, auth):
+    """Custom allergy names are sent unchanged to meal suggestions (<= 40 chars per item)."""
+    user = make.user()
+    headers = auth(user)
+    before = snapshot(client, headers)
+    result = client.put(
+        PATH,
+        headers=headers,
+        json={"revision": before["revision"], "allergies": reported([], ["x" * 41])},
+    )
+    assert result.status_code == 422
+    assert snapshot(client, headers) == before
+    rows = db.execute(
+        text("SELECT count(*) FROM health_profile_setup WHERE user_id = :u"), {"u": user}
+    ).scalar_one()
+    assert rows == 0
+
+    exact = client.put(
+        PATH,
+        headers=headers,
+        json={"revision": before["revision"], "allergies": reported([], ["x" * 40])},
+    )
+    assert exact.status_code == 200, exact.text
+    assert exact.json()["allergies"]["custom_names"] == ["x" * 40]
+
+
+def test_retired_allergen_kept_in_snapshot_and_resubmittable__AC4(client, db, make, auth):
+    headers = auth(make.user())
+    retiring, other = make.allergen(category="drug"), make.allergen(category="food")
+    saved = client.put(
+        PATH,
+        headers=headers,
+        json={
+            "revision": snapshot(client, headers)["revision"],
+            "allergies": reported([retiring], ["Phấn hoa"]),
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    make.set_allergen_active(retiring, False)
+
+    listed = client.get("/allergens", headers=headers)
+    assert listed.status_code == 200
+    assert retiring not in {row["id"] for row in listed.json()["items"]}
+
+    current = snapshot(client, headers)
+    assert current["allergies"] == reported_allergies(db, [retiring], ["Phấn hoa"])
+    assert current["allergies"]["catalog_items"][0]["name"] == f"Dị ứng test {retiring}"
+
+    # The app resubmits the stored selection unchanged: accepted, no new revision.
+    same = client.put(
+        PATH,
+        headers=headers,
+        json={"revision": current["revision"], "allergies": reported([retiring], ["Phấn hoa"])},
+    )
+    assert same.status_code == 200, same.text
+    assert same.json() == current
+
+    # Keeping the retired id while adding an active one is also accepted.
+    grown = client.put(
+        PATH,
+        headers=headers,
+        json={"revision": current["revision"], "allergies": reported([retiring, other])},
+    )
+    assert grown.status_code == 200, grown.text
+    assert grown.json()["allergies"] == reported_allergies(db, sorted([retiring, other]))
+    assert grown.json()["revision"] != current["revision"]
 
 
 @pytest.mark.parametrize(

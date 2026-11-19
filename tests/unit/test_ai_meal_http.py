@@ -268,10 +268,23 @@ INVALID = {
     "unknown field": {**BODY, "patient_name": "A"},
     "item 41": {**BODY, "allergies": {"none": False, "items": ["x" * 41]}},
     "blank item": {**BODY, "allergies": {"none": False, "items": ["  "]}},
-    "11 allergies": {**BODY, "allergies": {"none": False, "items": [f"a{i}" for i in range(11)]}},
+    "46 allergies": {**BODY, "allergies": {"none": False, "items": [f"a{i}" for i in range(46)]}},
+    "11 restrictions": {
+        **BODY,
+        "dietary_restrictions": {"none": False, "items": [f"r{i}" for i in range(11)]},
+    },
     "duplicate allergies": {**BODY, "allergies": {"none": False, "items": ["Tôm", "tôm"]}},
     "6 preferences": {**BODY, "preferences": [f"p{i}" for i in range(6)]},
 }
+
+
+def test_accepts_45_allergies_of_40_chars__AC12():
+    """A full health profile (15 catalog + 30 custom allergies) is sent unchanged (review H2)."""
+    sug = FakeSuggester()
+    items = [f"{i:02d}" + "x" * 38 for i in range(45)]
+    r, uow, store = _post(_client(sug), body={**BODY, "allergies": {"none": False, "items": items}})
+    assert r.status_code == 200, r.text
+    assert sug.calls == 1
 
 
 @pytest.mark.parametrize("body", INVALID.values(), ids=INVALID.keys())

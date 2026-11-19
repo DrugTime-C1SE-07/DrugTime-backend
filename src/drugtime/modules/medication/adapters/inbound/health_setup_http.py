@@ -41,9 +41,27 @@ _ERRORS[422] = {"model": ProfileValidationError}
 _NO_STORE = {"headers": {"Cache-Control": {"schema": {"type": "string", "const": "no-store"}}}}
 _HEALTH_ROUTE = {"x-health-scope": "ho_so_suc_khoe", "x-health-audit-self": True}
 
-# The response registers the same step schemas in OpenAPI components.
-_UPDATE_SCHEMA = HealthSetupRequest.model_json_schema(ref_template="#/components/schemas/{model}")
-_UPDATE_SCHEMA.pop("$defs")
+
+def _inline_defs(schema: dict) -> dict:
+    """Self-contained request schema: the response no longer registers the request step
+    models (its allergy step carries catalog_items), so inline them instead of $ref-ing
+    components that may not exist."""
+    defs = schema.pop("$defs", {})
+
+    def resolve(node):
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                return resolve(defs[ref.removeprefix("#/$defs/")])
+            return {key: resolve(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [resolve(value) for value in node]
+        return node
+
+    return resolve(schema)
+
+
+_UPDATE_SCHEMA = _inline_defs(HealthSetupRequest.model_json_schema())
 
 
 def _other_owner(value: str, owner: UUID) -> bool:
@@ -92,8 +110,10 @@ def _authorize(uow, request: Request, user: identity.CurrentUser, *, writes: boo
         )
 
 
-def _response(snapshot):
-    body = HealthSetupResponse.from_setup(snapshot).model_dump(mode="json")
+def _response(uow, snapshot):
+    # Labels are read in the same unit of work; a missing label raises and rolls back.
+    labels = _CATALOG.allergen_labels(uow, list(snapshot.allergies.catalog_ids))
+    body = HealthSetupResponse.from_setup(snapshot, labels).model_dump(mode="json")
     return JSONResponse(body, headers={"Cache-Control": "no-store"})
 
 
@@ -107,7 +127,7 @@ def _response(snapshot):
 def get_health_setup(request: Request, user: identity.CurrentUser = Depends(identity.current_user)):
     with unit_of_work() as uow:
         _authorize(uow, request, user, writes=False)
-        return _response(read_setup(uow, user.id, _STORE, _LINKS))
+        return _response(uow, read_setup(uow, user.id, _STORE, _LINKS))
 
 
 @router.put(
@@ -147,15 +167,15 @@ def _authorize_and_save(request: Request, user: identity.CurrentUser, raw_body: 
                 ]
             ) from None
         return _response(
+            uow,
             save_setup(
                 uow,
                 user.id,
                 _STORE,
                 _LINKS,
                 _CATALOG,
-                _CATALOG.allergen_exists,
                 body.revision,
                 decode_step(body.allergies),
                 decode_step(body.conditions),
-            )
+            ),
         )
