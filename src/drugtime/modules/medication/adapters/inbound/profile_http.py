@@ -20,6 +20,7 @@ from drugtime.modules.medication.adapters.outbound.other_modules import (
     HealthProfileAccessAdapter,
     IdentityProfileAdapter,
 )
+from drugtime.modules.medication.adapters.outbound.sql_health_setup import SqlHealthSetup
 from drugtime.modules.medication.adapters.outbound.sql_user_conditions import SqlUserConditions
 from drugtime.modules.medication.application.manage_profile import get_profile, update_profile
 from drugtime.modules.medication.application.manage_user_conditions import (
@@ -42,6 +43,7 @@ _ACCESS = HealthProfileAccessAdapter()
 _PROFILES = IdentityProfileAdapter()
 _CONDITIONS = SqlUserConditions()
 _CATALOG = ConditionCatalogAdapter()
+_SETUP = SqlHealthSetup()
 _ERRORS = {code: {"model": ProfileError} for code in (401, 403, 500)}
 _ERRORS[422] = {"model": ProfileValidationError}
 _PROFILE_WRITE_ERRORS = {
@@ -138,6 +140,7 @@ def post_condition(
             conditions=_CONDITIONS,
             catalog=_CATALOG,
             cmd=NewUserCondition(**body.model_dump()),
+            setup=_SETUP,
         )
         response = _json(UserConditionResponse.model_validate(result), 201)
     return response
@@ -166,6 +169,7 @@ def patch_condition(
             catalog=_CATALOG,
             link_id=id,
             fields=body.model_dump(exclude_unset=True),
+            setup=_SETUP,
         )
         response = _json(UserConditionResponse.model_validate(result))
     return response
@@ -189,6 +193,7 @@ def remove_condition(
             access=_ACCESS,
             conditions=_CONDITIONS,
             link_id=id,
+            setup=_SETUP,
         )
         response = Response(status_code=204)
     return response

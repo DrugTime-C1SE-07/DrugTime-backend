@@ -2,6 +2,7 @@ from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
+from drugtime.modules.medication.domain.health_setup import HealthSetup, SetupStep
 from drugtime.modules.medication.domain.user_condition import (
     NewUserCondition,
     PersonalProfile,
@@ -52,3 +53,14 @@ class UserConditions(Protocol):
         fields: dict[str, str | None],
     ) -> UserConditionRecord | None: ...
     def delete(self, uow: UnitOfWork, user_id: UUID, link_id: int) -> bool: ...
+
+
+class HealthSetupStore(Protocol):
+    def lock(self, uow: UnitOfWork, user_id: UUID) -> None: ...
+    def read(
+        self, uow: UnitOfWork, user_id: UUID, links: list[UserConditionRecord]
+    ) -> HealthSetup: ...
+    def save(
+        self, uow: UnitOfWork, user_id: UUID, allergies: SetupStep[str], conditions: SetupStep[int]
+    ) -> str: ...
+    def touch_condition_links(self, uow: UnitOfWork, user_id: UUID) -> None: ...
