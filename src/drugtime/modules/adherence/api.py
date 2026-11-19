@@ -4,6 +4,9 @@ from datetime import timedelta
 from uuid import UUID
 
 from drugtime.modules.adherence.adapters.inbound.http import router
+from drugtime.modules.adherence.adapters.inbound.patient_dose_reminders_http import (
+    router as reminder_router,
+)
 from drugtime.modules.adherence.adapters.outbound.other_modules import (
     AccessGuardAdapter,
     DeviceTokensAdapter,
@@ -16,11 +19,21 @@ from drugtime.modules.adherence.adapters.outbound.sql_adherence import (
     SqlScanCursor,
     SqlSyncCheckpoints,
 )
+from drugtime.modules.adherence.adapters.outbound.sql_patient_dose_reminders import (
+    SqlPatientDoseReminders,
+)
 from drugtime.modules.adherence.application import erase_user as _erase
 from drugtime.modules.adherence.application import scan_missed_doses as _scan
+from drugtime.modules.adherence.application.dispatch_patient_dose_reminders import (
+    dispatch_reminders,
+)
 from drugtime.modules.adherence.application.ports import NotificationPort
 from drugtime.modules.adherence.domain.alert import Alert, SyncRequest
 from drugtime.modules.adherence.domain.dose import LATE_CONFIRMATION_WINDOW
+from drugtime.modules.adherence.domain.patient_dose_reminder import (
+    ReminderPush,
+    ReminderTransportResult,
+)
 from drugtime.shared.clock import now
 from drugtime.shared.config import get_settings
 from drugtime.shared.uow import UnitOfWork
@@ -33,7 +46,25 @@ __all__ = [
     "recorded_doses",
     "router",
     "scan_missed_doses",
+    "ReminderPush",
+    "ReminderTransportResult",
+    "dispatch_patient_dose_reminders",
 ]
+
+router.include_router(reminder_router)
+
+
+def dispatch_patient_dose_reminders(uow_factory, *, notifier: NotificationPort) -> int:
+    return dispatch_reminders(
+        uow_factory,
+        notifier=notifier,
+        access=AccessGuardAdapter(),
+        schedules=SchedulesAdapter(),
+        doses=SqlDoseLogs(),
+        tokens=DeviceTokensAdapter(),
+        store=SqlPatientDoseReminders(),
+    )
+
 
 # Liều đã ghi, cho medication tính mốc hiệu lực khi sửa lịch; main.py nối vào medication.
 recorded_doses = SqlDoseLogs()
@@ -76,6 +107,7 @@ class _Eraser:
             notifications=SqlNotifications(),
             checkpoints=SqlSyncCheckpoints(),
             pending=SqlPendingVerifications(LATE_CONFIRMATION_WINDOW),
+            reminders=SqlPatientDoseReminders(),
         )
 
 

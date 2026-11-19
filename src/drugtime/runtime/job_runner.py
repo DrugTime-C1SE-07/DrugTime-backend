@@ -38,6 +38,7 @@ def tick() -> None:
     """Chạy mỗi TICK_INTERVAL_SECONDS. Mỗi phần độc lập: một phần lỗi không chặn phần khác."""
     for name, step in (
         ("missed_dose_scan", _scan),
+        ("patient_dose_reminders", _dispatch_patient_reminders),
         ("catalog_sync_if_due", _sync_if_due),
         ("resume_erasures", _resume_erasures),
     ):
@@ -80,6 +81,10 @@ def _gateway() -> adherence.NotificationPort:
 def _scan() -> None:
     count = adherence.scan_missed_doses(unit_of_work, notifier=_gateway())
     log.info("missed-dose scan: %d push alert(s)", count)
+
+
+def _dispatch_patient_reminders() -> None:
+    adherence.dispatch_patient_dose_reminders(unit_of_work, notifier=_gateway())
 
 
 def _sync_if_due() -> None:

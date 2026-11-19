@@ -1,6 +1,7 @@
 """Giao diện công khai của medication."""
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, time
 from uuid import UUID
 
 from fastapi import APIRouter
@@ -39,6 +40,8 @@ __all__ = [
     "router",
     "schedule_ids_of",
     "schedule_owner",
+    "reminder_context",
+    "ReminderOccurrenceContext",
 ]
 
 
@@ -104,3 +107,32 @@ class _Eraser:
 
 
 eraser = _Eraser()
+
+
+@dataclass(frozen=True)
+class ReminderOccurrenceContext:
+    patient_id: UUID
+    intake_time: time
+    days_of_week: tuple[int, ...]
+    effective_from: datetime
+    ended_at: datetime | None
+    unavailable: bool
+
+
+def reminder_context(
+    uow: UnitOfWork, schedule_id: int, *, lock=False
+) -> ReminderOccurrenceContext | None:
+    """Bounded, locked context; caller must authorize patient before consuming it."""
+    row = SqlMedication().reminder_context(uow, schedule_id, lock=lock)
+    if row is None:
+        return None
+    return ReminderOccurrenceContext(
+        row.user_id,
+        row.intake_time,
+        tuple(row.days_of_week),
+        row.effective_from,
+        row.ended_at,
+        row.deleted_at is not None
+        or row.medication_ended_at is not None
+        or row.ended_at is not None,
+    )

@@ -227,6 +227,12 @@ class UserMedicationList(BaseModel):
     items: list[UserMedication]
 
 
+class PatientMedicationList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[UserMedication]
+    next_cursor: str | None
+
+
 class PatientSchedule(BaseModel):
     id: int
     user_medication_id: int

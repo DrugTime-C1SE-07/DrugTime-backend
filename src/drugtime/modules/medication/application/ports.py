@@ -42,6 +42,10 @@ class Catalog(Protocol):
 
 
 class UserMedications(Protocol):
+    def active_ids_page(
+        self, uow: UnitOfWork, patient_id: UUID, before: int | None, limit: int
+    ) -> list[int]: ...
+
     def owner_of(self, uow: UnitOfWork, user_medication_id: int) -> UUID | None:
         """Chủ thuốc; None nếu không có hoặc đã xoá mềm (mọi endpoint coi như không tồn tại)."""
         ...

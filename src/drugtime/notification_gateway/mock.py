@@ -1,6 +1,6 @@
 import logging
 
-from drugtime.modules.adherence.api import Alert, SyncRequest
+from drugtime.modules.adherence.api import Alert, ReminderPush, ReminderTransportResult, SyncRequest
 
 log = logging.getLogger(__name__)
 
@@ -9,6 +9,11 @@ class MockGateway:
     def __init__(self) -> None:
         self.sent: list[Alert] = []
         self.sync_requests: list[SyncRequest] = []
+        self.reminders: list[ReminderPush] = []
+
+    def send_reminder(self, push: ReminderPush) -> ReminderTransportResult:
+        self.reminders.append(push)
+        return ReminderTransportResult(True)
 
     def send(self, alerts: list[Alert]) -> list[str]:
         self.sent.extend(alerts)
