@@ -125,6 +125,20 @@ class SqlAdherenceHistory:
 
 
 class SqlDoseLogs:
+    def confirmed(self, uow, schedule_id, scheduled_at, *, lock=False):
+        return (
+            uow.connection.execute(
+                text(
+                    "SELECT 1 FROM dose_logs WHERE medication_schedule_id = :s "
+                    "AND scheduled_at = :at "
+                    "AND (taken_at IS NOT NULL OR status IN ('da_uong', 'uong_tre'))"
+                    + (" FOR SHARE" if lock else "")
+                ),
+                {"s": schedule_id, "at": scheduled_at},
+            ).first()
+            is not None
+        )
+
     def upsert_confirmation(
         self, uow: UnitOfWork, c: DoseConfirmation, status: DoseStatus
     ) -> DoseConfirmationPersistenceResult:
@@ -227,7 +241,8 @@ class SqlNotifications:
         rows = uow.connection.execute(
             text("""
             SELECT id, about_patient_user_id FROM notifications
-            WHERE user_id = :u AND (CAST(:id AS bigint) IS NULL OR id = CAST(:id AS bigint))
+            WHERE user_id = :u AND type = 'canh_bao_bo_lo_lieu_nguoi_than'
+              AND (CAST(:id AS bigint) IS NULL OR id = CAST(:id AS bigint))
         """),
             {"u": user_id, "id": notification_id},
         )
@@ -242,6 +257,7 @@ class SqlNotifications:
             SELECT id, user_id, about_patient_user_id, type, content, is_read,
                    created_at, medication_name, scheduled_at
             FROM notifications WHERE user_id = :u AND id = ANY(:ids)
+              AND type = 'canh_bao_bo_lo_lieu_nguoi_than'
             ORDER BY created_at DESC, id DESC
         """),
             {"u": user_id, "ids": ids},
@@ -252,7 +268,7 @@ class SqlNotifications:
         row = uow.connection.execute(
             text("""
             UPDATE notifications SET is_read = :ir
-            WHERE id = :id AND user_id = :u
+            WHERE id = :id AND user_id = :u AND type = 'canh_bao_bo_lo_lieu_nguoi_than'
             RETURNING id, user_id, about_patient_user_id, type, content, is_read,
                       created_at, medication_name, scheduled_at
         """),

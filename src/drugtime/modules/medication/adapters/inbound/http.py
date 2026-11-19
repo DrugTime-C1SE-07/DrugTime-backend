@@ -1,12 +1,19 @@
+from collections.abc import Iterator
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 
 from drugtime.modules.identity import api as identity
 from drugtime.modules.medication.adapters.inbound.schemas import (
     MedicationScheduleCreate,
     MedicationScheduleUpdate,
+    PatientMedicationList,
     PatientSchedule,
     PatientScheduleList,
     UserMedication,
@@ -22,6 +29,9 @@ from drugtime.modules.medication.adapters.outbound.sql_medication import SqlMedi
 from drugtime.modules.medication.application.create_medication import create_medication
 from drugtime.modules.medication.application.delete_medication import delete_medication
 from drugtime.modules.medication.application.get_medication import get_medication
+from drugtime.modules.medication.application.list_linked_patient_medications import (
+    list_linked_patient_medications,
+)
 from drugtime.modules.medication.application.list_medications import list_medications
 from drugtime.modules.medication.application.list_patient_schedules import (
     list_patient_schedules,
@@ -33,7 +43,8 @@ from drugtime.modules.medication.application.manage_schedules import (
 )
 from drugtime.modules.medication.application.ports import RecordedDoses
 from drugtime.modules.medication.application.update_medication import update_medication
-from drugtime.shared.db import SqlUnitOfWork, get_uow
+from drugtime.shared.db import SqlUnitOfWork, get_uow, unit_of_work
+from drugtime.shared.errors import DomainError, Forbidden, ServiceUnavailable, Unauthorized
 
 router = APIRouter(prefix="/medications", tags=["medication"])
 patients_router = APIRouter(prefix="/patients", tags=["medication"])
@@ -337,3 +348,92 @@ def get_patient_schedules(
     return PatientScheduleList(
         items=[PatientSchedule.from_view(v) for v in page.items], next_cursor=page.next_cursor
     )
+
+
+class PatientMedicationRoute(APIRoute):
+    async def handle(self, scope, receive, send):
+        async def no_store(message):
+            if message["type"] == "http.response.start":
+                message["headers"] = [
+                    (k, v) for k, v in message.get("headers", []) if k.lower() != b"cache-control"
+                ]
+                message["headers"].append((b"cache-control", b"no-store"))
+            await send(message)
+
+        try:
+            await super().handle(scope, receive, no_store)
+        except (Forbidden, Unauthorized, DomainError, ServiceUnavailable) as exc:
+            status = {
+                Forbidden: 403,
+                Unauthorized: 401,
+                DomainError: 422,
+                ServiceUnavailable: 503,
+            }.get(type(exc), 422)
+            await JSONResponse(
+                {"detail": str(exc)}, status_code=status, headers={"Cache-Control": "no-store"}
+            )(scope, receive, send)
+        except Exception:
+            await JSONResponse(
+                {"detail": "service_unavailable"},
+                status_code=503,
+                headers={"Cache-Control": "no-store"},
+            )(scope, receive, send)
+
+
+def get_patient_medication_uow() -> Iterator[SqlUnitOfWork]:
+    try:
+        with unit_of_work() as uow:
+            yield uow
+    except (Forbidden, Unauthorized, DomainError, RequestValidationError):
+        raise
+    except Exception as exc:
+        raise ServiceUnavailable("service_unavailable") from exc
+
+
+PatientMedicationUow = Annotated[
+    SqlUnitOfWork, Depends(get_patient_medication_uow, scope="function")
+]
+
+
+_patient_medications = APIRouter(route_class=PatientMedicationRoute)
+
+
+@_patient_medications.get(
+    "/{patient_id}/medications",
+    response_model=PatientMedicationList,
+    operation_id="listLinkedPatientMedications",
+    responses={
+        **_ERRORS,
+        422: {"description": "invalid_cursor | ValidationError"},
+        503: {"model": ErrorDetail},
+    },
+    openapi_extra={"x-health-scope": "danh_sach_thuoc", "x-health-audit-self": True},
+    dependencies=[
+        Depends(HTTPBearer(auto_error=False, scheme_name="bearerAuth", bearerFormat="JWT"))
+    ],
+)
+def get_linked_patient_medications(
+    patient_id: UUID,
+    uow: PatientMedicationUow,
+    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    limit: int = Query(100, ge=1, le=200),
+    cursor: str | None = Query(None, min_length=1, max_length=200),
+):
+    page = list_linked_patient_medications(
+        uow,
+        caller_id=user.id,
+        caller_is_admin=user.is_admin,
+        patient_id=patient_id,
+        limit=limit,
+        cursor=cursor,
+        access=AccessGuardAdapter(audit_self=True),
+        catalog=CatalogAdapter(),
+        meds=SqlMedication(),
+    )
+    return PatientMedicationList(
+        items=[UserMedication.from_view(v) for v in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
+patients_router.include_router(_patient_medications)

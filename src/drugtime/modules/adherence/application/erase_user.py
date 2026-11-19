@@ -18,7 +18,10 @@ def erase_user(
     notifications: Notifications,
     checkpoints: SyncCheckpoints,
     pending: PendingVerifications,
+    reminders=None,
 ) -> None:
+    if reminders is not None:
+        reminders.cleanup(uow, user_id)
     # Hàng chờ xác minh tham chiếu medication_schedules, nên xóa trước khi medication xóa lịch.
     pending.erase_for_patient(uow, user_id)
     checkpoints.erase_for_user(uow, user_id)

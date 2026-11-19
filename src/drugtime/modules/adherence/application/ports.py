@@ -9,6 +9,10 @@ from drugtime.modules.adherence.domain.dose import (
     DoseStatus,
 )
 from drugtime.modules.adherence.domain.history import HistoryRange, HistoryRow
+from drugtime.modules.adherence.domain.patient_dose_reminder import (
+    ReminderPush,
+    ReminderTransportResult,
+)
 from drugtime.shared.uow import UnitOfWork
 
 
@@ -18,9 +22,13 @@ class NotificationPort(Protocol):
 
     def send(self, alerts: list[Alert]) -> list[str]: ...
     def request_sync(self, requests: list[SyncRequest]) -> list[str]: ...
+    def send_reminder(self, push: ReminderPush) -> ReminderTransportResult: ...
 
 
 class DoseLogs(Protocol):
+    def confirmed(
+        self, uow: UnitOfWork, schedule_id: int, scheduled_at: datetime, *, lock: bool = False
+    ) -> bool: ...
     def upsert_confirmation(
         self, uow: UnitOfWork, c: DoseConfirmation, status: DoseStatus
     ) -> DoseConfirmationPersistenceResult: ...
@@ -136,6 +144,9 @@ class AdherenceHistoryReader(Protocol):
 
 # Context lấy tên thuốc; thời điểm snapshot vẫn phải lấy từ occurrence đang quét.
 class Schedules(Protocol):
+    def reminder_context(
+        self, uow: UnitOfWork, schedule_id: int, *, lock: bool = False
+    ) -> object | None: ...
     def alert_context(self, uow: UnitOfWork, schedule_id: int, patient_id: UUID) -> str | None: ...
 
     def owner(self, uow: UnitOfWork, schedule_id: int) -> UUID | None: ...

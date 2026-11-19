@@ -2,7 +2,7 @@ import logging
 
 import httpx
 
-from drugtime.modules.adherence.api import Alert, SyncRequest
+from drugtime.modules.adherence.api import Alert, ReminderPush, ReminderTransportResult, SyncRequest
 from drugtime.notification_gateway.fcm_auth import AccessTokenProvider
 
 log = logging.getLogger(__name__)
@@ -87,6 +87,14 @@ class FcmGateway:
     def _send_one(self, alert: Alert) -> bool:
         return self._post(build_fcm_payload(alert))
 
+    def send_reminder(self, push: ReminderPush) -> ReminderTransportResult:
+        try:
+            unregistered = self._post(build_reminder_payload(push))
+            return ReminderTransportResult(not unregistered, unregistered)
+        except Exception as exc:
+            log.error("FCM reminder %s failed: %s", push.reminder_id, _reason(exc))
+            return ReminderTransportResult(False)
+
     def _post(self, payload: dict) -> bool:
         """True khi token không còn đăng ký (404 UNREGISTERED); lỗi khác ném để caller log."""
         response = self._client.post(
@@ -111,3 +119,20 @@ def _error_code(response: httpx.Response) -> str | None:
         if isinstance(detail, dict) and detail.get("errorCode"):
             return str(detail["errorCode"])
     return None
+
+
+def build_reminder_payload(push: ReminderPush) -> dict:
+    return {
+        "message": {
+            "token": push.device_token,
+            "notification": {"title": "DrugTime", "body": "Bạn có lời nhắc mới trên DrugTime"},
+            "android": {
+                "notification": {
+                    "visibility": "PRIVATE",
+                    "channel_id": "family_alerts",
+                    "tag": f"dose_reminder_{push.reminder_id}",
+                }
+            },
+            "data": {"type": "dose_reminder", "reminder_id": str(push.reminder_id)},
+        }
+    }
