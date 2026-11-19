@@ -48,6 +48,19 @@ class Reported[CatalogId: (int, str)](StepModel):
         return self
 
 
+class ReportedPhysiological(StepModel):
+    """Physiological states are catalog-only: no custom names."""
+
+    status: Literal["reported"]
+    catalog_ids: list[ConditionId] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def unique_ids(self):
+        if len(set(self.catalog_ids)) != len(self.catalog_ids):
+            raise ValueError("catalog IDs must be unique")
+        return self
+
+
 class AllergenCatalogItem(StepModel):
     id: AllergenId
     category: Literal["drug", "food"]
@@ -72,10 +85,11 @@ class HealthSetupRequest(StepModel):
     revision: str = Field(min_length=1, max_length=128)
     allergies: NoneKnown | ReportedAllergySelection | None = None
     conditions: NoneKnown | Reported[ConditionId] | None = None
+    physiological_states: NoneKnown | ReportedPhysiological | None = None
 
     @model_validator(mode="after")
     def validate_steps(self):
-        steps = self.model_fields_set & {"allergies", "conditions"}
+        steps = self.model_fields_set & {"allergies", "conditions", "physiological_states"}
         if not steps or any(getattr(self, step) is None for step in steps):
             raise ValueError("supply at least one step and omit skipped steps")
         return self
@@ -85,6 +99,7 @@ class HealthSetupResponse(StepModel):
     revision: str = Field(min_length=1, max_length=128)
     allergies: Unreported | NoneKnown | ReportedAllergies
     conditions: Unreported | NoneKnown | Reported[ConditionId]
+    physiological_states: Unreported | NoneKnown | ReportedPhysiological
 
     @classmethod
     def from_setup(cls, snapshot: HealthSetup, labels: dict[str, AllergenLabel]):
@@ -112,6 +127,14 @@ class HealthSetupResponse(StepModel):
                 "revision": snapshot.revision,
                 "allergies": allergies,
                 "conditions": encode(snapshot.conditions),
+                "physiological_states": (
+                    {
+                        "status": "reported",
+                        "catalog_ids": list(snapshot.physiological_states.catalog_ids),
+                    }
+                    if snapshot.physiological_states.status == "reported"
+                    else {"status": snapshot.physiological_states.status}
+                ),
             }
         )
 
@@ -121,4 +144,4 @@ def decode_step(step):
         return None
     if isinstance(step, NoneKnown):
         return SetupStep("none_known")
-    return SetupStep("reported", tuple(step.catalog_ids), tuple(step.custom_names))
+    return SetupStep("reported", tuple(step.catalog_ids), tuple(getattr(step, "custom_names", ())))

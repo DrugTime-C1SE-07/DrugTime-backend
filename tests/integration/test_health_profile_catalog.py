@@ -209,3 +209,35 @@ def test_allergens_privileges_and_constraints(db, role_engines):
     ):
         with pytest.raises(DBAPIError, match="check constraint"):
             db.execute(text(insert), {**good, field: value})
+
+
+def _category(nature: str) -> str:
+    return "chronic_disease" if nature == "benh_ly" else "physiological_state"
+
+
+def test_conditions_carry_category__AC15(client, db, make, auth, seed):
+    from uuid import uuid4
+
+    created = {}
+    for nature in ("benh_ly", "benh_ly", "sinh_ly_binh_thuong", "sinh_ly_binh_thuong"):
+        cid = db.execute(
+            text(
+                "INSERT INTO conditions (name, medical_nature, data_role) "
+                "VALUES (:name, CAST(:nature AS medical_nature), "
+                "'dieu_chinh_thuoc_khac') RETURNING id"
+            ),
+            {"name": f"AC15 {nature} {uuid4().hex[:8]}", "nature": nature},
+        ).scalar_one()
+        created[cid] = _category(nature)
+
+    response = client.get("/conditions?limit=100", headers=auth(make.user(consents=())))
+    assert response.status_code == 200
+    items = response.json()["items"]
+    by_id = {item["id"]: item["category"] for item in items}
+    by_name = {item["name"]: item["category"] for item in items}
+    for cid, category in created.items():
+        assert by_id[cid] == category, cid
+    # Reviewed catalog: pregnancy and breastfeeding are physiological states, not diseases.
+    for name, nature, *_ in seed["conditions"]:
+        assert by_name[name] == _category(nature), name
+    assert any(nature == "sinh_ly_binh_thuong" for _, nature, *_ in seed["conditions"])

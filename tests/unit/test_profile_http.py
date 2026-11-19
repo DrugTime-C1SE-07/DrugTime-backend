@@ -309,3 +309,22 @@ def test_nul_metadata_rejected_without_changing_schema(model_name, field):
         model.model_validate({**body, field: "text\x00value"})
     for value in (None, "", "  text\nwith spaces  "):
         assert getattr(model.model_validate({**body, field: value}), field) == value
+
+
+def test_profile_and_links_carry_category__AC16(client, monkeypatch):
+    links = [
+        UserConditionView(1, 2, "Đái tháo đường type 2", None, None, "chronic_disease"),
+        UserConditionView(2, 3, "Đang mang thai", None, None, "physiological_state"),
+    ]
+    monkeypatch.setattr(
+        http, "get_profile", lambda *a, **k: HealthProfile("A", None, None, None, links)
+    )
+    body = client.get("/profile").json()
+    assert [(c["condition_id"], c["category"]) for c in body["conditions"]] == [
+        (2, "chronic_disease"),
+        (3, "physiological_state"),
+    ]
+    monkeypatch.setattr(http, "create_condition", lambda *a, **k: links[1])
+    created = client.post("/profile/conditions", json={"condition_id": 3})
+    assert created.status_code == 201
+    assert created.json()["category"] == "physiological_state"

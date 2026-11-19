@@ -18,7 +18,9 @@ def client(monkeypatch):
     app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(uuid4(), False)
     app.dependency_overrides[get_uow] = lambda: object()
     monkeypatch.setattr(
-        http, "list_conditions", Mock(return_value=ConditionPage([Condition(1, "Diabetes")], 1))
+        http,
+        "list_conditions",
+        Mock(return_value=ConditionPage([Condition(1, "Diabetes", "chronic_disease")], 1)),
     )
     return TestClient(app)
 
@@ -27,7 +29,7 @@ def test_catalog_authenticated_without_profile_pep(client):
     response = client.get("/conditions")
     assert response.status_code == 200
     assert response.json() == {
-        "items": [{"id": 1, "name": "Diabetes"}],
+        "items": [{"id": 1, "name": "Diabetes", "category": "chronic_disease"}],
         "total": 1,
         "limit": 20,
         "offset": 0,
@@ -63,8 +65,10 @@ def test_sql_catalog_get_and_batched_names():
     uow.connection.execute.assert_not_called()
     uow.connection.execute.return_value.first.return_value = None
     assert sql.get(uow, 99) is None
-    uow.connection.execute.return_value.first.return_value = (1, "Diabetes")
-    assert sql.get(uow, 1) == Condition(1, "Diabetes")
+    uow.connection.execute.return_value.first.return_value = SimpleNamespace(
+        id=1, name="Diabetes", nature="benh_ly"
+    )
+    assert sql.get(uow, 1) == Condition(1, "Diabetes", "chronic_disease")
     uow.connection.execute.return_value.__iter__.return_value = iter(
         [SimpleNamespace(id=1, name="Diabetes"), SimpleNamespace(id=2, name="Hypertension")]
     )
@@ -94,3 +98,28 @@ def test_http_out_of_range_offset_returns_empty_page(offset):
     assert response.status_code == 200
     assert response.json() == {"items": [], "total": 7, "limit": 20, "offset": offset}
     uow.connection.execute.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "nature,category",
+    [("benh_ly", "chronic_disease"), ("sinh_ly_binh_thuong", "physiological_state")],
+)
+def test_category_maps_medical_nature__AC15(nature, category):
+    from types import SimpleNamespace
+
+    from drugtime.modules.catalog.adapters.outbound.sql_conditions import SqlConditions
+
+    uow = MagicMock()
+    uow.connection.execute.return_value.__iter__.return_value = iter(
+        [SimpleNamespace(id=3, name="Đang mang thai", nature=nature)]
+    )
+    assert SqlConditions().get_many(uow, [3]) == {3: Condition(3, "Đang mang thai", category)}
+    assert "medical_nature" in str(uow.connection.execute.call_args.args[0])
+
+
+def test_get_many_empty_does_not_query():
+    from drugtime.modules.catalog.adapters.outbound.sql_conditions import SqlConditions
+
+    uow = MagicMock()
+    assert SqlConditions().get_many(uow, []) == {}
+    uow.connection.execute.assert_not_called()

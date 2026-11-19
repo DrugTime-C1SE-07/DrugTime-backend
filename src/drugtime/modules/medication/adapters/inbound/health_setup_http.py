@@ -127,7 +127,7 @@ def _response(uow, snapshot):
 def get_health_setup(request: Request, user: identity.CurrentUser = Depends(identity.current_user)):
     with unit_of_work() as uow:
         _authorize(uow, request, user, writes=False)
-        return _response(uow, read_setup(uow, user.id, _STORE, _LINKS))
+        return _response(uow, read_setup(uow, user.id, _STORE, _LINKS, _CATALOG))
 
 
 @router.put(
@@ -177,5 +177,6 @@ def _authorize_and_save(request: Request, user: identity.CurrentUser, raw_body: 
                 body.revision,
                 decode_step(body.allergies),
                 decode_step(body.conditions),
+                decode_step(body.physiological_states),
             ),
         )

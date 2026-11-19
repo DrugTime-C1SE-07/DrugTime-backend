@@ -33,7 +33,10 @@ class AllergenLabel:
 class HealthSetup:
     revision: str
     allergies: SetupStep[str]
+    # Chronic diseases only (category chronic_disease) plus custom names.
     conditions: SetupStep[int]
+    # Pregnancy, breastfeeding (category physiological_state); catalog-only, no custom names.
+    physiological_states: SetupStep[int] = SetupStep("unreported")
 
 
 # Custom allergy names are sent unchanged to meal suggestions, whose items are <= 40 chars.

@@ -79,9 +79,10 @@ def test_profile_rejects_unverified_email_change_and_preserves_fields__AC2(clien
     assert change.status_code == 409
     assert change.json() == {"detail": "email_change_verification_required"}
     assert client.get("/profile", headers=headers).json() == before
-    assert client.put(
-        "/profile", json={**body, "email": before["email"]}, headers=headers
-    ).status_code == 204
+    assert (
+        client.put("/profile", json={**body, "email": before["email"]}, headers=headers).status_code
+        == 204
+    )
     assert client.get("/profile", headers=headers).json() == {**before, **body}
 
 
@@ -94,11 +95,19 @@ def test_conditions_pagination_no_patient_data__AC05(client, db, make, auth):
     assert response.status_code == 200
     data = response.json()
     assert data["total"] == total and data["limit"] == 1 and data["offset"] == 0
-    assert data["items"] == [
-        dict(
-            db.execute(text("SELECT id,name FROM conditions ORDER BY id LIMIT 1")).mappings().one()
+    first = (
+        db.execute(
+            text(
+                "SELECT id, name, medical_nature::text AS nature "
+                "FROM conditions ORDER BY id LIMIT 1"
+            )
         )
-    ]
+        .mappings()
+        .one()
+    )
+    # `category` added by adhoc-20261119-home-ui-feedback (contract 02, non-breaking).
+    category = "chronic_disease" if first["nature"] == "benh_ly" else "physiological_state"
+    assert data["items"] == [{"id": first["id"], "name": first["name"], "category": category}]
     assert client.get(f"/conditions?offset={total}", headers=headers).json()["items"] == []
     assert make.access_logs(user) == []
     assert all(cid > 0 for cid in ids)
