@@ -12,6 +12,9 @@ from drugtime.shared.uow import UnitOfWork
 
 
 class AccessGuardAdapter:
+    def __init__(self, *, audit_self: bool = False) -> None:
+        self._audit_self = audit_self
+
     def _authorize(
         self,
         uow: UnitOfWork,
@@ -27,6 +30,7 @@ class AccessGuardAdapter:
             patient_id=patient_id,
             scope=access.Scope.MEDICATIONS,
             action=action,
+            audit_self=self._audit_self,
         )
 
     def authorize_read(

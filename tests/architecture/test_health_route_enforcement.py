@@ -14,6 +14,28 @@ from drugtime.modules.identity import api as identity
 # (scope, operationId, audit_self): ghi liều và checkpoint chính chủ không ghi access_logs khi
 # được phép (theo PEP chung); đọc lịch sử thì có (3.23).
 PROTECTED_HEALTH_ROUTES = {
+    ("GET", "/patients/{patient_id}/medications"): (
+        "danh_sach_thuoc",
+        "listLinkedPatientMedications",
+        True,
+    ),
+    ("POST", "/patients/{patient_id}/dose-reminders"): (
+        "lich_su_tuan_thu",
+        "sendPatientDoseReminder",
+        True,
+    ),
+    ("GET", "/patients/{patient_id}/dose-reminders/status"): (
+        "lich_su_tuan_thu",
+        "getPatientDoseReminderState",
+        True,
+    ),
+    ("GET", "/dose-reminders/received"): ("lich_su_tuan_thu", "listReceivedDoseReminders", True),
+    ("GET", "/dose-reminders/received/{id}"): ("lich_su_tuan_thu", "getReceivedDoseReminder", True),
+    ("PATCH", "/dose-reminders/received/{id}"): (
+        "lich_su_tuan_thu",
+        "updateReceivedDoseReminder",
+        True,
+    ),
     ("GET", "/family/patients"): (
         "danh_sach_benh_nhan_lien_ket",
         "listMyLinkedPatients",
@@ -79,6 +101,6 @@ def test_scoped_health_routes_have_registry_entries():
 @pytest.mark.parametrize("path", ["/data-deletion-requests", "/data-deletion-requests/otp"])
 def test_deletion_routes_require_mobile_identity(path):
     app = create_app()
-    route, = [r for r in api_routes(app) if r.path == path and "POST" in r.methods]
+    (route,) = [r for r in api_routes(app) if r.path == path and "POST" in r.methods]
     assert identity.current_mobile_user in list(dependencies(route.dependant))
     assert app.openapi()["paths"][path]["post"]["security"] == [{"bearerAuth": []}]

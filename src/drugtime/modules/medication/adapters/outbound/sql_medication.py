@@ -112,6 +112,40 @@ def _window_params(start: datetime, end: datetime) -> dict | None:
 
 
 class SqlMedication:
+    def active_ids_page(self, uow, patient_id, before, limit):
+        rows = uow.connection.execute(
+            text(
+                "SELECT id FROM user_medications WHERE user_id = :p "
+                "AND deleted_at IS NULL AND ended_at IS NULL "
+                "AND (CAST(:before AS bigint) IS NULL OR id < :before) ORDER BY id DESC LIMIT :n"
+            ),
+            {"p": patient_id, "before": before, "n": limit},
+        )
+        return [r.id for r in rows]
+
+    def reminder_context(self, uow, schedule_id, *, lock=False):
+        # Lock medication first, matching the existing treatment edit lock order.
+        mid = uow.connection.execute(
+            text("SELECT user_medication_id FROM medication_schedules WHERE id = :s"),
+            {"s": schedule_id},
+        ).scalar_one_or_none()
+        if mid is None:
+            return None
+        if lock:
+            uow.connection.execute(
+                text("SELECT id FROM user_medications WHERE id = :m FOR SHARE"), {"m": mid}
+            ).first()
+        return uow.connection.execute(
+            text(
+                "SELECT um.user_id, ms.intake_time, ms.days_of_week, ms.effective_from, "
+                "ms.ended_at, um.ended_at AS medication_ended_at, um.deleted_at "
+                "FROM medication_schedules ms JOIN user_medications um "
+                "ON um.id = ms.user_medication_id WHERE ms.id = :s"
+                + (" FOR SHARE OF ms" if lock else "")
+            ),
+            {"s": schedule_id},
+        ).first()
+
     # Ràng buộc schedule với patient ngay khi lấy ID thuốc dùng cho snapshot cảnh báo.
     def alert_medication_id(
         self, uow: UnitOfWork, schedule_id: int, patient_id: UUID

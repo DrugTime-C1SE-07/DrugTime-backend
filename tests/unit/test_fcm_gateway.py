@@ -2,6 +2,7 @@
 
 import json
 import logging
+from unittest.mock import Mock
 from urllib.parse import parse_qs
 from uuid import uuid4
 
@@ -13,7 +14,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from drugtime import notification_gateway
 from drugtime.modules.adherence.domain.alert import Alert, SyncRequest
-from drugtime.notification_gateway.fcm import FcmGateway
+from drugtime.modules.adherence.domain.patient_dose_reminder import ReminderPush
+from drugtime.notification_gateway.fcm import FcmGateway, build_reminder_payload
 from drugtime.notification_gateway.fcm_auth import (
     AccessTokenProvider,
     NotificationConfigError,
@@ -24,6 +26,29 @@ from drugtime.shared.config import Settings
 
 TOKEN_URI = "https://oauth2.example.test/token"
 SEND_URL = "https://fcm.googleapis.com/v1/projects/drugtime-test/messages:send"
+
+
+def test_manual_reminder_payload_is_generic_and_namespaced():
+    payload = build_reminder_payload(ReminderPush(9, "test-device"))["message"]
+    assert payload["data"] == {"type": "dose_reminder", "reminder_id": "9"}
+    assert payload["android"]["notification"]["tag"] == "dose_reminder_9"
+    assert payload["notification"] == {
+        "title": "DrugTime",
+        "body": "Bạn có lời nhắc mới trên DrugTime",
+    }
+    assert "notification_id" not in payload["data"]
+
+
+def test_manual_reminder_transport_reports_acceptance_unregistered_and_failure():
+    gw = FcmGateway("test", Mock(), Mock())
+    gw._post = Mock(return_value=False)
+    assert gw.send_reminder(ReminderPush(9, "test-device")).accepted
+    gw._post.return_value = True
+    result = gw.send_reminder(ReminderPush(9, "test-device"))
+    assert result.unregistered and not result.accepted
+    gw._post.side_effect = RuntimeError("transport")
+    result = gw.send_reminder(ReminderPush(9, "test-device"))
+    assert not result.accepted and not result.unregistered
 
 
 @pytest.fixture(scope="module")
