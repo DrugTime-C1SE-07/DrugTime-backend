@@ -11,7 +11,7 @@ from drugtime.modules.ai_meal.application.ports import FoundImage, PendingImage
 from drugtime.modules.ai_meal.domain.errors import ImageSearchFailed, StorageUnavailable
 
 FOUND = FoundImage(b"\xff\xd8\xffx", "image/jpeg", "111", "Nguyễn Văn A",
-                   "https://www.pexels.com/@a", "https://www.pexels.com/photo/111/")
+                   "https://pixabay.com/users/nguyen_van_a-222/", "https://pixabay.com/photos/example-111/")
 
 
 PENDING = PendingImage(42, "vietnamese sour fish soup")
@@ -99,11 +99,26 @@ def test_storage_path_by_type(ct, ext):
 def test_task_disabled_does_not_call_provider__AC8(monkeypatch):
     monkeypatch.setattr(tasks, "get_settings", lambda: type("S", (), {
         "ai_meal_image_enabled": False,
-        "pexels_api_key": type("K", (), {"get_secret_value": lambda self: "k"})(),
+        "pixabay_api_key": type("K", (), {"get_secret_value": lambda self: "k"})(),
     })())
     with patch.object(tasks, "fetch_image") as run:
         assert tasks.fetch_meal_image(42) == "disabled"
     run.assert_not_called()
+
+
+def test_task_missing_key_does_not_call_provider__AC9(monkeypatch):
+    """adhoc-20261120-pixabay-meal-images: bật ảnh nhưng thiếu PIXABAY_API_KEY → disabled."""
+    monkeypatch.setattr(tasks, "get_settings", lambda: type("S", (), {
+        "ai_meal_image_enabled": True,
+        "pixabay_api_key": type("K", (), {"get_secret_value": lambda self: ""})(),
+    })())
+    with (
+        patch.object(tasks, "fetch_image") as run,
+        patch.object(tasks, "PixabayClient") as client,
+    ):
+        assert tasks.fetch_meal_image(42) == "disabled"
+    run.assert_not_called()
+    client.assert_not_called()
 
 
 def test_task_registered_with_expected_name():

@@ -75,7 +75,7 @@ class SqlMealImages:
         uow.connection.execute(
             text(
                 "UPDATE meal_images SET status = 'ready', storage_path = :path, "
-                "content_type = :ct, size_bytes = :size, provider = 'pexels', "
+                "content_type = :ct, size_bytes = :size, provider = 'pixabay', "
                 "provider_photo_id = :pid, photographer_name = :pn, photographer_url = :pu, "
                 "source_url = :su, updated_at = now() WHERE id = :id"
             ),

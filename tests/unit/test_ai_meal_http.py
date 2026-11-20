@@ -383,7 +383,7 @@ class Images:
 
 
 READY = ImageState(42, "ready", "42.jpg", "image/jpeg", "Nguyễn Văn A",
-                   "https://www.pexels.com/@a", "https://www.pexels.com/photo/42/")
+                   "https://pixabay.com/users/nguyen_van_a-222/", "https://pixabay.com/photos/example-42/")
 
 
 def test_ready_image_payload_and_no_enqueue__AC7():
@@ -391,9 +391,9 @@ def test_ready_image_payload_and_no_enqueue__AC7():
     r, _, _ = _post(_client(FakeSuggester(), images=Images(READY), queue=queue))
     image = r.json()["suggestions"][0]["image"]
     assert image == {"image_id": 42, "status": "ready", "url": "/meal-images/42",
-                     "attribution": {"provider": "pexels", "photographer_name": "Nguyễn Văn A",
-                                     "photographer_url": "https://www.pexels.com/@a",
-                                     "source_url": "https://www.pexels.com/photo/42/"}}
+                     "attribution": {"provider": "pixabay", "photographer_name": "Nguyễn Văn A",
+                                     "photographer_url": "https://pixabay.com/users/nguyen_van_a-222/",
+                                     "source_url": "https://pixabay.com/photos/example-42/"}}
     assert queue.sent == []
 
 
