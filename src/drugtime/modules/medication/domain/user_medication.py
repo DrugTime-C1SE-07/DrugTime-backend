@@ -30,6 +30,34 @@ class IntakeTiming(StrEnum):
     ANY_TIME = "any_time"
 
 
+# Hình và màu người bệnh chọn để nhận ra thuốc; chỉ để hiển thị (adhoc-20261120).
+class PillShape(StrEnum):
+    CAPSULE = "capsule"
+    ROUND_TABLET = "round_tablet"
+    OBLONG_TABLET = "oblong_tablet"
+    SOFTGEL = "softgel"
+    EFFERVESCENT = "effervescent"
+    POWDER_SACHET = "powder_sachet"
+    SYRUP = "syrup"
+    DROPS = "drops"
+    SPRAY = "spray"
+    INJECTION_PEN = "injection_pen"
+    TOPICAL = "topical"
+
+
+class PillColor(StrEnum):
+    WHITE = "white"
+    YELLOW = "yellow"
+    ORANGE = "orange"
+    PINK = "pink"
+    RED = "red"
+    BROWN = "brown"
+    BLUE = "blue"
+    GREEN = "green"
+    PURPLE = "purple"
+    GRAY = "gray"
+
+
 # Loại thuốc mới được thêm vào
 @dataclass(frozen=True)
 class NewMedication:
@@ -42,6 +70,8 @@ class NewMedication:
     max_doses_per_day: int | None = None
     intake_timing: IntakeTiming | None = None
     stock_quantity: int | None = None
+    pill_shape: PillShape | None = None
+    pill_color: PillColor | None = None
 
     # Xây dựng thuốc tính tính toán liểu lượng trên ngày
     @property
@@ -65,6 +95,8 @@ class MedicationChanges:
     stock_quantity: int | None = None
     stopped: bool = False
     days_of_week: tuple[int, ...] | None = None
+    pill_shape: PillShape | None = None
+    pill_color: PillColor | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +185,8 @@ class UserMedicationRecord:
     has_interaction_data: bool
     ended_at: datetime | None
     schedules: tuple[ScheduleView, ...]  # lịch đang mở, sắp theo intake_time
+    pill_shape: PillShape | None = None
+    pill_color: PillColor | None = None
 
 
 @dataclass(frozen=True)
@@ -232,7 +266,13 @@ def plan_update(state: MedicationState, changes: MedicationChanges) -> UpdatePla
         raise _violation()
 
     fields: dict[str, Any] = {}
-    for name in ("quantity_per_dose", "intake_timing", "stock_quantity"):
+    for name in (
+        "quantity_per_dose",
+        "intake_timing",
+        "stock_quantity",
+        "pill_shape",
+        "pill_color",
+    ):
         if name in sent:
             fields[name] = getattr(changes, name)
 

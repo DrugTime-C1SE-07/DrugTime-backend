@@ -190,3 +190,33 @@ def test_allowed_log_failure_fails_request(client, make, auth, setup, monkeypatc
     )
     assert r.status_code == 500
     assert "medication" not in r.text
+
+def test_linked_family_cannot_change_pill_appearance__AC21(client, db, make, auth, setup):
+    """QD-27: người thân chỉ xem; đổi hình/màu cũng là ghi."""
+    patient, med = setup
+    family = make.family_of(patient)
+    r = client.patch(
+        f"/medications/{med['id']}",
+        json={"pill_shape": "capsule", "pill_color": "red"},
+        headers=auth(family),
+    )
+    assert r.status_code == 403 and r.json() == {"detail": "khong_co_quyen"}
+    row = db.execute(
+        text("SELECT pill_shape, pill_color FROM user_medications WHERE id = :i"),
+        {"i": med["id"]},
+    ).one()
+    assert tuple(row) == (None, None)
+    assert make.access_logs(patient) == [_log(family, "family", "denied", "khong_co_quyen")]
+
+
+def test_unlinked_user_cannot_change_pill_appearance__AC21(client, db, make, auth, setup):
+    patient, med = setup
+    stranger = make.user()
+    r = client.patch(
+        f"/medications/{med['id']}", json={"pill_color": "red"}, headers=auth(stranger)
+    )
+    assert r.status_code == 403
+    assert any(
+        log["actor_user_id"] == stranger and log["result"] == "denied"
+        for log in make.access_logs(patient)
+    )

@@ -13,6 +13,23 @@ class CatalogMedication:
     active_ingredient: str | None = None  # medications.raw_active_ingredient, chỉ để hiển thị
 
 
+@dataclass(frozen=True)
+class CatalogMedicationDetail:
+    """Thông tin danh mục cho màn "Thông tin thuốc" của Mobile (GET /catalog/medications/{id}).
+
+    Chỉ dữ liệu đã có trong danh mục; không có công dụng, liều tối đa hay cảnh báo."""
+
+    id: int
+    name: str
+    active_ingredient: str | None
+    strength_text: str | None
+    dosage_form: str | None
+    manufacturer_name: str | None
+    manufacturer_country: str | None
+    packaging_spec: str | None
+    source: str | None
+
+
 @dataclass(frozen=True, slots=True)
 class Medication:
     """Chi tiết đầy đủ của một bản ghi thuốc (Admin CRUD PB04)."""

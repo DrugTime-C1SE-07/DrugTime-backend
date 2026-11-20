@@ -29,6 +29,7 @@ OPERATIONS = [
     ("delete", "/medications/{id}/schedules/{schedule_id}"),
     ("get", "/patients/{patient_id}/schedules"),
     ("get", "/catalog/medications"),
+    ("get", "/catalog/medications/{id}"),
     ("get", "/medications/search"),
 ]
 

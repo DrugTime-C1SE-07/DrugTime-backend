@@ -7,7 +7,7 @@ from drugtime.modules.catalog.domain.catalog_index import (
     CatalogQueryResult,
     MatchKind,
 )
-from drugtime.modules.catalog.domain.medication import CatalogMedication
+from drugtime.modules.catalog.domain.medication import CatalogMedication, CatalogMedicationDetail
 from drugtime.shared.errors import DomainError
 from drugtime.shared.uow import UnitOfWork
 
@@ -137,6 +137,30 @@ class SqlCatalog:
             dosage_form=row.dosage_form,
             has_active_ingredients=row.has_active_ingredients,
             active_ingredient=row.raw_active_ingredient,
+        )
+
+    def get_detail(self, uow: UnitOfWork, medication_id: int) -> CatalogMedicationDetail | None:
+        """Kể cả thuốc đã xóa mềm: người bệnh có thể đang dùng thuốc đó (QD-36)."""
+        row = uow.connection.execute(
+            text(
+                "SELECT id, name, raw_active_ingredient, strength_text, dosage_form, "
+                "manufacturer_name, manufacturer_country, packaging_spec, source "
+                "FROM medications WHERE id = :id"
+            ),
+            {"id": medication_id},
+        ).first()
+        if row is None:
+            return None
+        return CatalogMedicationDetail(
+            id=row.id,
+            name=row.name,
+            active_ingredient=row.raw_active_ingredient,
+            strength_text=row.strength_text,
+            dosage_form=row.dosage_form,
+            manufacturer_name=row.manufacturer_name,
+            manufacturer_country=row.manufacturer_country,
+            packaging_spec=row.packaging_spec,
+            source=row.source,
         )
 
     def search(

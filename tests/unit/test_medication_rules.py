@@ -11,6 +11,8 @@ from drugtime.modules.medication.domain.user_medication import (
     MedicationChanges,
     MedicationState,
     NewMedication,
+    PillColor,
+    PillShape,
     ScheduleView,
     plan_update,
     validate_new,
@@ -237,3 +239,40 @@ def test_switch_to_scheduled_with_days():
 def test_switch_to_scheduled_with_only_days_violation():
     with rule_error():
         plan_update(state(A), changes(dosing_mode=S, days_of_week=(1,)))
+
+
+# --- hình và màu hiển thị (adhoc-20261120-add-medication-ux) -------------------
+
+
+def test_new_medication_defaults_to_no_pill_appearance():
+    cmd = validate_new(new())
+    assert cmd.pill_shape is None
+    assert cmd.pill_color is None
+
+
+def test_validate_new_keeps_pill_appearance():
+    cmd = validate_new(new(pill_shape=PillShape.ROUND_TABLET, pill_color=PillColor.YELLOW))
+    assert (cmd.pill_shape, cmd.pill_color) == (PillShape.ROUND_TABLET, PillColor.YELLOW)
+
+
+def test_plan_update_pill_fields_only_change_columns__AC19():
+    plan = plan_update(state(), changes(pill_shape=PillShape.CAPSULE, pill_color=PillColor.ORANGE))
+    assert plan.fields == {"pill_shape": PillShape.CAPSULE, "pill_color": PillColor.ORANGE}
+    assert not plan.close_open_schedules
+    assert plan.new_intake_times == ()
+
+
+def test_plan_update_pill_null_clears_value__AC19():
+    plan = plan_update(state(), changes(pill_color=None))
+    assert plan.fields == {"pill_color": None}
+
+
+def test_plan_update_pill_on_stopped_medication_is_rejected():
+    # Q2 của 02: không có ngoại lệ cho field hiển thị.
+    with rule_error("medication_stopped"):
+        plan_update(state(stopped=True), changes(pill_color=PillColor.RED))
+
+
+def test_plan_update_pill_with_stopped_flag_is_violation():
+    with rule_error():
+        plan_update(state(), changes(stopped=True, pill_shape=PillShape.SYRUP))

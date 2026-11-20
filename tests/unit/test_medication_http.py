@@ -96,6 +96,9 @@ def _without(key):
         ({**VALID, "stock_quantity": -1}, "stock_quantity"),
         ({**VALID, "stock_quantity": 10000}, "stock_quantity"),
         ({**VALID, "patient_id": str(uuid4())}, "patient_id"),
+        ({**VALID, "pill_shape": "hexagon"}, "pill_shape"),
+        ({**VALID, "pill_color": "teal"}, "pill_color"),
+        ({**VALID, "pill_color": "Yellow"}, "pill_color"),  # phân biệt hoa thường
     ],
 )
 def test_create_structural_errors_422_array(signed_in, body, loc):
@@ -117,6 +120,9 @@ def test_create_structural_errors_422_array(signed_in, body, loc):
         {"dosing_mode": None},
         {"medication_id": 2},
         {"intake_times": ["07:00", "07:00"]},
+        {"pill_shape": "hexagon"},
+        {"pill_color": "teal"},
+        {"pill_color": 1},
     ],
 )
 def test_update_structural_errors_422_array(signed_in, body):
@@ -198,3 +204,63 @@ def test_patient_id_must_be_uuid(signed_in):
 def test_limit_and_cursor_bounds_422(signed_in, query):
     r = signed_in.get(f"/patients/{uuid4()}/schedules?{query}")
     assert r.status_code == 422 and isinstance(r.json()["detail"], list)
+
+
+# --- hình và màu hiển thị (adhoc-20261120-add-medication-ux) -------------------
+
+
+def test_create_and_update_bodies_carry_pill_appearance():
+    from drugtime.modules.medication.adapters.inbound.schemas import (
+        UserMedicationCreate,
+        UserMedicationUpdate,
+    )
+    from drugtime.modules.medication.domain.user_medication import PillColor, PillShape
+
+    cmd = UserMedicationCreate(
+        **VALID, pill_shape="round_tablet", pill_color="yellow"
+    ).to_domain()
+    assert (cmd.pill_shape, cmd.pill_color) == (PillShape.ROUND_TABLET, PillColor.YELLOW)
+    assert UserMedicationCreate(**VALID).to_domain().pill_shape is None
+
+    cleared = UserMedicationUpdate(pill_color=None).to_domain()
+    assert cleared.sent == frozenset({"pill_color"})
+    assert cleared.pill_color is None
+
+
+def test_response_includes_pill_appearance_even_when_unset():
+    from decimal import Decimal
+
+    from drugtime.modules.medication.adapters.inbound.schemas import UserMedication
+    from drugtime.modules.medication.domain.user_medication import (
+        DosingMode,
+        MedicationInfo,
+        PillColor,
+        PillShape,
+        UserMedicationRecord,
+        UserMedicationView,
+    )
+
+    def view(**kw):
+        record = UserMedicationRecord(
+            id=42,
+            user_id=uuid4(),
+            medication_id=1007,
+            dosing_mode=DosingMode.AS_NEEDED,
+            quantity_per_dose=Decimal("1"),
+            doses_per_day=3,
+            intake_timing=None,
+            stock_quantity=None,
+            has_interaction_data=True,
+            ended_at=None,
+            schedules=(),
+            **kw,
+        )
+        info = MedicationInfo(1007, "Amlodipin 5mg", "5 mg", "Viên nén", True)
+        return UserMedicationView(record, info)
+
+    unset = UserMedication.from_view(view()).model_dump(mode="json")
+    assert unset["pill_shape"] is None and unset["pill_color"] is None
+    chosen = UserMedication.from_view(
+        view(pill_shape=PillShape.CAPSULE, pill_color=PillColor.ORANGE)
+    ).model_dump(mode="json")
+    assert (chosen["pill_shape"], chosen["pill_color"]) == ("capsule", "orange")
