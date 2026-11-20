@@ -178,7 +178,17 @@ class MealSuggestionResponse(BaseModel):
     refreshes_remaining: int = Field(ge=0)
     created_at: datetime
 
+    @field_validator("disclaimer")
+    @classmethod
+    def _disclaimer_not_empty(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("disclaimer must not be empty (fail-closed)")
+        return value
+
     @field_validator("created_at")
     @classmethod
     def _vietnam_offset(cls, value: datetime) -> datetime:
         return value.astimezone(_VIETNAM)
+
+
+MealSuggestionSetResponse = MealSuggestionResponse
