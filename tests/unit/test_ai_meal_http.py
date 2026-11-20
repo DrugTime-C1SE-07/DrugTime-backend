@@ -268,10 +268,23 @@ INVALID = {
     "unknown field": {**BODY, "patient_name": "A"},
     "item 41": {**BODY, "allergies": {"none": False, "items": ["x" * 41]}},
     "blank item": {**BODY, "allergies": {"none": False, "items": ["  "]}},
-    "11 allergies": {**BODY, "allergies": {"none": False, "items": [f"a{i}" for i in range(11)]}},
+    "46 allergies": {**BODY, "allergies": {"none": False, "items": [f"a{i}" for i in range(46)]}},
+    "11 restrictions": {
+        **BODY,
+        "dietary_restrictions": {"none": False, "items": [f"r{i}" for i in range(11)]},
+    },
     "duplicate allergies": {**BODY, "allergies": {"none": False, "items": ["Tôm", "tôm"]}},
     "6 preferences": {**BODY, "preferences": [f"p{i}" for i in range(6)]},
 }
+
+
+def test_accepts_45_allergies_of_40_chars__AC12():
+    """A full health profile (15 catalog + 30 custom allergies) is sent unchanged (review H2)."""
+    sug = FakeSuggester()
+    items = [f"{i:02d}" + "x" * 38 for i in range(45)]
+    r, uow, store = _post(_client(sug), body={**BODY, "allergies": {"none": False, "items": items}})
+    assert r.status_code == 200, r.text
+    assert sug.calls == 1
 
 
 @pytest.mark.parametrize("body", INVALID.values(), ids=INVALID.keys())
@@ -370,7 +383,7 @@ class Images:
 
 
 READY = ImageState(42, "ready", "42.jpg", "image/jpeg", "Nguyễn Văn A",
-                   "https://www.pexels.com/@a", "https://www.pexels.com/photo/42/")
+                   "https://pixabay.com/users/nguyen_van_a-222/", "https://pixabay.com/photos/example-42/")
 
 
 def test_ready_image_payload_and_no_enqueue__AC7():
@@ -378,9 +391,9 @@ def test_ready_image_payload_and_no_enqueue__AC7():
     r, _, _ = _post(_client(FakeSuggester(), images=Images(READY), queue=queue))
     image = r.json()["suggestions"][0]["image"]
     assert image == {"image_id": 42, "status": "ready", "url": "/meal-images/42",
-                     "attribution": {"provider": "pexels", "photographer_name": "Nguyễn Văn A",
-                                     "photographer_url": "https://www.pexels.com/@a",
-                                     "source_url": "https://www.pexels.com/photo/42/"}}
+                     "attribution": {"provider": "pixabay", "photographer_name": "Nguyễn Văn A",
+                                     "photographer_url": "https://pixabay.com/users/nguyen_van_a-222/",
+                                     "source_url": "https://pixabay.com/photos/example-42/"}}
     assert queue.sent == []
 
 

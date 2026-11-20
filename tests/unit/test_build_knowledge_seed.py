@@ -713,3 +713,199 @@ def test_missing_sheet_reported(tmp_path):
     del wb["34_DoPhuRaSoat"]
     wb.save(path)
     _errors_contain(seed.build(path), "Thiếu sheet: 34_DoPhuRaSoat")
+
+
+# ---- Danh mục hồ sơ sức khỏe (task adhoc-20261118-health-profile-catalog, AC1, AC2, AC6) ----
+
+APPROVED = "Dược sĩ đã duyệt"
+CATALOG_HEADERS = {
+    "10_NhomBenh": [
+        "Mã nhóm *\n[code]",
+        "Tên nhóm *\n[name]",
+        "Đang dùng\n[is_active]",
+        "Trạng thái rà soát\n[không nạp DB]",
+    ],
+    "11_TinhTrangBenh": [
+        "Tên tình trạng *\n[name]",
+        "Bản chất *\n[medical_nature]",
+        "Vai trò dữ liệu *\n[data_role]",
+        "Mã ICD-10\n[icd10_code]",
+        "Mã nhóm bệnh\n[disease_group_id]",
+        "Trạng thái rà soát\n[không nạp DB]",
+        "Lỗi phát hiện\n[tự tính]",
+    ],
+    "12_DiUng": [
+        "Mã dị ứng *\n[id]",
+        "Nhóm *\n[category]",
+        "Tên hiển thị *\n[name]",
+        "Thứ tự hiển thị *\n[display_order]",
+        "Đang dùng\n[is_active]",
+        "Nguồn *\n[source]",
+        "Trạng thái rà soát\n[không nạp DB]",
+        "Lỗi phát hiện\n[tự tính]",
+    ],
+}
+
+
+def _catalog_base():
+    return {
+        "10_NhomBenh": [["dai_thao_duong", "Đái tháo đường", True, APPROVED]],
+        "11_TinhTrangBenh": [
+            [
+                "Đái tháo đường type 2",
+                "benh_ly",
+                "sinh_hoat_chat_dieu_tri",
+                "E11",
+                "dai_thao_duong",
+                APPROVED,
+                "=1",
+            ],
+            ["Tăng huyết áp", "benh_ly", "sinh_hoat_chat_dieu_tri", "I10", None, APPROVED, "=1"],
+        ],
+        "12_DiUng": [
+            ["seafood", "food", "Hải sản", 1, True, "FDA", APPROVED, "=1"],
+            ["penicillin", "drug", "Penicillin", 1, None, "EHR", APPROVED, "=1"],
+            ["aspirin", "drug", "Aspirin", 2, False, "EHR", APPROVED, "=1"],
+        ],
+    }
+
+
+def _write_catalog(tmp_path, data=None, name="catalog.xlsx", drop=()):
+    data = _catalog_base() if data is None else data
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    for sheet, headers in CATALOG_HEADERS.items():
+        if sheet in drop:
+            continue
+        s = wb.create_sheet(sheet)
+        s.append([f"{sheet} → bảng"])
+        s.append(headers)
+        s.append(["mô tả"] * len(headers))
+        for row in data.get(sheet, []):
+            s.append(row)
+    path = tmp_path / name
+    wb.save(path)
+    return path
+
+
+def test_catalog_valid_workbook_builds_upsert_sql(tmp_path):
+    r = seed.build_catalog(_write_catalog(tmp_path))
+    assert r.errors == []
+    assert "-- count conditions=2" in r.sql and "-- count allergens=3" in r.sql
+    # Drug before food, then display_order, then id; is_active blank → true.
+    values = r.sql.split("INSERT INTO allergens", 1)[1]
+    assert values.index("'penicillin'") < values.index("'aspirin'") < values.index("'seafood'")
+    assert "('penicillin', 'drug', 'Penicillin', 1, true, 'EHR')" in r.sql
+    assert "('aspirin', 'drug', 'Aspirin', 2, false, 'EHR')" in r.sql
+    assert "ON CONFLICT (name) DO UPDATE" in r.sql and "ON CONFLICT (id) DO UPDATE" in r.sql
+    assert "LEFT JOIN disease_groups g ON g.code" in r.sql
+    assert "RAISE EXCEPTION" in r.sql  # guards a group code missing from the target DB
+
+
+def test_catalog_rows_require_pharmacist_approval(tmp_path):
+    data = _catalog_base()
+    data["11_TinhTrangBenh"][1][5] = "Chưa rà soát"
+    data["12_DiUng"][0][6] = "Đã đối chiếu nguồn"
+    r = seed.build_catalog(_write_catalog(tmp_path, data=data))
+    assert r.errors == []
+    assert "Tăng huyết áp" not in r.sql and "'seafood'" not in r.sql
+    assert "Đái tháo đường type 2" in r.sql and "'penicillin'" in r.sql
+    assert "12_DiUng dòng 4: seafood" in r.report
+    assert "11_TinhTrangBenh dòng 5: Tăng huyết áp" in r.report
+
+
+def test_catalog_without_approved_rows_has_no_inserts(tmp_path):
+    data = _catalog_base()
+    for sheet in ("11_TinhTrangBenh", "12_DiUng"):
+        for row in data[sheet]:
+            row[-2] = "Chưa rà soát"
+    r = seed.build_catalog(_write_catalog(tmp_path, data=data))
+    assert r.errors == []
+    assert "INSERT" not in r.sql and "BEGIN;" in r.sql and "COMMIT;" in r.sql
+
+
+@pytest.mark.parametrize(
+    ("sheet", "index", "col", "value", "expected"),
+    [
+        ("11_TinhTrangBenh", 0, 1, "benh", "medical_nature="),
+        ("11_TinhTrangBenh", 0, 2, "khac", "data_role="),
+        ("11_TinhTrangBenh", 0, 3, "e11", "ICD-10"),
+        ("11_TinhTrangBenh", 0, 4, "khong_co", "mã nhóm bệnh"),
+        ("11_TinhTrangBenh", 1, 0, "Đái tháo đường TYPE 2", "trùng tên tình trạng"),
+        ("11_TinhTrangBenh", 0, 0, None, "thiếu 'name'"),
+        ("12_DiUng", 0, 0, "Sea-Food", "sai mẫu"),
+        ("12_DiUng", 2, 0, "penicillin", "trùng mã dị ứng"),
+        ("12_DiUng", 0, 1, "pollen", "category="),
+        ("12_DiUng", 2, 2, "penicillin", "trùng tên dị ứng"),
+        ("12_DiUng", 2, 3, 1, "trùng display_order 1 trong nhóm drug"),
+        ("12_DiUng", 0, 3, 0, "display_order phải là số nguyên trong 1..32767"),
+        ("12_DiUng", 0, 3, 1.5, "display_order phải là số nguyên trong 1..32767"),
+        ("12_DiUng", 0, 3, 32768, "display_order phải là số nguyên trong 1..32767"),
+        ("12_DiUng", 0, 2, "x" * 41, "tên dị ứng dài 41 ký tự, tối đa 40"),
+        ("12_DiUng", 0, 4, "có", "is_active phải là TRUE hoặc FALSE"),
+        ("12_DiUng", 0, 5, None, "thiếu 'source'"),
+    ],
+)
+def test_condition_and_allergen_validation_errors(tmp_path, sheet, index, col, value, expected):
+    data = _catalog_base()
+    data[sheet][index][col] = value
+    r = seed.build_catalog(_write_catalog(tmp_path, data=data))
+    assert any(expected in e for e in r.errors), r.errors
+    assert r.sql == ""
+
+
+def test_catalog_accepts_name_of_40_chars_and_display_order_32767__AC12(tmp_path):
+    data = _catalog_base()
+    data["12_DiUng"][0][2] = "x" * 40
+    data["12_DiUng"][0][3] = 32767
+    r = seed.build_catalog(_write_catalog(tmp_path, data=data))
+    assert r.errors == []
+    assert f"('seafood', 'food', '{'x' * 40}', 32767, true, 'FDA')" in r.sql
+
+
+def test_catalog_validates_unapproved_rows_too(tmp_path):
+    data = _catalog_base()
+    data["12_DiUng"][0][6] = "Chưa rà soát"
+    data["12_DiUng"][0][1] = "pollen"
+    r = seed.build_catalog(_write_catalog(tmp_path, data=data))
+    assert any("category=" in e for e in r.errors)
+
+
+def test_catalog_out_is_deterministic_upsert_without_delete(tmp_path):
+    first = seed.build_catalog(_write_catalog(tmp_path, name="a.xlsx"))
+    reordered = _catalog_base()
+    reordered["12_DiUng"].reverse()
+    reordered["11_TinhTrangBenh"].reverse()
+    second = seed.build_catalog(_write_catalog(tmp_path, data=reordered, name="b.xlsx"))
+
+    def body(sql):
+        return [line for line in sql.splitlines() if not line.startswith("-- workbook sha256")]
+
+    assert body(first.sql) == body(second.sql)
+    upper = first.sql.upper()
+    assert "DELETE" not in upper and "TRUNCATE" not in upper
+
+
+def test_missing_sheet_12_fails(tmp_path):
+    r = seed.build_catalog(_write_catalog(tmp_path, drop=("12_DiUng",)))
+    assert any("Thiếu sheet: 12_DiUng" in e for e in r.errors)
+
+
+def test_cli_catalog_out_only(tmp_path):
+    out = tmp_path / "catalog.sql"
+    assert seed.main([str(_write_catalog(tmp_path)), "--catalog-out", str(out)]) == 0
+    assert out.read_text(encoding="utf-8").startswith("-- FILE SINH TỰ ĐỘNG")
+
+
+def test_cli_requires_an_output(tmp_path):
+    with pytest.raises(SystemExit):
+        seed.main([str(_write_catalog(tmp_path))])
+
+
+def test_cli_catalog_errors_write_nothing(tmp_path, capsys):
+    data = _catalog_base()
+    data["12_DiUng"][0][1] = "pollen"
+    out = tmp_path / "catalog.sql"
+    assert seed.main([str(_write_catalog(tmp_path, data=data)), "--catalog-out", str(out)]) == 1
+    assert not out.exists()
+    assert "category=" in capsys.readouterr().err

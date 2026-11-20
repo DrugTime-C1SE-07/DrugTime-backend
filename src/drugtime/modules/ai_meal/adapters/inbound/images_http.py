@@ -8,7 +8,7 @@ bằng service key phía server; client không bao giờ có key hay URL kho lư
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Header, Path, Query
 from fastapi.responses import JSONResponse, Response
 from fastapi.security import HTTPBearer
 from pydantic import Field
@@ -37,6 +37,17 @@ _NO_STORE = {"Cache-Control": "no-store"}
 _NO_STORE_DOC = {"Cache-Control": {"schema": {"type": "string", "const": "no-store"}}}
 IMMUTABLE = "private, max-age=2592000, immutable"
 _IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp")
+
+
+def _session_user(authorization: str | None = Header(None)) -> identity.CurrentUser:
+    """Xác thực trong một unit of work ngắn, trả kết nối trước khi endpoint chạy.
+
+    `Depends(identity.current_user)` giữ kết nối (`get_uow`) tới hết request, kể cả lúc chờ
+    tải ảnh từ Storage; nhiều request ảnh song song làm cạn pool
+    (adhoc-20261120-meal-image-loading, AC1). Quyền vẫn đọc từ DB ở mỗi request.
+    """
+    with unit_of_work() as uow:
+        return identity.current_user(authorization=authorization, uow=uow)
 
 
 def get_image_store() -> MealImageStore:
@@ -68,7 +79,7 @@ def _error(status: int, detail: str) -> JSONResponse:
 )
 def list_meal_images_endpoint(
     ids: Annotated[list[Annotated[int, Field(ge=1)]], Query(min_length=1, max_length=20)],
-    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    user: Annotated[identity.CurrentUser, Depends(_session_user)],
     store: Annotated[MealImageStore, Depends(get_image_store)],
 ) -> JSONResponse:
     del user  # chỉ cần phiên hợp lệ
@@ -111,7 +122,7 @@ def list_meal_images_endpoint(
 )
 def get_meal_image_endpoint(
     image_id: Annotated[int, Path(ge=1)],
-    user: Annotated[identity.CurrentUser, Depends(identity.current_user)],
+    user: Annotated[identity.CurrentUser, Depends(_session_user)],
     store: Annotated[MealImageStore, Depends(get_image_store)],
     storage: Annotated[ImageStorage, Depends(get_image_storage)],
 ) -> Response:

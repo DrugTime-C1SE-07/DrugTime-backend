@@ -19,7 +19,7 @@ from drugtime.modules.identity import api as identity
 
 MOD = "drugtime.modules.ai_meal.adapters.inbound.images_http"
 READY = ImageState(42, "ready", "42.webp", "image/webp", "Nguyễn Văn A",
-                   "https://www.pexels.com/@a", "https://www.pexels.com/photo/42/")
+                   "https://pixabay.com/users/nguyen_van_a-222/", "https://pixabay.com/photos/example-42/")
 STATES = {42: READY, 43: ImageState(43, "pending"), 44: ImageState(44, "failed")}
 
 
@@ -55,7 +55,7 @@ def _client(store=None, storage=None, user=True):
     app.dependency_overrides[images_http.get_image_store] = lambda: store or Store()
     app.dependency_overrides[images_http.get_image_storage] = lambda: storage or Storage()
     if user:
-        app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(
+        app.dependency_overrides[images_http._session_user] = lambda: identity.CurrentUser(
             id=uuid4(), is_admin=False)
     return TestClient(app, raise_server_exceptions=False)
 
@@ -72,9 +72,9 @@ def test_list_states_in_query_order_skipping_unknown__AC7():
     assert r.json() == {"items": [
         {"image_id": 44, "status": "failed", "url": None, "attribution": None},
         {"image_id": 42, "status": "ready", "url": "/meal-images/42",
-         "attribution": {"provider": "pexels", "photographer_name": "Nguyễn Văn A",
-                         "photographer_url": "https://www.pexels.com/@a",
-                         "source_url": "https://www.pexels.com/photo/42/"}},
+         "attribution": {"provider": "pixabay", "photographer_name": "Nguyễn Văn A",
+                         "photographer_url": "https://pixabay.com/users/nguyen_van_a-222/",
+                         "source_url": "https://pixabay.com/photos/example-42/"}},
         {"image_id": 43, "status": "pending", "url": None, "attribution": None},
     ]}
     assert store.asked == [[44, 999, 42, 43]]

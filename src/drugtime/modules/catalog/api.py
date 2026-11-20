@@ -5,11 +5,13 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
+from drugtime.modules.catalog.adapters.inbound.allergens_http import router as _allergens_router
 from drugtime.modules.catalog.adapters.inbound.conditions_http import router as _conditions_router
 from drugtime.modules.catalog.adapters.inbound.http import router as _catalog_router
 from drugtime.modules.catalog.adapters.inbound.ocr_match_http import router as _ocr_match_router
 from drugtime.modules.catalog.adapters.outbound.job_queue import enqueue_sync
 from drugtime.modules.catalog.adapters.outbound.sql_active_ingredients import SqlActiveIngredients
+from drugtime.modules.catalog.adapters.outbound.sql_allergens import SqlAllergens
 from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
 from drugtime.modules.catalog.adapters.outbound.sql_conditions import SqlConditions
 from drugtime.modules.catalog.application.list_active_ingredients import normalize_query
@@ -18,6 +20,7 @@ from drugtime.modules.catalog.application.lookup_ocr_candidates import (
 )
 from drugtime.modules.catalog.application.normalize_ocr import normalize_ocr_text
 from drugtime.modules.catalog.application.scheduling import is_sync_due
+from drugtime.modules.catalog.domain.allergen import Allergen
 from drugtime.modules.catalog.domain.catalog_index import (
     MatchKind,
     MatchSource,
@@ -56,6 +59,10 @@ __all__ = [
     "lookup_ocr_candidates",
     "normalize_ocr_text",
     "Condition",
+    "Allergen",
+    "active_allergen_ids",
+    "allergen_labels",
+    "list_active_allergens",
     "get_condition",
     "condition_names",
     "CatalogMedication",
@@ -72,6 +79,7 @@ router = APIRouter()
 router.include_router(_catalog_router)
 router.include_router(_ocr_match_router)
 router.include_router(_conditions_router)
+router.include_router(_allergens_router)
 
 
 def lookup_ocr_candidates(uow: UnitOfWork, normalized: NormalizedOcrText) -> OcrCatalogLookup:
@@ -85,6 +93,26 @@ def get_condition(uow: UnitOfWork, condition_id: int) -> Condition | None:
 
 def condition_names(uow: UnitOfWork, ids: list[int]) -> dict[int, str]:
     return SqlConditions().names(uow, ids)
+
+
+def conditions_by_id(uow: UnitOfWork, ids: list[int]) -> dict[int, Condition]:
+    """Catalog rows (name and category) for the given ids; missing ids are absent."""
+    return SqlConditions().get_many(uow, ids)
+
+
+def list_active_allergens(uow: UnitOfWork) -> list[Allergen]:
+    """Active allergen catalog in display order (drug, then food)."""
+    return SqlAllergens().list_active(uow)
+
+
+def active_allergen_ids(uow: UnitOfWork, ids: list[str]) -> set[str]:
+    """The ids in `ids` that are active catalog entries."""
+    return SqlAllergens().active_ids(uow, ids)
+
+
+def allergen_labels(uow: UnitOfWork, ids: list[str]) -> dict[str, Allergen]:
+    """Catalog entries by id, retired ones included; unknown ids are omitted."""
+    return SqlAllergens().labels(uow, ids)
 
 
 def get_medication(

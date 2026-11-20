@@ -544,6 +544,8 @@ class SqlMedication:
 
     def erase(self, uow: UnitOfWork, user_id: UUID) -> None:
         c = uow.connection
+        c.execute(text("SELECT id FROM users WHERE id = :u FOR NO KEY UPDATE"), {"u": user_id})
+        c.execute(text("DELETE FROM health_profile_setup WHERE user_id = :u"), {"u": user_id})
         c.execute(
             text(
                 "DELETE FROM medication_schedules WHERE user_medication_id IN "

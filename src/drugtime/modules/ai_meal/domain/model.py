@@ -156,6 +156,13 @@ class MealSuggestion:
     image_id: int | None = None
 
 
+def validate_disclaimer(disclaimer: str | None) -> str:
+    """Validate that medical disclaimer is non-empty (fail-closed, R-07)."""
+    if not disclaimer or not disclaimer.strip():
+        raise ValueError("disclaimer must not be empty (fail-closed)")
+    return disclaimer
+
+
 @dataclass(frozen=True)
 class MealSuggestionSet:
     prompt_version: str

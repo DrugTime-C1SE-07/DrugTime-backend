@@ -14,7 +14,7 @@ Biến môi trường (đều có mặc định cho Supabase local):
 import os
 import secrets
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -101,9 +101,14 @@ def auth():
     return _auth
 
 
+# Thứ tự hiển thị của mục dị ứng test: xa dải seed thật dùng (smallint, tối đa 32767).
+TEST_ALLERGEN_ORDER = 30000
+
+
 @dataclass
 class Factory:
     db: Connection
+    _allergens: list[str] = field(default_factory=list)
 
     def user(self, *, admin: bool = False, consents=("health_data",)) -> UUID:
         uid = uuid4()
@@ -314,6 +319,45 @@ class Factory:
             )
         return iid
 
+    def allergen(self, *, category: str = "food", active: bool = True) -> str:
+        """Mục danh mục dị ứng riêng cho một test. Bảng chặn DELETE (mục đã lưu trong hồ sơ
+        phải còn nhãn), nên id/tên luôn ngẫu nhiên. Thứ tự nằm ở dải ≥ TEST_ALLERGEN_ORDER, xếp
+        sau mọi mục đang có, để không chiếm chỗ thứ tự mà seed thật dùng về sau. Hết test, fixture
+        `make` đặt các mục này `is_active = false` (xem `retire_test_allergens`)."""
+        allergen_id = f"t_{uuid4().hex[:20]}"
+        self._allergens.append(allergen_id)
+        self.db.execute(
+            text(
+                "INSERT INTO allergens (id, category, name, display_order, is_active, source) "
+                "SELECT :id, :category, :name, "
+                "greatest(:band, coalesce(max(display_order), 0) + 1), :active, "
+                "'integration test' FROM allergens WHERE category = :category"
+            ),
+            {
+                "id": allergen_id,
+                "category": category,
+                "name": f"Dị ứng test {allergen_id}",
+                "active": active,
+                "band": TEST_ALLERGEN_ORDER,
+            },
+        )
+        return allergen_id
+
+    def retire_test_allergens(self) -> None:
+        """Ẩn mục dị ứng test khỏi `GET /allergens` sau test (không xóa được: trigger chặn)."""
+        if self._allergens:
+            self.db.execute(
+                text("UPDATE allergens SET is_active = false WHERE id = ANY(:ids)"),
+                {"ids": self._allergens},
+            )
+            self._allergens.clear()
+
+    def set_allergen_active(self, allergen_id: str, active: bool) -> None:
+        self.db.execute(
+            text("UPDATE allergens SET is_active = :active WHERE id = :id"),
+            {"id": allergen_id, "active": active},
+        )
+
     def medication_with(self, ingredient_ids: list[int]) -> int:
         """Thuốc danh mục chứa đúng các hoạt chất này (thuốc phối hợp khi nhiều hơn một)."""
         mid = self.catalog_medication(with_ingredient=False)
@@ -418,8 +462,10 @@ class Factory:
 
 
 @pytest.fixture
-def make(db) -> Factory:
-    return Factory(db)
+def make(db) -> Iterator[Factory]:
+    factory = Factory(db)
+    yield factory
+    factory.retire_test_allergens()
 
 
 @pytest.fixture

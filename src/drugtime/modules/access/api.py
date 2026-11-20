@@ -28,6 +28,7 @@ def authorize(
     scope: Scope,
     action: Action = Action.READ,
     audit_self: bool = False,
+    rejected_owner_selector: bool = False,
 ) -> None:
     """Raise Forbidden nếu không có quyền; ghi access_logs khi cần.
     action=WRITE: chỉ chính chủ được ghi. Người thân chỉ đọc theo chia sẻ;
@@ -42,6 +43,7 @@ def authorize(
         scope=scope,
         action=action,
         audit_self=audit_self,
+        rejected_owner_selector=rejected_owner_selector,
     )
 
 
