@@ -104,7 +104,7 @@ class MealIngredient(BaseModel):
 class MealImageAttribution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["pexels"]
+    provider: Literal["pixabay"]
     photographer_name: str
     photographer_url: str
     source_url: str

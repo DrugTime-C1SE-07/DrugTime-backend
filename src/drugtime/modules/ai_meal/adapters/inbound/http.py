@@ -108,7 +108,7 @@ def image_payload(image_id: int, state: ImageState) -> dict:
         "status": state.status,
         "url": IMAGE_PATH.format(image_id=image_id) if ready else None,
         "attribution": {
-            "provider": "pexels",
+            "provider": "pixabay",
             "photographer_name": state.photographer_name,
             "photographer_url": state.photographer_url,
             "source_url": state.source_url,
