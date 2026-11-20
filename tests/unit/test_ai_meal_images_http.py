@@ -55,7 +55,7 @@ def _client(store=None, storage=None, user=True):
     app.dependency_overrides[images_http.get_image_store] = lambda: store or Store()
     app.dependency_overrides[images_http.get_image_storage] = lambda: storage or Storage()
     if user:
-        app.dependency_overrides[identity.current_user] = lambda: identity.CurrentUser(
+        app.dependency_overrides[images_http._session_user] = lambda: identity.CurrentUser(
             id=uuid4(), is_admin=False)
     return TestClient(app, raise_server_exceptions=False)
 
