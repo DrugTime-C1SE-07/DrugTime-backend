@@ -50,7 +50,11 @@ _STATUS = {
     ServiceUnavailable: 503,
 }
 
-_DELETION_ROUTES = frozenset({"/data-deletion-requests", "/data-deletion-requests/otp"})
+_DELETION_ROUTES = frozenset({
+    "/data-deletion-requests", "/data-deletion-requests/otp",
+    "/data-deletion-requests/otp/verify", "/data-deletion-requests/current",
+    "/data-deletion-requests/current/cancel",
+})
 _EMAIL_CHANGE_ROUTES = frozenset({
     "/me/email-change/otp", "/me/email-change/verify-current", "/me/email-change/confirm"
 })
@@ -89,6 +93,9 @@ def create_app() -> FastAPI:
         def handler(_: Request, exc: Exception, status: int = status) -> JSONResponse:
             retry_after = getattr(exc, "retry_after", None)
             headers = None if retry_after is None else {"Retry-After": str(retry_after)}
+            remaining = getattr(exc, "remaining_attempts", None)
+            if remaining is not None:
+                headers = {**(headers or {}), "X-OTP-Attempts-Remaining": str(remaining)}
             return JSONResponse({"detail": str(exc)}, status_code=status, headers=headers)
 
         app.add_exception_handler(exc_type, handler)
@@ -111,7 +118,7 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def sensitive_no_store(request: Request, call_next):
-        deletion = request.method == "POST" and request.scope["path"] in (
+        deletion = request.scope["path"] in (
             _DELETION_ROUTES | _EMAIL_CHANGE_ROUTES
         )
         if not deletion and (request.method, request.url.path) not in _NO_STORE_ROUTES:

@@ -138,6 +138,9 @@ class SqlUsers:
         return {r.id: r.email for r in rows}
 
     def erase(self, user_id: UUID) -> None:
+        self._c.execute(
+            text("DELETE FROM email_change_challenges WHERE user_id=:u"), {"u": user_id}
+        )
         self._c.execute(text("DELETE FROM device_tokens WHERE user_id = :u"), {"u": user_id})
         self._c.execute(
             text(

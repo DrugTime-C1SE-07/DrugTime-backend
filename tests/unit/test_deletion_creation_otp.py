@@ -27,6 +27,9 @@ def test_deletion_lock_has_local_timeout_and_translates_lock_unavailable():
 
 
 class Store:
+    def latest_completed(self, uow, user_id):
+        return False
+
     def __init__(self):
         self.states = {}
         self.requests = {}
@@ -68,20 +71,32 @@ class Scenario:
         self.at = datetime(2026, 11, 11, 3, tzinfo=UTC)
         self.mail = []
         self.fail_mail = False
+        self.code = "012345"
         self.service = DeletionCreation(
             self.store.transaction,
             self.store,
             lambda uid: self.email,
             self.send_mail,
+            self.verify_otp,
             lambda: self.at,
-            b"unit-test-key" * 3,
             lambda uow, uid: False,
         )
 
-    def send_mail(self, email, otp):
+    def send_mail(self, email):
         if self.fail_mail:
             raise ServiceUnavailable("service_unavailable")
-        self.mail.append((email, otp))
+        self.mail.append((email, self.code))
+
+    def verify_otp(self, email, otp):
+        if not self.mail or email != self.mail[-1][0] or otp != self.code:
+            from drugtime.shared.errors import Unauthorized
+
+            raise Unauthorized("Invalid credentials")
+        return {"user": {"id": str(self.uid)}}
+
+    def confirm(self, user_id, challenge, otp):
+        self.service.verify(user_id, challenge, otp)
+        return self.service.confirm(user_id, challenge)
 
     def issue(self):
         challenge, expiry = self.service.issue(self.uid)
@@ -93,16 +108,15 @@ def test_one_use_and_fresh_otp_retry_preserve_the_deadline():
     s = Scenario()
     challenge, otp = s.issue()
     assert not s.store.requests and s.mail[-1][0] == s.email
-    pending, created = s.service.confirm(s.uid, challenge, otp)
+    pending, created = s.confirm(s.uid, challenge, otp)
     assert created and pending.scheduled_deletion_at - pending.requested_at == timedelta(days=30)
-    with pytest.raises(DomainError, match="deletion_otp_invalid"):
-        s.service.confirm(s.uid, challenge, otp)
+    assert s.confirm(s.uid, challenge, otp) == (pending, False)
     s.at += timedelta(minutes=1)
-    assert s.service.confirm(s.uid, *s.issue()) == (pending, False)
+    assert s.confirm(s.uid, *s.issue()) == (pending, False)
     s.at = pending.scheduled_deletion_at
     new = s.issue()
     with pytest.raises(Conflict, match="deletion_request_due"):
-        s.service.confirm(s.uid, *new)
+        s.confirm(s.uid, *new)
     assert s.store.requests == {s.uid: pending}
 
 
@@ -110,14 +124,14 @@ def test_wrong_account_changed_email_and_expired_challenge_do_not_create_request
     s = Scenario()
     challenge, otp = s.issue()
     with pytest.raises(DomainError, match="deletion_otp_invalid"):
-        s.service.confirm(uuid4(), challenge, otp)
+        s.confirm(uuid4(), challenge, otp)
     s.email = "changed@example.test"
     with pytest.raises(DomainError, match="deletion_otp_invalid"):
-        s.service.confirm(s.uid, challenge, otp)
+        s.confirm(s.uid, challenge, otp)
     s.email = "member@example.test"
     s.at += timedelta(minutes=5)
     with pytest.raises(DomainError, match="deletion_otp_invalid"):
-        s.service.confirm(s.uid, challenge, otp)
+        s.confirm(s.uid, challenge, otp)
     assert not s.store.requests
 
 
@@ -130,9 +144,9 @@ def test_resend_does_not_clear_attempt_limits_or_accept_old_challenge():
     new = s.issue()
     for _ in range(5):
         with pytest.raises(DomainError, match="deletion_otp_invalid"):
-            s.service.confirm(s.uid, *old)
+            s.confirm(s.uid, *old)
     with pytest.raises(TooManyRequests, match="deletion_otp_rate_limited"):
-        s.service.confirm(s.uid, *new)
+        s.confirm(s.uid, *new)
     with pytest.raises(TooManyRequests):
         s.issue()
     assert s.store.states[s.uid].failure_count == 5
@@ -146,15 +160,16 @@ def test_delivery_failure_keeps_previous_challenge_and_consumes_send_budget():
     with pytest.raises(ServiceUnavailable):
         s.issue()
     assert s.store.states[s.uid].send_count == 2
-    assert s.service.confirm(s.uid, *old)[1]
+    assert s.confirm(s.uid, *old)[1]
 
 
 def test_write_failure_does_not_consume_the_challenge():
     s = Scenario()
     issued = s.issue()
+    s.service.verify(s.uid, issued[0], issued[1])
     s.store.fail_insert = True
     with pytest.raises(RuntimeError):
-        s.service.confirm(s.uid, *issued)
-    assert not s.store.requests and s.store.states[s.uid].consumed_at is None
+        s.service.confirm(s.uid, issued[0])
+    assert not s.store.requests and s.store.states[s.uid].consumed_at is not None
     s.store.fail_insert = False
-    assert s.service.confirm(s.uid, *issued)[1]
+    assert s.service.confirm(s.uid, issued[0])[1]

@@ -23,6 +23,7 @@ __all__ = [
     "Purpose",
     "UserDataEraser",
     "execute_erasure",
+    "eraser",
     "has_active_consent",
     "is_pending_deletion",
     "pending_erasure_ids",
@@ -30,6 +31,16 @@ __all__ = [
 ]
 
 router.include_router(deletion_router)
+
+
+class _Eraser:
+    name = "consent"
+
+    def erase_user(self, uow: UnitOfWork, user_id: UUID) -> None:
+        SqlDeletionCreation().erase_otp(uow, user_id)
+
+
+eraser = _Eraser()
 
 
 def is_pending_deletion(uow: UnitOfWork, user_id: UUID) -> bool:
@@ -42,7 +53,7 @@ def has_active_consent(uow: UnitOfWork, user_id: UUID, purpose: Purpose | str) -
 
 
 def execute_erasure(
-    request_id: UUID,
+    request_id: int,
     *,
     erasers: Sequence[UserDataEraser],
     account_remover: AccountRemover,
@@ -57,7 +68,7 @@ def execute_erasure(
     )
 
 
-def pending_erasure_ids(uow_factory) -> list[UUID]:
+def pending_erasure_ids(uow_factory) -> list[int]:
     return _erasure.pending_request_ids(SqlDeletionRequests(), uow_factory)
 
 

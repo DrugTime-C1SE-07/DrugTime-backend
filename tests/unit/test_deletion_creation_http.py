@@ -48,7 +48,7 @@ def test_confirm_deletion_returns_saved_deadline(client, created, status):
         at = at.astimezone(timezone(timedelta(hours=7)))
     challenge = uuid4()
     service.confirm.return_value = PendingDeletion(at, at + timedelta(days=30)), created
-    response = http.post(BASE, json={"challenge_id": str(challenge), "otp": "012345"})
+    response = http.post(BASE, json={"challenge_id": str(challenge)})
     assert response.status_code == status
     assert response.headers["Cache-Control"] == "no-store"
     assert response.json() == {
@@ -56,18 +56,18 @@ def test_confirm_deletion_returns_saved_deadline(client, created, status):
         "requested_at": "2026-11-11T00:00:00Z",
         "scheduled_deletion_at": "2026-12-11T00:00:00Z",
     }
-    service.confirm.assert_called_once_with(uid, challenge, "012345")
+    service.confirm.assert_called_once_with(uid, challenge)
 
 
 def test_validation_never_echoes_otp_and_domain_failure_matches_contract(client):
     http, _, service = client
     challenge = str(uuid4())
-    invalid = http.post(BASE, json={"challenge_id": challenge, "otp": "bad-secret"})
+    invalid = http.post(BASE, json={"challenge_id": challenge, "unexpected": "bad-secret"})
     assert invalid.status_code == 422
     assert "bad-secret" not in invalid.text
     service.confirm.assert_not_called()
     service.confirm.side_effect = DomainError("deletion_otp_invalid")
-    response = http.post(BASE, json={"challenge_id": challenge, "otp": "012345"})
+    response = http.post(BASE, json={"challenge_id": challenge})
     assert response.status_code == 422
     assert response.json() == {"detail": "deletion_otp_invalid"}
 
@@ -78,9 +78,44 @@ def test_openapi_operations_match_the_approved_contract():
         pytest.skip("API contract checkout is unavailable")
     contract = json.loads(path.read_text(encoding="utf8"))
     generated = create_app().openapi()
-    for path in (BASE, BASE + "/otp"):
-        expected = contract["paths"][path]["post"]
-        actual = generated["paths"][path]["post"]
+    for method, path in (
+        ("post", BASE),
+        ("post", BASE + "/otp"),
+        ("post", BASE + "/otp/verify"),
+        ("get", BASE + "/current"),
+        ("post", BASE + "/current/cancel"),
+    ):
+        expected = contract["paths"][path][method]
+        actual = generated["paths"][path][method]
         for field in ("operationId", "security"):
             assert actual[field] == expected[field]
         assert actual["responses"].keys() == expected["responses"].keys()
+
+
+def test_verify_only_and_lookup_do_not_create_or_cancel(client):
+    http, uid, service = client
+    at = datetime(2026, 11, 19, tzinfo=UTC)
+    challenge = uuid4()
+    response = http.post(
+        BASE + "/otp/verify", json={"challenge_id": str(challenge), "otp": "012345"}
+    )
+    assert response.status_code == 204 and not response.content
+    service.verify.assert_called_once_with(uid, challenge, "012345")
+    service.current.return_value = PendingDeletion(at, at + timedelta(days=30))
+    for _ in range(2):
+        response = http.get(BASE + "/current")
+        assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    service.cancel.assert_not_called()
+    response = http.post(BASE + "/current/cancel")
+    assert response.status_code == 204 and not response.content
+    service.cancel.assert_called_once_with(uid)
+
+
+def test_lookup_cancel_reject_identity_overrides_and_never_cache_errors(client):
+    http, _, service = client
+    for method, path in ((http.get, "/current"), (http.post, "/current/cancel")):
+        response = method(BASE + path, params={"user_id": str(uuid4())})
+        assert response.status_code == 422
+        assert response.headers["cache-control"] == "no-store"
+    service.current.assert_not_called()
+    service.cancel.assert_not_called()

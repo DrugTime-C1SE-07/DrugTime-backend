@@ -6,7 +6,6 @@ và danh sách UserDataEraser (đúng thứ tự FK, schema v9) vào consent.
 
 import logging
 import socket
-from uuid import UUID
 
 from drugtime import notification_gateway
 from drugtime.modules.adherence import api as adherence
@@ -30,6 +29,7 @@ ERASURE_ORDER = [
     adherence.eraser,
     medication.eraser,
     family.eraser,
+    consent.eraser,
     identity.eraser,
 ]
 
@@ -54,7 +54,7 @@ def record_worker_heartbeat(instance_id: str | None = None) -> None:
 
 def run_erasure(request_id: str) -> None:
     consent.execute_erasure(
-        UUID(request_id),
+        int(request_id),
         erasers=ERASURE_ORDER,
         account_remover=identity.account_remover,
         uow_factory=unit_of_work,
@@ -93,4 +93,7 @@ def _sync_if_due() -> None:
 
 def _resume_erasures() -> None:
     for request_id in consent.pending_erasure_ids(unit_of_work):
-        run_erasure(str(request_id))
+        try:
+            run_erasure(str(request_id))
+        except Exception:
+            log.error("erasure failed; retained for retry/support: %s", request_id)

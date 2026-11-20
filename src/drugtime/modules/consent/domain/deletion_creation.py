@@ -3,6 +3,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from uuid import UUID
 
+from drugtime.shared.errors import DomainError
+
 OTP_TTL = timedelta(minutes=5)
 SEND_COOLDOWN = timedelta(seconds=60)
 SEND_WINDOW = timedelta(hours=1)
@@ -10,6 +12,13 @@ FAILURE_WINDOW = timedelta(minutes=15)
 SEND_LIMIT = 5
 FAILURE_LIMIT = 5
 DELETION_DELAY = timedelta(hours=720)
+
+
+class DeletionOtpInvalid(DomainError):
+    def __init__(self, remaining_attempts: int, retry_after: int | None = None):
+        super().__init__("deletion_otp_invalid")
+        self.remaining_attempts = remaining_attempts
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True)
@@ -44,6 +53,16 @@ class DeletionOtpState:
             and self.failure_count >= FAILURE_LIMIT
         )
 
+    def retry_after(self, at: datetime) -> int:
+        deadlines = []
+        if self.failure_limit_reached(at):
+            deadlines.append(self.failure_window_at + FAILURE_WINDOW)
+        if self.last_sent_at is not None:
+            deadlines.append(self.last_sent_at + SEND_COOLDOWN)
+        if self.send_window_at is not None and self.send_count >= SEND_LIMIT:
+            deadlines.append(self.send_window_at + SEND_WINDOW)
+        return max([1, *(int((end - at).total_seconds()) + 1 for end in deadlines)])
+
     def send_limit_reached(self, at: datetime) -> bool:
         if self.last_sent_at is not None and at < self.last_sent_at + SEND_COOLDOWN:
             return True
@@ -68,6 +87,7 @@ class DeletionOtpState:
 class PendingDeletion:
     requested_at: datetime
     scheduled_deletion_at: datetime | None
+    erasure_started_at: datetime | None = None
 
 
 def otp_digest(key: bytes, user_id: UUID, challenge: UUID, email: str, otp: str) -> bytes:

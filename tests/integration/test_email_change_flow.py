@@ -11,7 +11,7 @@ from sqlalchemy.exc import DataError
 from drugtime.modules.consent.adapters.inbound import deletion_http
 from drugtime.modules.identity.adapters.inbound import email_change_http
 from drugtime.modules.identity.adapters.outbound.sql_email_change import SqlEmailChange
-from drugtime.shared.errors import ServiceUnavailable
+from drugtime.shared.errors import ServiceUnavailable, Unauthorized
 
 EMAIL = "/me/email-change"
 DELETION = "/data-deletion-requests"
@@ -50,7 +50,6 @@ def flow(client, make, auth, monkeypatch):
     outbox = []
     settings = SimpleNamespace(
         email_change_otp_hmac_key="email-" * 8,
-        deletion_otp_hmac_key="delete-" * 8,
     )
     monkeypatch.setattr(email_change_http, "SupabaseAuth", lambda: provider)
     monkeypatch.setattr(deletion_http.identity, "verified_email", provider.verified_email)
@@ -60,11 +59,40 @@ def flow(client, make, auth, monkeypatch):
     monkeypatch.setattr(
         email_change_http, "send_email_change_otp", lambda *args: outbox.append(args)
     )
-    monkeypatch.setattr(deletion_http, "send_deletion_otp", lambda *args: outbox.append(args))
+    codes = {}
+
+    def request_auth_otp(*, phone, email, create_user):
+        code = f"{len(codes) + 1:06d}"
+        codes[email] = code
+        outbox.append((email, code))
+
+    def verify_auth_otp(*, email, token):
+        if codes.get(email) != token:
+            raise Unauthorized("Invalid credentials")
+        return {"user": {"id": str(uid)}}
+
+    monkeypatch.setattr(deletion_http.identity, "request_otp", request_auth_otp)
+    monkeypatch.setattr(deletion_http.identity, "verify_auth_otp", verify_auth_otp)
+
+    def post(path, **kwargs):
+        if path == DELETION and isinstance(kwargs.get("json"), dict):
+            proof = kwargs["json"]
+            verified = client.post(
+                DELETION + "/otp/verify",
+                headers=headers,
+                json={"challenge_id": proof["challenge_id"], "otp": proof["otp"]},
+            )
+            if verified.status_code != 204:
+                return verified
+            return client.post(
+                path, headers=headers, json={"challenge_id": proof["challenge_id"]}
+            )
+        return client.post(path, headers=headers, **kwargs)
+
     headers = auth(uid)
     return SimpleNamespace(
         uid=uid, old=old, new=new, provider=provider, clock=clock, outbox=outbox,
-        post=lambda path, **kwargs: client.post(path, headers=headers, **kwargs),
+        post=post,
     )
 
 

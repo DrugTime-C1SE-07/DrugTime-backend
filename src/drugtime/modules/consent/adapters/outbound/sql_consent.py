@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from drugtime.modules.consent.adapters.outbound.sql_deletion_creation import SqlDeletionCreation
 from drugtime.modules.consent.domain.consent import ActiveConsent
 from drugtime.modules.consent.domain.deletion_request import (
     DeletionRequest,
@@ -105,11 +106,11 @@ class SqlDeletionRequests:
                 SELECT page.id, page.user_id, page.requested_at, counts.total
                 FROM (
                     SELECT count(*) AS total
-                    FROM data_deletion_requests WHERE status = 'cho_duyet'
+                    FROM data_deletion_requests WHERE status = 'cho_duyet' AND cancelled_at IS NULL
                 ) AS counts
                 LEFT JOIN (
                     SELECT id, user_id, requested_at
-                    FROM data_deletion_requests WHERE status = 'cho_duyet'
+                    FROM data_deletion_requests WHERE status = 'cho_duyet' AND cancelled_at IS NULL
                     ORDER BY requested_at, id
                     LIMIT :limit OFFSET :skip
                 ) AS page ON true
@@ -125,27 +126,63 @@ class SqlDeletionRequests:
         ]
         return items, rows[0].total
 
-    def get(self, uow: UnitOfWork, request_id: UUID) -> DeletionRequest | None:
+    def get(self, uow: UnitOfWork, request_id: int) -> DeletionRequest | None:
+        uid = uow.connection.execute(
+            text("SELECT user_id FROM data_deletion_requests WHERE id=:id"),
+            {"id": request_id},
+        ).scalar_one_or_none()
+        if uid is None:
+            return None
+        # Same transaction-level lock as create/cancel. Held through erasure A.
+        SqlDeletionCreation().lock(uow, uid)
+        uow.connection.execute(
+            text(
+                "UPDATE data_deletion_requests SET status='da_duyet' "
+                "WHERE id=:id AND status='cho_duyet' AND cancelled_at IS NULL "
+                "AND scheduled_deletion_at <= clock_timestamp()"
+            ),
+            {"id": request_id},
+        )
         row = uow.connection.execute(
-            text("SELECT id, user_id, status FROM data_deletion_requests WHERE id = :id"),
+            text(
+                "SELECT id, user_id, status FROM data_deletion_requests WHERE id = :id "
+                "AND cancelled_at IS NULL AND erasure_attempts < 5 "
+                "AND (scheduled_deletion_at IS NULL "
+                "OR scheduled_deletion_at <= clock_timestamp()) FOR UPDATE"
+            ),
             {"id": request_id},
         ).first()
+        if row is not None and row.status == "da_duyet":
+            # This checkpoint commits atomically with every eraser in step A.
+            # It survives an Auth outage and makes cancellation irreversible,
+            # even if API/DB wall clocks differ or move backwards afterward.
+            uow.connection.execute(
+                text(
+                    "UPDATE data_deletion_requests SET erasure_started_at = "
+                    "COALESCE(erasure_started_at, clock_timestamp()) WHERE id=:id"
+                ),
+                {"id": request_id},
+            )
         return (
             None
             if row is None
             else DeletionRequest(row.id, row.user_id, DeletionStatus(row.status))
         )
 
-    def approved_ids(self, uow: UnitOfWork) -> list[UUID]:
+    def approved_ids(self, uow: UnitOfWork) -> list[int]:
         rows = uow.connection.execute(
             text(
-                "SELECT id FROM data_deletion_requests WHERE status = 'da_duyet' "
+                "SELECT id FROM data_deletion_requests WHERE cancelled_at IS NULL "
+                "AND erasure_attempts < 5 AND "
+                "((status='da_duyet' AND scheduled_deletion_at IS NULL) OR "
+                "(status IN ('cho_duyet','da_duyet') "
+                "AND scheduled_deletion_at <= clock_timestamp())) "
                 "ORDER BY requested_at"
             )
         )
         return [r.id for r in rows]
 
-    def mark_completed(self, uow: UnitOfWork, request_id: UUID) -> None:
+    def mark_completed(self, uow: UnitOfWork, request_id: int) -> None:
         uow.connection.execute(
             text(
                 "UPDATE data_deletion_requests SET status = 'hoan_tat', completed_at = now(), "
@@ -154,8 +191,12 @@ class SqlDeletionRequests:
             {"id": request_id},
         )
 
-    def record_error(self, uow: UnitOfWork, request_id: UUID, error: str) -> None:
+    def record_error(self, uow: UnitOfWork, request_id: int, error: str) -> None:
         uow.connection.execute(
-            text("UPDATE data_deletion_requests SET last_error = :e WHERE id = :id"),
+            text(
+                "UPDATE data_deletion_requests SET last_error = :e, "
+                "erasure_attempts = erasure_attempts + 1 WHERE id = :id "
+                "AND status IN ('cho_duyet','da_duyet') AND cancelled_at IS NULL"
+            ),
             {"id": request_id, "e": error[:1000]},
         )

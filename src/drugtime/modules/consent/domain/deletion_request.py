@@ -13,7 +13,7 @@ class DeletionStatus(StrEnum):
 
 @dataclass(frozen=True)
 class DeletionRequest:
-    id: UUID
+    id: int
     user_id: UUID
     status: DeletionStatus
 

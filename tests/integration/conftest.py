@@ -39,7 +39,11 @@ def _api_url() -> str:
 def admin_engine():
     if make_url(ADMIN_URL).host not in _LOCAL_HOSTS:
         pytest.exit("Integration tests only run against a local database", returncode=2)
-    engine = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 2})
+    engine = create_engine(
+        ADMIN_URL,
+        isolation_level="AUTOCOMMIT",
+        connect_args={"connect_timeout": int(os.environ.get("TEST_DB_CONNECT_TIMEOUT", "2"))},
+    )
     try:
         with engine.connect() as c:
             # api_role được tạo không có mật khẩu; đặt mật khẩu cho DB local để app đăng nhập.
@@ -147,7 +151,8 @@ class Factory:
             return self.db.execute(
                 text(
                     "INSERT INTO caregiver_links "
-                    "(patient_user_id, family_user_id, status, sharing_enabled, revoked_at, rejected_at) "
+                    "(patient_user_id, family_user_id, status, sharing_enabled, "
+                    "revoked_at, rejected_at) "
                     "VALUES (:p, :f, CAST(:st AS link_status), :s, "
                     "CASE WHEN :is_revoked THEN now() END, "
                     "CASE WHEN :is_rejected THEN now() END) RETURNING id"
@@ -180,8 +185,7 @@ class Factory:
         )
         self.db.execute(
             text(
-                "UPDATE caregiver_links SET status = 'active', sharing_enabled = :s "
-                "WHERE id = :lid"
+                "UPDATE caregiver_links SET status = 'active', sharing_enabled = :s WHERE id = :lid"
             ),
             {"lid": lid, "s": sharing},
         )
@@ -242,7 +246,8 @@ class Factory:
         rows = self.db.execute(
             text(
                 f"SELECT id, link_id, patient_user_id, family_user_id, purpose, "
-                f"document_version, confirmed_at FROM family_link_consent_confirmations {where} ORDER BY id"
+                f"document_version, confirmed_at FROM family_link_consent_confirmations {where} "
+                "ORDER BY id"
             ),
             params,
         )

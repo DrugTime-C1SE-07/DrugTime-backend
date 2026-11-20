@@ -80,4 +80,4 @@ def test_auth_failure_keeps_request_open_with_error():
             account_remover=FailingRemover(),
             uow_factory=fake_uow,
         )
-    assert not repo.completed and "auth down" in repo.error
+    assert not repo.completed and repo.error == "RuntimeError"

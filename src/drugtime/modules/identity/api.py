@@ -65,6 +65,14 @@ def verified_email(user_id: UUID) -> str | None:
     return SupabaseAuth().verified_email(user_id)
 
 
+def request_otp(phone: str | None, email: str | None, create_user: bool = False) -> None:
+    SupabaseAuth().request_otp(phone=phone, email=email, create_user=create_user)
+
+
+def verify_auth_otp(email: str, token: str) -> dict:
+    return SupabaseAuth().verify_otp(phone=None, email=email, token=token)
+
+
 def user_exists(uow: UnitOfWork, user_id: UUID) -> bool:
     """Có dòng users với id này (kể cả tài khoản đã xoá dữ liệu)."""
     return SqlUsers(uow).get(user_id) is not None

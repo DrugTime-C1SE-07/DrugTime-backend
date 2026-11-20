@@ -16,7 +16,7 @@ from drugtime.modules.adherence.domain.alert import Alert
 from drugtime.modules.consent.adapters.inbound import deletion_http
 from drugtime.modules.consent.adapters.outbound.sql_consent import SqlDeletionRequests
 from drugtime.shared.db import get_engine, unit_of_work
-from drugtime.shared.errors import Forbidden, ServiceUnavailable
+from drugtime.shared.errors import Forbidden, ServiceUnavailable, Unauthorized
 
 BASE = "/data-deletion-requests"
 AT = datetime(2026, 11, 11, 3, tzinfo=UTC)
@@ -27,12 +27,22 @@ def deletion_api(client, monkeypatch, auth):
     clock = SimpleNamespace(at=AT)
     outbox = []
     emails = {}
+    issued_codes = {}
     monkeypatch.setattr(deletion_http, "now", lambda: clock.at)
     monkeypatch.setattr(deletion_http.identity, "verified_email", emails.get)
-    monkeypatch.setattr(deletion_http, "send_deletion_otp", lambda *args: outbox.append(args))
-    monkeypatch.setattr(
-        deletion_http, "get_settings", lambda: SimpleNamespace(deletion_otp_hmac_key="test-" * 8)
-    )
+    def request_otp(*, phone, email, create_user):
+        outbox.append((email, "012345"))
+        issued_codes[email] = "012345"
+
+    monkeypatch.setattr(deletion_http.identity, "request_otp", request_otp)
+
+    def verify_auth_otp(*, email, token):
+        if issued_codes.get(email) != token:
+            raise Unauthorized("Invalid credentials")
+        user_id = next(uid for uid, address in emails.items() if address == email)
+        return {"user": {"id": str(user_id)}}
+
+    monkeypatch.setattr(deletion_http.identity, "verify_auth_otp", verify_auth_otp)
 
     def issue(uid):
         emails[uid] = f"{uid}@example.test"
@@ -44,7 +54,15 @@ def deletion_api(client, monkeypatch, auth):
         return {"challenge_id": r.json()["challenge_id"], "otp": outbox[-1][1]}
 
     def confirm(uid, payload):
-        return client.post(BASE, headers=auth(uid), json=payload)
+        verified = client.post(
+            BASE + "/otp/verify",
+            headers=auth(uid),
+            json={"challenge_id": payload["challenge_id"], "otp": payload["otp"]},
+        )
+        if verified.status_code != 204:
+            return verified
+        body = {key: value for key, value in payload.items() if key != "otp"}
+        return client.post(BASE, headers=auth(uid), json=body)
 
     return SimpleNamespace(issue=issue, confirm=confirm, clock=clock, emails=emails, outbox=outbox)
 
@@ -68,7 +86,7 @@ def test_confirm_creates_one_request_with_server_deadline__AC1_AC3(deletion_api,
     assert datetime.fromisoformat(result["requested_at"]) == AT
     assert datetime.fromisoformat(result["scheduled_deletion_at"]) == AT + timedelta(days=30)
     repeated = deletion_api.confirm(uid, payload)
-    assert repeated.status_code == 422 and repeated.json()["detail"] == "deletion_otp_invalid"
+    assert repeated.status_code == 200 and repeated.json() == result
     deletion_api.clock.at += timedelta(minutes=1)
     retry = deletion_api.confirm(uid, deletion_api.issue(uid))
     assert retry.status_code == 200 and retry.json() == result
@@ -139,10 +157,10 @@ def test_delivery_failure_does_not_create_request__AC1_AC2(
     uid = make.user()
     deletion_api.emails[uid] = "member@example.test"
 
-    def unavailable(*_):
+    def unavailable(*_, **__):
         raise ServiceUnavailable("service_unavailable")
 
-    monkeypatch.setattr(deletion_http, "send_deletion_otp", unavailable)
+    monkeypatch.setattr(deletion_http.identity, "request_otp", unavailable)
     r = client.post(BASE + "/otp", headers=auth(uid))
     assert r.status_code == 503 and r.json()["detail"] == "service_unavailable"
     assert not rows(db, uid)
@@ -180,7 +198,7 @@ def test_concurrent_confirm_with_same_otp_only_commits_once__AC1_AC3(deletion_ap
     with ThreadPoolExecutor(max_workers=2) as pool:
         first, second = [pool.submit(submit) for _ in range(2)]
         outcomes = [first.result(timeout=15), second.result(timeout=15)]
-    assert sorted(r.status_code for r in outcomes) == [201, 422]
+    assert sorted(r.status_code for r in outcomes) == [200, 201]
     assert len(rows(db, uid)) == 1
 
 
@@ -396,11 +414,21 @@ def test_migration_limits_roles_and_enforces_open_request_uniqueness__AC1_AC3(db
         text("SELECT relrowsecurity FROM pg_class WHERE oid='deletion_otp_challenges'::regclass")
     ).scalar_one()
     for role in ("anon", "authenticated", "service_role", "worker_role"):
-        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-            assert not db.execute(
+        for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+            # Erasure may delete challenges and select only their owner id.
+            # It must never read OTP material or mutate/reissue a challenge.
+            assert db.execute(
                 text("SELECT has_table_privilege(:r, 'deletion_otp_challenges', :priv)"),
                 {"r": role, "priv": privilege},
-            ).scalar_one()
+            ).scalar_one() is (role == "worker_role" and privilege == "DELETE")
+    for column, allowed in (("user_id", True), ("digest", False), ("challenge_id", False)):
+        assert db.execute(
+            text(
+                "SELECT has_column_privilege('worker_role', "
+                "'deletion_otp_challenges', :col, 'SELECT')"
+            ),
+            {"col": column},
+        ).scalar_one() is allowed
     insert = text(
         "INSERT INTO data_deletion_requests (user_id,requested_at,scheduled_deletion_at) "
         "VALUES (:u,:start,:end)"
