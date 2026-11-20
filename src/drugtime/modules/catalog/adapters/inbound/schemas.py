@@ -1,7 +1,7 @@
 """Catalog HTTP response schemas, matching api_contract/openapi.json."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 """Schemas của catalog module:
 1. Response của /catalog/medications (Mobile K04, khớp api_contract/openapi.json).
 2. Request/Response của /admin/medications (Admin CRUD PB04).
@@ -10,7 +10,10 @@ from typing import Any
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from drugtime.modules.catalog.domain.medication import CatalogMedication
+from drugtime.modules.catalog.domain.medication import (
+    CatalogMedication,
+    CatalogMedicationDetail as DetailRecord,
+)
 from drugtime.modules.catalog.domain.sync_run import (
     CatalogSyncRun,
     CatalogSyncRunPage,
@@ -38,6 +41,36 @@ class CatalogMedicationSummary(BaseModel):
             active_ingredient=m.active_ingredient,
             strength_text=m.strength_text,
             dosage_form=m.dosage_form,
+        )
+
+
+class CatalogMedicationDetail(BaseModel):
+    """`CatalogMedicationDetail` của contract (GET /catalog/medications/{id})."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    name: str
+    active_ingredient: str | None
+    strength_text: str | None
+    dosage_form: str | None
+    manufacturer_name: str | None
+    manufacturer_country: str | None
+    packaging_spec: str | None
+    source: Literal["dav_drugbank", "qd_5948", "duoc_thu_qg"] | None
+
+    @classmethod
+    def from_domain(cls, m: DetailRecord) -> "CatalogMedicationDetail":
+        return cls(
+            id=m.id,
+            name=m.name,
+            active_ingredient=m.active_ingredient,
+            strength_text=m.strength_text,
+            dosage_form=m.dosage_form,
+            manufacturer_name=m.manufacturer_name,
+            manufacturer_country=m.manufacturer_country,
+            packaging_spec=m.packaging_spec,
+            source=m.source,
         )
 
 

@@ -124,3 +124,55 @@ def test_anon_cannot_read(db, admin_engine, owner):
                 assert "permission denied" in str(exc.orig)
             else:
                 assert rows == 0  # RLS không có policy cho anon
+
+# --- pill appearance (adhoc-20261120-add-medication-ux, AC22) --------------------------------
+
+
+def test_pill_columns_nullable_text_and_old_style_rows_null__AC22(db, owner):
+    cols = db.execute(
+        text(
+            "SELECT column_name, data_type, is_nullable, column_default "
+            "FROM information_schema.columns WHERE table_name = 'user_medications' "
+            "AND column_name IN ('pill_shape', 'pill_color') ORDER BY column_name"
+        )
+    ).all()
+    assert [tuple(c) for c in cols] == [
+        ("pill_color", "text", "YES", None),
+        ("pill_shape", "text", "YES", None),
+    ]
+    row = _insert_old_style(db, *owner)
+    pill = db.execute(
+        text("SELECT pill_shape, pill_color FROM user_medications WHERE id = :i"), {"i": row.id}
+    ).one()
+    assert tuple(pill) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "column, value, constraint",
+    [
+        ("pill_shape", "hexagon", "user_medications_pill_shape_chk"),
+        ("pill_shape", "Capsule", "user_medications_pill_shape_chk"),
+        ("pill_color", "teal", "user_medications_pill_color_chk"),
+    ],
+)
+def test_pill_check_rejects_unknown_values__AC22(db, owner, column, value, constraint):
+    with pytest.raises(IntegrityError, match=constraint):
+        _insert_old_style(db, *owner, **{column: value})
+    row = _insert_old_style(db, *owner)
+    with pytest.raises(IntegrityError, match=constraint):
+        db.execute(
+            text(f"UPDATE user_medications SET {column} = :v WHERE id = :i"),
+            {"v": value, "i": row.id},
+        )
+
+
+def test_pill_check_accepts_every_contract_value__AC22(db, owner):
+    shapes = [
+        "capsule", "round_tablet", "oblong_tablet", "softgel", "effervescent",
+        "powder_sachet", "syrup", "drops", "spray", "injection_pen", "topical",
+    ]
+    colors = [
+        "white", "yellow", "orange", "pink", "red", "brown", "blue", "green", "purple", "gray",
+    ]
+    for shape, color in zip(shapes, colors + ["white"], strict=True):
+        _insert_old_style(db, *owner, pill_shape=shape, pill_color=color)

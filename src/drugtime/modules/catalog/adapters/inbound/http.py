@@ -1,10 +1,11 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from pydantic import BaseModel
 
 from drugtime.modules.catalog.adapters.inbound.schemas import (
     ActiveIngredientPageOut,
+    CatalogMedicationDetail,
     CatalogMedicationList,
     CatalogMedicationSummary,
     CatalogSyncRunList,
@@ -16,6 +17,7 @@ from drugtime.modules.catalog.adapters.inbound.schemas import (
 from drugtime.modules.catalog.adapters.outbound.sql_active_ingredients import SqlActiveIngredients
 from drugtime.modules.catalog.adapters.outbound.sql_catalog import SqlCatalog
 from drugtime.modules.catalog.adapters.outbound.sql_sync_runs import SqlSyncRuns
+from drugtime.modules.catalog.application.get_medication_detail import get_medication_detail
 from drugtime.modules.catalog.application.list_active_ingredients import list_active_ingredients
 from drugtime.modules.catalog.application.list_sync_runs import list_sync_runs
 from drugtime.modules.catalog.application.search_medications import search_medications
@@ -66,6 +68,24 @@ def get_catalog_medications(
 ) -> CatalogMedicationList:
     found = search_medications(uow, q, limit, SqlCatalog())
     return CatalogMedicationList(items=[CatalogMedicationSummary.from_domain(m) for m in found])
+
+
+@router.get(
+    "/catalog/medications/{id}",
+    response_model=CatalogMedicationDetail,
+    responses={
+        401: {"model": ErrorDetail, "description": "Chưa xác thực"},
+        404: {"model": ErrorDetail, "description": "`catalog_medication_not_found`"},
+    },
+    operation_id="getCatalogMedication",
+)
+def get_catalog_medication(
+    id: Annotated[int, Path(ge=1, description="Id thuốc trong danh mục.")],
+    uow: UowDep,
+    _user: CurrentUserDep,
+) -> CatalogMedicationDetail:
+    """Thông tin danh mục của một thuốc cho màn "Thông tin thuốc" (adhoc-20261120)."""
+    return CatalogMedicationDetail.from_domain(get_medication_detail(uow, id, SqlCatalog()))
 
 
 @router.get(

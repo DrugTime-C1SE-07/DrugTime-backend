@@ -33,6 +33,8 @@ CONTRACT_FIELDS = {
     "status",
     "ended_at",
     "schedules",
+    "pill_shape",
+    "pill_color",
 }
 
 
@@ -408,3 +410,108 @@ def test_deleted_account_token_401__AC18(client, make, auth, scheduled_body):
     # Token đúng chữ ký nhưng tài khoản đã bị xóa.
     r = client.post("/medications", json=scheduled_body(1), headers=auth(user))
     assert r.status_code == 401
+
+# --- hình và màu hiển thị (adhoc-20261120-add-medication-ux) ---------------------------------
+
+
+def _pill(db, med_id):
+    return db.execute(
+        text("SELECT pill_shape, pill_color FROM user_medications WHERE id = :id"),
+        {"id": med_id},
+    ).one()
+
+
+def test_create_with_pill_appearance_persists_and_reads_back__AC18(
+    client, db, patient, drug, auth, scheduled_body, create
+):
+    out = create(
+        patient, scheduled_body(drug, pill_shape="round_tablet", pill_color="yellow")
+    )
+    assert (out["pill_shape"], out["pill_color"]) == ("round_tablet", "yellow")
+    assert tuple(_pill(db, out["id"])) == ("round_tablet", "yellow")
+    got = client.get(f"/medications/{out['id']}", headers=auth(patient)).json()
+    assert (got["pill_shape"], got["pill_color"]) == ("round_tablet", "yellow")
+    listed = client.get("/medications", headers=auth(patient)).json()["items"]
+    assert [(m["pill_shape"], m["pill_color"]) for m in listed if m["id"] == out["id"]] == [
+        ("round_tablet", "yellow")
+    ]
+
+
+def test_create_without_pill_fields_keeps_old_clients_working__AC18(
+    db, patient, drug, scheduled_body, create
+):
+    out = create(patient, scheduled_body(drug))
+    assert out["pill_shape"] is None and out["pill_color"] is None
+    assert tuple(_pill(db, out["id"])) == (None, None)
+
+
+def test_replay_same_client_uuid_keeps_first_appearance__AC18(
+    client, db, patient, drug, auth, scheduled_body
+):
+    body = scheduled_body(drug, pill_shape="capsule", pill_color="orange")
+    first = client.post("/medications", json=body, headers=auth(patient))
+    assert first.status_code == 201
+    again = client.post(
+        "/medications",
+        json={**body, "pill_shape": "syrup", "pill_color": "red"},
+        headers=auth(patient),
+    )
+    assert again.status_code == 200
+    assert again.json()["id"] == first.json()["id"]
+    assert (again.json()["pill_shape"], again.json()["pill_color"]) == ("capsule", "orange")
+    count = db.execute(
+        text("SELECT count(*) FROM user_medications WHERE user_id = :u"), {"u": patient}
+    ).scalar_one()
+    assert count == 1
+
+
+@pytest.mark.parametrize("field, value", [("pill_shape", "hexagon"), ("pill_color", "teal")])
+def test_create_with_unknown_appearance_422_and_nothing_written__AC18(
+    client, db, patient, drug, auth, scheduled_body, field, value
+):
+    r = client.post(
+        "/medications", json=scheduled_body(drug, **{field: value}), headers=auth(patient)
+    )
+    assert r.status_code == 422
+    assert isinstance(r.json()["detail"], list)
+    count = db.execute(
+        text("SELECT count(*) FROM user_medications WHERE user_id = :u"), {"u": patient}
+    ).scalar_one()
+    assert count == 0
+
+
+def test_patch_changes_and_clears_appearance_without_touching_schedules__AC19(
+    db, patient, drug, scheduled_body, create, patch
+):
+    out = create(patient, scheduled_body(drug, pill_shape="capsule", pill_color="orange"))
+    before = _schedules(db, out["id"])
+    r = patch(patient, out["id"], {"pill_color": "blue"})
+    assert r.status_code == 200, r.text
+    assert (r.json()["pill_shape"], r.json()["pill_color"]) == ("capsule", "blue")
+    r = patch(patient, out["id"], {"pill_shape": None, "pill_color": None})
+    assert r.status_code == 200
+    assert tuple(_pill(db, out["id"])) == (None, None)
+    assert _schedules(db, out["id"]) == before
+
+
+def test_patch_unknown_appearance_422_db_unchanged__AC19(
+    db, patient, drug, scheduled_body, create, patch
+):
+    out = create(patient, scheduled_body(drug, pill_shape="capsule", pill_color="orange"))
+    r = patch(patient, out["id"], {"pill_color": "teal"})
+    assert r.status_code == 422
+    assert tuple(_pill(db, out["id"])) == ("capsule", "orange")
+
+
+def test_patch_appearance_on_stopped_medication_422__AC19(
+    db, patient, drug, scheduled_body, create, patch
+):
+    out = create(patient, scheduled_body(drug))
+    assert patch(patient, out["id"], {"stopped": True}).status_code == 200
+    r = patch(patient, out["id"], {"pill_color": "red"})
+    assert r.status_code == 422
+    assert r.json() == {"detail": "medication_stopped"}
+    r = patch(patient, out["id"], {"stopped": True, "pill_color": "red"})
+    assert r.status_code == 422
+    assert r.json() == {"detail": "medication_rule_violation"}
+    assert tuple(_pill(db, out["id"])) == (None, None)

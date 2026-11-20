@@ -14,6 +14,8 @@ from drugtime.modules.medication.domain.user_medication import (
     PatientMedicationRef,
     PatientScheduleRecord,
     PendingClosed,
+    PillColor,
+    PillShape,
     ScheduleView,
     UserMedicationRecord,
 )
@@ -34,6 +36,11 @@ def _timing_to_db(v: IntakeTiming | None) -> str | None:
     return None if v is None else _TIMING_TO_DB[v]
 
 
+def _enum_value(v: PillShape | PillColor | None) -> str | None:
+    """Hình, màu lưu đúng giá trị API (cột text + CHECK), không cần ánh xạ."""
+    return None if v is None else v.value
+
+
 # Cột được phép cập nhật qua update_fields: tên field -> (biểu thức SET, chuyển giá trị).
 _UPDATABLE = {
     "quantity_per_dose": ("quantity_per_dose = :quantity_per_dose", lambda v: v),
@@ -47,6 +54,8 @@ _UPDATABLE = {
         "intake_timing = CAST(:intake_timing AS medication_intake_timing)",
         _timing_to_db,
     ),
+    "pill_shape": ("pill_shape = :pill_shape", _enum_value),
+    "pill_color": ("pill_color = :pill_color", _enum_value),
 }
 
 
@@ -287,10 +296,11 @@ class SqlMedication:
             text(
                 "INSERT INTO user_medications (user_id, prescription_id, medication_id, "
                 "entry_method, confirmation_status, quantity_per_dose, doses_per_day, "
-                "has_interaction_data, dosing_mode, intake_timing, stock_quantity, client_uuid) "
+                "has_interaction_data, dosing_mode, intake_timing, stock_quantity, client_uuid, "
+                "pill_shape, pill_color) "
                 "VALUES (:u, :p, :m, 'thu_cong', 'da_xac_nhan', :q, :d, :h, "
                 "CAST(:mode AS medication_dosing_mode), "
-                "CAST(:timing AS medication_intake_timing), :stock, :c) "
+                "CAST(:timing AS medication_intake_timing), :stock, :c, :shape, :color) "
                 "ON CONFLICT ON CONSTRAINT user_medications_client_uuid_uq DO NOTHING "
                 "RETURNING id"
             ),
@@ -305,6 +315,8 @@ class SqlMedication:
                 "timing": _timing_to_db(cmd.intake_timing),
                 "stock": cmd.stock_quantity,
                 "c": cmd.client_uuid,
+                "shape": _enum_value(cmd.pill_shape),
+                "color": _enum_value(cmd.pill_color),
             },
         ).first()
         return None if row is None else row.id
@@ -506,7 +518,8 @@ class SqlMedication:
         row = c.execute(
             text(
                 "SELECT id, user_id, medication_id, dosing_mode, quantity_per_dose, "
-                "doses_per_day, intake_timing, stock_quantity, has_interaction_data, ended_at "
+                "doses_per_day, intake_timing, stock_quantity, has_interaction_data, ended_at, "
+                "pill_shape, pill_color "
                 "FROM user_medications WHERE id = :id"
             ),
             {"id": user_medication_id},
@@ -530,6 +543,8 @@ class SqlMedication:
             stock_quantity=row.stock_quantity,
             has_interaction_data=row.has_interaction_data,
             ended_at=row.ended_at,
+            pill_shape=None if row.pill_shape is None else PillShape(row.pill_shape),
+            pill_color=None if row.pill_color is None else PillColor(row.pill_color),
             schedules=tuple(
                 ScheduleView(
                     id=s.id,

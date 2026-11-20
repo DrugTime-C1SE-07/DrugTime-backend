@@ -26,6 +26,8 @@ from drugtime.modules.medication.domain.user_medication import (
     MedicationChanges,
     NewMedication,
     PatientScheduleView,
+    PillColor,
+    PillShape,
     UserMedicationView,
 )
 from drugtime.shared.config import get_settings
@@ -69,6 +71,8 @@ class UserMedicationCreate(BaseModel):
     max_doses_per_day: MaxDosesPerDay = None
     intake_timing: IntakeTiming | None = None
     stock_quantity: StockQuantity = None
+    pill_shape: PillShape | None = None
+    pill_color: PillColor | None = None
 
     @field_validator("intake_times", "days_of_week")
     @classmethod
@@ -88,6 +92,8 @@ class UserMedicationCreate(BaseModel):
             max_doses_per_day=self.max_doses_per_day,
             intake_timing=self.intake_timing,
             stock_quantity=self.stock_quantity,
+            pill_shape=self.pill_shape,
+            pill_color=self.pill_color,
         )
 
 
@@ -101,6 +107,8 @@ class UserMedicationUpdate(BaseModel):
     max_doses_per_day: MaxDosesPerDay = None
     intake_timing: IntakeTiming | None = None
     stock_quantity: StockQuantity = None
+    pill_shape: PillShape | None = None
+    pill_color: PillColor | None = None
     stopped: StrictBool = None  # "false" dạng chuỗi bị 422, như contract (boolean)
 
     @field_validator("intake_times", "days_of_week")
@@ -129,6 +137,8 @@ class UserMedicationUpdate(BaseModel):
             stock_quantity=self.stock_quantity,
             stopped=bool(self.stopped),
             days_of_week=None if self.days_of_week is None else tuple(self.days_of_week),
+            pill_shape=self.pill_shape,
+            pill_color=self.pill_color,
         )
 
 
@@ -186,6 +196,8 @@ class UserMedication(BaseModel):
     status: Literal["active", "stopped"]
     ended_at: datetime | None
     schedules: list[MedicationSchedule]
+    pill_shape: PillShape | None
+    pill_color: PillColor | None
 
     @classmethod
     def from_view(cls, view: UserMedicationView) -> "UserMedication":
@@ -208,6 +220,8 @@ class UserMedication(BaseModel):
             has_interaction_data=r.has_interaction_data,
             status="active" if r.ended_at is None else "stopped",
             ended_at=None if r.ended_at is None else r.ended_at.astimezone(tz),
+            pill_shape=r.pill_shape,
+            pill_color=r.pill_color,
             schedules=[
                 MedicationSchedule(
                     id=s.id,
