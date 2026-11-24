@@ -261,3 +261,27 @@ def test_confirm_doses_syncs_after_plus_120_minutes_as_missed():
     assert result.items[0].dose_status is DoseStatus.MISSED
     assert result.items[0].adherence_counted is False
     assert len(dose_logs.calls) == 1
+
+
+def test_confirm_doses_reraises_account_pending_deletion():
+    import pytest
+
+    caller_id = uuid4()
+    dose_logs = FakeDoseLogs()
+
+    class PendingDeletionAccess(FakeAccess):
+        def authorize_dose_write(self, uow, caller_id, caller_is_admin, patient_id):
+            raise Forbidden("account_pending_deletion")
+
+    with pytest.raises(Forbidden, match="account_pending_deletion"):
+        confirm_doses(
+            FakeUow(),
+            caller_id=caller_id,
+            caller_is_admin=False,
+            items=[_confirmation(1), _confirmation(2)],
+            now=NOW,
+            access=PendingDeletionAccess(),
+            schedules=FakeSchedules({1: caller_id, 2: caller_id}),
+            dose_logs=dose_logs,
+        )
+    assert dose_logs.calls == []

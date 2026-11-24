@@ -81,8 +81,7 @@ def decide(
     if f.pending_deletion:
         if f.caller_id != f.patient_id:
             return Decision(False, _role(f), "khong_co_quyen")
-        if scope is Scope.MEAL and action is Action.WRITE:
-            return Decision(False, ActorRole.PATIENT, "khong_co_quyen")
+        return Decision(False, ActorRole.PATIENT, "account_pending_deletion")
     if f.caller_id == f.patient_id:
         return Decision(
             f.purpose_consent,

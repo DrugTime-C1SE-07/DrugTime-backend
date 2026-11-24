@@ -157,6 +157,6 @@ def test_pending_deletion_denied__AC16(client, db, make, auth, llm, patient):
         {"u": p},
     )
     r = suggest(client, auth, p, p)
-    assert (r.status_code, r.json()) == (403, {"detail": "khong_co_quyen"})
-    assert make.access_logs(p) == [log(p, "patient", "denied", "khong_co_quyen")]
+    assert (r.status_code, r.json()) == (403, {"detail": "account_pending_deletion"})
+    assert make.access_logs(p) == [log(p, "patient", "denied", "account_pending_deletion")]
     assert llm.prompts == [] and meal_rows(db, p) == []
