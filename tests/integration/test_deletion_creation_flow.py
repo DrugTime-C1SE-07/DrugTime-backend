@@ -245,7 +245,11 @@ def test_deletion_revokes_family_reads_immediately_and_keeps_other_patient_visib
     assert response.status_code == 403 and response.json() == {"detail": "khong_co_quyen"}
     assert make.access_logs(patient)[-1]["result"] == "denied"
     assert make.access_logs(patient)[-1]["actor_user_id"] == family
-    assert client.get(path, headers=auth(patient)).status_code == 200
+    owner_blocked = client.get(path, headers=auth(patient))
+    assert owner_blocked.status_code == 403
+    assert owner_blocked.json() == {"detail": "account_pending_deletion"}
+    assert make.access_logs(patient)[-1]["result"] == "denied"
+    assert make.access_logs(patient)[-1]["actor_user_id"] == patient
     family_list = client.get("/family/patients", headers=family_headers)
     assert family_list.status_code == 200
     assert [item["patient_id"] for item in family_list.json()["items"]] == [str(other)]
@@ -272,7 +276,7 @@ def test_pending_deletion_blocks_meal_creation_and_family_alert_dispatch__AC4_AC
     family = make.family_of(patient)
     assert deletion_api.confirm(patient, deletion_api.issue(patient)).status_code == 201
     with unit_of_work() as uow:
-        with pytest.raises(Forbidden, match="khong_co_quyen"):
+        with pytest.raises(Forbidden, match="account_pending_deletion"):
             access.authorize(
                 uow,
                 caller_id=patient,

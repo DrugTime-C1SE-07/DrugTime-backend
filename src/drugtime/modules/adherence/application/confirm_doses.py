@@ -56,7 +56,9 @@ def confirm_doses(
             results.append(_failed(item, exc.code, 422, exc.detail))
         except ClientUuidConflict as exc:
             results.append(_failed(item, "client_uuid_conflict", 409, str(exc)))
-        except Forbidden:
+        except Forbidden as exc:
+            if str(exc) == "account_pending_deletion":
+                raise
             results.append(_failed(item, "forbidden_schedule", 403, "schedule is forbidden"))
     return DoseConfirmationBatchResult(results)
 

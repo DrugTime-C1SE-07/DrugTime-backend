@@ -87,6 +87,37 @@ def test_pending_deletion_denies_and_audits_family_read():
     assert log.denied == [(C, ActorRole.FAMILY, P, Scope.MEDICATIONS, "khong_co_quyen")]
 
 
+@pytest.mark.parametrize("scope", list(Scope))
+@pytest.mark.parametrize("action", [Action.READ, Action.WRITE])
+def test_pending_deletion_owner_audits_denied_and_fails_closed(scope, action):
+    log = Log()
+
+    def call():
+        authorize(
+            object(),
+            Facts(caller_id=P, pending_deletion=True),
+            log,
+            caller_id=P,
+            caller_is_admin=False,
+            patient_id=P,
+            scope=scope,
+            action=action,
+            audit_self=False,
+        )
+
+    with pytest.raises(Forbidden, match="account_pending_deletion"):
+        call()
+    assert not log.allowed
+    assert log.denied == [(P, ActorRole.PATIENT, P, scope, "account_pending_deletion")]
+
+    def fail_denied(*args):
+        raise RuntimeError("audit unavailable")
+
+    log.append_denied = fail_denied
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        call()
+
+
 def test_worker_does_not_resolve_recipients_for_pending_deletion():
     class PendingFacts:
         def pending_deletion(self, uow, patient_id):

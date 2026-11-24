@@ -84,6 +84,7 @@ class DoseConfirmationBatchOut(BaseModel):
     response_model_exclude_none=True,
     operation_id="confirmDoseBatch",
     dependencies=[_BEARER],
+    responses={403: {"description": "account_pending_deletion"}},
     openapi_extra={"x-health-scope": "lich_su_tuan_thu", "x-health-audit-self": False},
 )
 def post_doses(

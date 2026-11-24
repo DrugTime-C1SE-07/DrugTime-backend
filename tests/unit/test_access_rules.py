@@ -144,8 +144,35 @@ def test_write_denies_linked_family_and_admin_with_their_role():
     assert not d.allowed and d.log_role is ActorRole.NO_ACCESS and d.reason == "khong_co_quyen"
 
 
-def test_pending_deletion_blocks_owner_meal_write_only():
+def test_pending_deletion_blocks_owner_all_scopes_and_actions():
     patient = uuid4()
-    facts = AccessFacts(patient, patient, False, True, False, False, pending_deletion=True)
-    assert not decide(facts, Action.WRITE, scope=Scope.MEAL).allowed
-    assert decide(facts, Action.WRITE, scope=Scope.MEDICATIONS).allowed
+    for scope, action, audit_self, consent in product(
+        Scope, Action, (False, True), (False, True)
+    ):
+        f = AccessFacts(
+            patient, patient, False, consent, False, False, pending_deletion=True
+        )
+        d = decide(f, action, audit_self=audit_self, scope=scope)
+        assert (d.allowed, d.log_role, d.reason) == (
+            False,
+            ActorRole.PATIENT,
+            "account_pending_deletion",
+        )
+
+
+def test_pending_deletion_keeps_family_and_admin_khong_co_quyen():
+    for action in Action:
+        d_family = decide(facts(pending_deletion=True), action)
+        assert (d_family.allowed, d_family.log_role, d_family.reason) == (
+            False,
+            ActorRole.FAMILY,
+            "khong_co_quyen",
+        )
+        d_admin = decide(
+            facts(caller_id=P, caller_is_admin=True, pending_deletion=True), action
+        )
+        assert (d_admin.allowed, d_admin.log_role, d_admin.reason) == (
+            False,
+            ActorRole.ADMIN,
+            "khong_co_quyen",
+        )
