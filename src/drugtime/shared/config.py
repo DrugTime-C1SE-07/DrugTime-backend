@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     ai_meal_image_bucket: str = "meal-images"
     # Số lần "Gợi ý khác" tối đa mỗi tài khoản mỗi ngày (giờ Asia/Ho_Chi_Minh).
     ai_meal_refresh_daily_limit: int = 2
+    # Cache output LLM gợi ý bữa ăn (CD10, task 5.09). URL rỗng = tắt cache. URL Upstash
+    # (`rediss://`) chứa token nên là SecretStr. TTL mặc định 7 ngày.
+    meal_cache_url: SecretStr = SecretStr("")
+    meal_cache_ttl_seconds: int = 604800
+    meal_cache_timeout_seconds: float = 1.0
 
     session_jwt_secret: str = ""
     mobile_session_days: int = 10

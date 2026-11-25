@@ -18,6 +18,17 @@ class MealSuggester(Protocol):
     def suggest(self, prompt: MealPrompt) -> str: ...
 
 
+class MealCache(Protocol):
+    """Cache raw output LLM theo key không định danh (CD10, task 5.09).
+
+    Fail-open: không bao giờ raise; lỗi kết nối/timeout/từ chối lệnh → `get` trả None, `put` bỏ qua.
+    """
+
+    def get(self, key: str) -> str | None: ...
+
+    def put(self, key: str, raw: str) -> None: ...
+
+
 @dataclass(frozen=True)
 class FoodWarningView:
     rule_id: int
@@ -59,6 +70,7 @@ class MealSuggestionStore(Protocol):
         user_id: UUID,
         content: dict,
         previous_suggestion_id: int | None = None,
+        served_from_cache: bool = False,
     ) -> tuple[int, datetime]: ...
 
     def find_previous(self, uow: UnitOfWork, suggestion_id: int, user_id: UUID) -> dict | None:

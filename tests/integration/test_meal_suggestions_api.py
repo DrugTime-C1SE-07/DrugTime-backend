@@ -28,6 +28,8 @@ def disable_real_llm(monkeypatch):
     monkeypatch.setenv("AI_MEAL_IMAGE_ENABLED", "false")
     monkeypatch.setenv("PEXELS_API_KEY", "")
     monkeypatch.setenv("AI_MEAL_REFRESH_DAILY_LIMIT", "2")
+    # Task 5.09: tắt cache CD10 để test cũ không phụ thuộc Redis/Upstash trong .env.
+    monkeypatch.setenv("MEAL_CACHE_URL", "")
     get_settings.cache_clear()
 
 

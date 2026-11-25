@@ -85,8 +85,10 @@ class Store:
     def __init__(self, previous=None, used=0):
         self.rows, self.previous, self.used = [], previous, used
 
-    def insert(self, uow, user_id, content, previous_suggestion_id=None):
+    def insert(self, uow, user_id, content, previous_suggestion_id=None,
+               served_from_cache=False):
         self.rows.append(content)
+        self.served_from_cache = served_from_cache
         return 3051, T0
 
     def find_previous(self, uow, suggestion_id, user_id):
@@ -114,8 +116,9 @@ def _fake_get_uow():
     yield MagicMock()
 
 
-def _client(suggester, user=True, images=None, queue=None, limit=2):
+def _client(suggester, user=True, images=None, queue=None, limit=2, cache=None):
     app = create_app()
+    app.dependency_overrides[http.get_meal_cache] = lambda: cache  # không phụ thuộc .env
     app.dependency_overrides[get_uow] = _fake_get_uow
     app.dependency_overrides[http.get_meal_suggester] = lambda: suggester
     app.dependency_overrides[http.get_meal_images] = lambda: images
@@ -230,7 +233,8 @@ def test_allowed_log_failure_returns_503_no_data__AC17_M2():
 
 def test_store_failure_returns_503_and_rolls_back__AC17_M2():
     class Broken(Store):
-        def insert(self, uow, user_id, content, previous_suggestion_id=None):
+        def insert(self, uow, user_id, content, previous_suggestion_id=None,
+                   served_from_cache=False):
             raise _db_error()
 
     r, uow, _ = _post(_client(FakeSuggester()), store=Broken())
@@ -433,3 +437,58 @@ def test_get_meal_images_follows_flag__AC8():
     on = Settings(_env_file=None, ai_meal_image_enabled=True)
     with patch(f"{HTTP}.get_settings", return_value=on):
         assert http.get_meal_images() is not None
+
+
+# --- Task 5.09: cache CD10 ---------------------------------------------------------------------
+
+CACHE_URL = "rediss://default:FAKE-upstash-token@cache.example:6379"
+
+
+def test_get_meal_cache_none_when_url_empty__5_09_AC11():
+    with patch(f"{HTTP}.build_client") as build, patch(
+        f"{HTTP}.get_settings", return_value=Settings(_env_file=None)
+    ):
+        assert http.get_meal_cache() is None
+    build.assert_not_called()
+
+
+def test_get_meal_cache_built_from_settings__5_09():
+    s = Settings(_env_file=None, meal_cache_url=CACHE_URL, meal_cache_ttl_seconds=60,
+                 meal_cache_timeout_seconds=0.5)
+    http._meal_cache.cache_clear()
+    with patch(f"{HTTP}.build_client") as build, patch(f"{HTTP}.get_settings", return_value=s):
+        cache = http.get_meal_cache()
+        assert http.get_meal_cache() is cache  # một client cho mỗi cấu hình
+    build.assert_called_once_with(CACHE_URL, 0.5)
+    http._meal_cache.cache_clear()
+
+
+class MemCache:
+    def __init__(self):
+        self.entries = {}
+
+    def get(self, key):
+        return self.entries.get(key)
+
+    def put(self, key, raw):
+        self.entries[key] = raw
+
+
+def test_cache_event_logged_without_identifiers__5_09_AC13(caplog):
+    caplog.set_level(logging.INFO, logger=HTTP)
+    cache = MemCache()
+    client = _client(FakeSuggester(), cache=cache)
+    r1, _, store1 = _post(client)
+    r2, _, store2 = _post(client)
+    assert (r1.status_code, r2.status_code) == (200, 200)
+    assert (store1.served_from_cache, store2.served_from_cache) == (False, True)
+    events = [r.getMessage() for r in caplog.records if "ai_meal cache" in r.getMessage()]
+    assert events == ["ai_meal cache event=miss", "ai_meal cache event=hit"]
+    (key,) = cache.entries
+    assert key not in caplog.text and str(PATIENT) not in caplog.text
+
+
+def test_no_cache_event_logged_when_off__5_09_AC11(caplog):
+    caplog.set_level(logging.INFO, logger=HTTP)
+    r, _, _ = _post(_client(FakeSuggester()))
+    assert r.status_code == 200 and "ai_meal cache" not in caplog.text

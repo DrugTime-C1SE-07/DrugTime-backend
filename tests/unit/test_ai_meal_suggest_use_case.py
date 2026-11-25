@@ -26,6 +26,7 @@ from drugtime.modules.ai_meal.application.ports import (
 from drugtime.modules.ai_meal.domain.errors import (
     LlmDisabled,
     LlmInvalidOutput,
+    LlmUnavailable,
     MealInputIncomplete,
     PreviousSuggestionNotFound,
     RefreshLimitReached,
@@ -101,11 +102,13 @@ class FakeStore:
         self.calls, self.fail, self.rows = calls, fail, []
         self.previous, self.used, self.counts = previous or {}, used, []
 
-    def insert(self, uow, user_id, content, previous_suggestion_id=None):
+    def insert(self, uow, user_id, content, previous_suggestion_id=None,
+               served_from_cache=False):
         self.calls.append("store")
         if self.fail:
             raise RuntimeError("db down")
         self.rows.append((user_id, content, previous_suggestion_id))
+        self.served_from_cache = served_from_cache
         return 3051, T0
 
     def find_previous(self, uow, suggestion_id, user_id):
@@ -129,8 +132,24 @@ def _request(**overrides):
     return uc.MealRequest(**values)
 
 
+class FakeCache:
+    """Cache trong bộ nhớ ghi lại thứ tự gọi (task 5.09)."""
+
+    def __init__(self, calls, entries=None):
+        self.calls, self.entries, self.puts = calls, dict(entries or {}), []
+
+    def get(self, key):
+        self.calls.append("cache_get")
+        return self.entries.get(key)
+
+    def put(self, key, raw):
+        self.calls.append("cache_put")
+        self.puts.append((key, raw))
+        self.entries[key] = raw
+
+
 def run(calls, *, request=None, suggester="default", store=None, authorize=None, images=None,
-        now=T0):
+        now=T0, cache=None):
     def default_authorize(*args, **kwargs):
         calls.append(("authorize", kwargs))
 
@@ -150,6 +169,7 @@ def run(calls, *, request=None, suggester="default", store=None, authorize=None,
             images=images,
             refresh_limit=2,
             now=lambda: now,
+            cache=cache,
         )
     return outcome, sug, store
 
@@ -235,6 +255,93 @@ def test_store_failure_propagates__AC17():
         run(calls, store=FakeStore(calls, fail=True))
 
 
+# --- Task 5.09: cache CD10 ---------------------------------------------------------------------
+
+
+def _key_for_default_request():
+    """Key mà use case tính cho `_request()` mặc định, lấy từ prompt LLM thật sự nhận."""
+    calls = Calls()
+    _, sug, _ = run(calls)
+    return uc.cache_key(sug.prompts[0])
+
+
+def test_cache_miss_calls_llm_then_puts_raw__5_09_AC3():
+    calls = Calls()
+    cache = FakeCache(calls)
+    outcome, _, store = run(calls, cache=cache)
+    assert calls[1:] == ["count", "food", "conditions", "cache_get", "llm", "cache_put", "store"]
+    ((key, raw),) = cache.puts
+    assert key == _key_for_default_request() and raw == GOOD
+    assert outcome.cache_status == "miss" and store.served_from_cache is False
+
+
+def test_cache_hit_skips_llm_served_from_cache_true__5_09_AC4():
+    calls = Calls()
+    cache = FakeCache(calls, {_key_for_default_request(): GOOD})
+    outcome, _, store = run(calls, cache=cache)
+    assert "llm" not in calls and "cache_put" not in calls
+    assert calls[-2:] == ["cache_get", "store"]
+    assert outcome.cache_status == "hit" and store.served_from_cache is True
+    assert store.rows[0][0] == PATIENT
+
+
+def test_cache_hit_output_refiltered_with_current_prompt__5_09_AC6():
+    # Entry chứa "Sinh tố chuối"; quy tắc hiện tại cấm chuối → món bị lọc như output mới.
+    calls = Calls()
+    cache = FakeCache(calls, {_key_for_default_request(): GOOD})
+    outcome, _, store = run(calls, cache=cache)
+    assert [m.name for m in outcome.result.suggestions] == ["Cơm gà luộc"]
+    assert [m["name"] for m in store.rows[0][1]["suggestions"]] == ["Cơm gà luộc"]
+
+
+@pytest.mark.parametrize("raw", ["không phải JSON", json.dumps({"meal_type": "trua"})])
+def test_invalid_llm_output_not_cached__5_09_AC7(raw):
+    calls = Calls()
+    cache = FakeCache(calls)
+    with pytest.raises(LlmInvalidOutput):
+        run(calls, suggester=FakeSuggester(calls, raw=raw), cache=cache)
+    assert cache.puts == [] and "store" not in calls
+
+
+def test_unavailable_llm_not_cached__5_09_AC7():
+    calls = Calls()
+    cache = FakeCache(calls)
+    sug = FakeSuggester(calls)
+    sug.suggest = MagicMock(side_effect=LlmUnavailable("timeout"))
+    with pytest.raises(LlmUnavailable):
+        run(calls, suggester=sug, cache=cache)
+    assert cache.puts == []
+
+
+def test_forbidden_never_touches_cache__5_09_AC9():
+    calls = Calls()
+    cache = FakeCache(calls, {_key_for_default_request(): GOOD})
+    calls.clear()
+
+    def deny(*args, **kwargs):
+        raise Forbidden("consent_revoked")
+
+    with pytest.raises(Forbidden):
+        run(calls, authorize=deny, cache=cache)
+    assert calls == []
+
+
+def test_no_cache_behaves_as_before__5_09_AC11():
+    calls = Calls()
+    outcome, _, store = run(calls, cache=None)
+    assert calls[1:] == ["count", "food", "conditions", "llm", "store"]
+    assert outcome.cache_status == "off" and store.served_from_cache is False
+
+
+def test_corrupt_entry_treated_as_miss_and_overwritten__5_09_AC12():
+    calls = Calls()
+    key = _key_for_default_request()
+    cache = FakeCache(calls, {key: "{hỏng"})
+    outcome, _, store = run(calls, cache=cache)
+    assert "llm" in calls and cache.entries[key] == GOOD
+    assert outcome.cache_status == "corrupt" and store.served_from_cache is False
+
+
 
 # --- Adapter sang module khác (P8, P9) ---------------------------------------------------------
 
@@ -300,8 +407,15 @@ def test_sql_store_inserts_json_and_returns_id__P9():
     uow.connection.execute.return_value.one.return_value = MagicMock(id=3051, created_at=T0)
     assert SqlMealSuggestions().insert(uow, PATIENT, {"meal_type": "trua", "x": "Gà"}) == (3051, T0)
     sql, params = uow.connection.execute.call_args.args
-    assert "INSERT INTO meal_suggestions" in str(sql) and "false" in str(sql)
-    assert params == {"u": PATIENT, "c": '{"meal_type": "trua", "x": "Gà"}', "p": None}
+    assert "INSERT INTO meal_suggestions" in str(sql) and ":s" in str(sql)
+    assert params == {"u": PATIENT, "c": '{"meal_type": "trua", "x": "Gà"}', "s": False, "p": None}
+
+
+def test_sql_store_writes_served_from_cache__5_09_AC4():
+    uow = MagicMock()
+    uow.connection.execute.return_value.one.return_value = MagicMock(id=1, created_at=T0)
+    SqlMealSuggestions().insert(uow, PATIENT, {}, served_from_cache=True)
+    assert uow.connection.execute.call_args.args[1]["s"] is True
 
 
 # --- Task 5.11: gợi ý lại, giới hạn lượt, ảnh ------------------------------------------------
@@ -480,3 +594,13 @@ def test_llm_failure_reserves_no_image__AC8():
     with pytest.raises(LlmInvalidOutput):
         run(calls, suggester=FakeSuggester(calls, raw="x"), images=images)
     assert "reserve" not in calls
+
+
+def test_refresh_bypasses_cache__5_09_AC10():
+    calls = Calls()
+    cache = FakeCache(calls)
+    outcome, _, store = run(calls, request=_request(previous_suggestion_id=3050),
+                            suggester=FakeSuggester(calls, raw=REFRESH_RAW),
+                            store=_refresh_store(calls), cache=cache)
+    assert "cache_get" not in calls and "cache_put" not in calls and "llm" in calls
+    assert outcome.cache_status == "bypass" and store.served_from_cache is False

@@ -28,11 +28,16 @@ from drugtime.modules.ai_meal.adapters.outbound.other_modules import (
     InteractionFoodCheck,
     MedicationConditions,
 )
+from drugtime.modules.ai_meal.adapters.outbound.redis_meal_cache import (
+    RedisMealCache,
+    build_client,
+)
 from drugtime.modules.ai_meal.adapters.outbound.sql_meal_images import SqlMealImages
 from drugtime.modules.ai_meal.adapters.outbound.sql_meal_suggestions import SqlMealSuggestions
 from drugtime.modules.ai_meal.application.ports import (
     ImageJobQueue,
     ImageState,
+    MealCache,
     MealImageStore,
     MealSuggester,
 )
@@ -79,6 +84,21 @@ def get_meal_suggester() -> MealSuggester | None:
     if not settings.ai_meal_llm_enabled or not key:
         return None
     return _claude(key, settings.llm_model, settings.llm_timeout_seconds, settings.llm_api_url)
+
+
+@lru_cache(maxsize=4)
+def _meal_cache(url: str, ttl: int, timeout: float) -> RedisMealCache:
+    # Một client (connection pool) cho mỗi cấu hình; chưa mở kết nối cho tới lệnh đầu tiên.
+    return RedisMealCache(build_client(url, timeout), ttl)
+
+
+def get_meal_cache() -> MealCache | None:
+    """None khi `MEAL_CACHE_URL` rỗng: không tạo client Redis (5.09 AC11)."""
+    settings = get_settings()
+    url = settings.meal_cache_url.get_secret_value()
+    if not url:
+        return None
+    return _meal_cache(url, settings.meal_cache_ttl_seconds, settings.meal_cache_timeout_seconds)
 
 
 def get_meal_images() -> MealImageStore | None:
@@ -202,6 +222,7 @@ def create_meal_suggestions_endpoint(
     images: Annotated[MealImageStore | None, Depends(get_meal_images)],
     queue: Annotated[ImageJobQueue, Depends(get_image_queue)],
     refresh_limit: Annotated[int, Depends(get_refresh_limit)],
+    cache: Annotated[MealCache | None, Depends(get_meal_cache)],
 ) -> JSONResponse:
     request = MealRequest(
         meal_type=body.meal_type,
@@ -228,6 +249,7 @@ def create_meal_suggestions_endpoint(
                     store=SqlMealSuggestions(),
                     images=images,
                     refresh_limit=refresh_limit,
+                    cache=cache,
                 )
             except LlmDisabled:
                 response = _error(503, "llm_disabled")
@@ -253,5 +275,8 @@ def create_meal_suggestions_endpoint(
         _log.warning("ai_meal db_failure")
         return _error(503, "service_unavailable")
     if outcome is not None:
+        if outcome.cache_status != "off":
+            # Đo hit rate (CD10): chỉ trạng thái, không key, không định danh (5.09 AC13).
+            _log.info("ai_meal cache event=%s", outcome.cache_status)
         _enqueue(queue, outcome.enqueue_image_ids)
     return response

@@ -8,7 +8,7 @@ from drugtime.shared.uow import UnitOfWork
 
 
 class SqlMealSuggestions:
-    """Ghi/đọc `meal_suggestions` (api_role: SELECT, INSERT). Cache CD10 thuộc 5.09."""
+    """Ghi/đọc `meal_suggestions` (api_role: SELECT, INSERT). `served_from_cache`: CD10, 5.09."""
 
     def insert(
         self,
@@ -16,16 +16,18 @@ class SqlMealSuggestions:
         user_id: UUID,
         content: dict,
         previous_suggestion_id: int | None = None,
+        served_from_cache: bool = False,
     ) -> tuple[int, datetime]:
         row = uow.connection.execute(
             text(
                 "INSERT INTO meal_suggestions "
                 "(user_id, suggestion_content, served_from_cache, previous_suggestion_id) "
-                "VALUES (:u, CAST(:c AS jsonb), false, :p) RETURNING id, created_at"
+                "VALUES (:u, CAST(:c AS jsonb), :s, :p) RETURNING id, created_at"
             ),
             {
                 "u": user_id,
                 "c": json.dumps(content, ensure_ascii=False),
+                "s": served_from_cache,
                 "p": previous_suggestion_id,
             },
         ).one()

@@ -11,10 +11,17 @@ from drugtime.shared.config import Settings
 
 LLM_KEY = "sk-ant-FAKE-llm-key"
 PIXABAY_KEY = "FAKE-pixabay-key"
+CACHE_URL = "rediss://default:FAKE-upstash-token@cache.example:6379"
 
 
 def _settings(**kw):
-    return Settings(_env_file=None, llm_api_key=LLM_KEY, pixabay_api_key=PIXABAY_KEY, **kw)
+    return Settings(
+        _env_file=None,
+        llm_api_key=LLM_KEY,
+        pixabay_api_key=PIXABAY_KEY,
+        meal_cache_url=CACHE_URL,
+        **kw,
+    )
 
 
 def test_empty_url_logged_as_default_without_keys__AC22(caplog):
@@ -44,6 +51,13 @@ def test_create_app_logs_config_once__AC22(caplog):
 def test_settings_repr_hides_secrets__AC9():
     text = repr(_settings()) + str(_settings().model_dump())
     assert LLM_KEY not in text and PIXABAY_KEY not in text
+    assert "FAKE-upstash-token" not in text  # task 5.09
+
+
+def test_meal_cache_defaults_off_with_7_day_ttl__5_09():
+    s = Settings(_env_file=None)
+    assert s.meal_cache_url.get_secret_value() == ""
+    assert s.meal_cache_ttl_seconds == 604800 and s.meal_cache_timeout_seconds == 1.0
 
 
 def test_pexels_settings_removed_and_stale_env_ignored__AC9(monkeypatch):

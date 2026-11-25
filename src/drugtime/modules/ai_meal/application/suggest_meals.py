@@ -3,7 +3,8 @@
 Thứ tự (4.26 AC4, AC10, AC14–AC17; 5.11 contract):
 PEP (ghi access_logs) → khai báo bắt buộc → tính năng bật → [gợi ý lại: gợi ý trước (422) →
 khóa + đếm lượt (429)] → đọc thuốc / bệnh nền / quy tắc thực phẩm (tất định) → prompt → LLM →
-parse + lọc → [gợi ý lại: lọc lại món cũ, ghép] → giữ chỗ ảnh → lưu. Lỗi ở bất kỳ bước nào
+[lần đầu: tra cache CD10 (5.09)] → parse + lọc → [gợi ý lại: lọc lại món cũ, ghép] → giữ chỗ
+ảnh → lưu. Lỗi ở bất kỳ bước nào
 trước LLM thì provider không được gọi. Lỗi lưu hoặc ghi log lan ra để transaction rollback.
 """
 
@@ -19,12 +20,15 @@ from drugtime.modules.ai_meal.application.ports import (
     FoodCheck,
     FoodCheckReader,
     ImageState,
+    MealCache,
     MealImageStore,
     MealSuggester,
     MealSuggestionStore,
 )
+from drugtime.modules.ai_meal.domain.cache_key import cache_key
 from drugtime.modules.ai_meal.domain.errors import (
     LlmDisabled,
+    LlmInvalidOutput,
     PreviousSuggestionNotFound,
     RefreshLimitReached,
 )
@@ -35,7 +39,7 @@ from drugtime.modules.ai_meal.domain.model import (
     MealSuggestionSet,
 )
 from drugtime.modules.ai_meal.domain.parser import parse_suggestions
-from drugtime.modules.ai_meal.domain.prompt import build_prompt
+from drugtime.modules.ai_meal.domain.prompt import MealPrompt, build_prompt
 from drugtime.modules.ai_meal.domain.refresh import (
     NEW_ON_REFRESH,
     day_start_vn,
@@ -72,6 +76,36 @@ class MealOutcome:
     images: dict[int, ImageState] | None = None
     # Ảnh cần đẩy job Worker; chỉ đẩy sau khi transaction commit.
     enqueue_image_ids: tuple[int, ...] = ()
+    cache_status: str = "off"  # off | bypass | hit | miss | corrupt (CD10, task 5.09)
+
+
+CACHE_OFF, CACHE_BYPASS, CACHE_HIT, CACHE_MISS, CACHE_CORRUPT = (
+    "off", "bypass", "hit", "miss", "corrupt"
+)
+
+
+def _first_suggestions(
+    suggester: MealSuggester, cache: MealCache | None, prompt: MealPrompt
+) -> tuple[MealSuggestionSet, str]:
+    """Cache-aside CD10 cho lần gợi ý đầu (5.09 AC3, AC4, AC7, AC12).
+
+    Output lấy từ cache vẫn parse + lọc lại với prompt hiện tại (thực phẩm cần tránh, dị ứng, tên
+    thuốc). Chỉ output LLM đã parse thành công mới được ghi; lỗi LLM lan ra, không ghi cache.
+    """
+    if cache is None:
+        return parse_suggestions(suggester.suggest(prompt), prompt), CACHE_OFF
+    key = cache_key(prompt)
+    status = CACHE_MISS
+    cached = cache.get(key)
+    if cached is not None:
+        try:
+            return parse_suggestions(cached, prompt), CACHE_HIT
+        except LlmInvalidOutput:
+            status = CACHE_CORRUPT  # entry hỏng: coi như miss, ghi đè bằng output mới
+    raw = suggester.suggest(prompt)
+    result = parse_suggestions(raw, prompt)
+    cache.put(key, raw)
+    return result, status
 
 
 def _stored(dish: MealSuggestion) -> dict:
@@ -119,10 +153,12 @@ def suggest_meals(
     images: MealImageStore | None = None,
     refresh_limit: int = DEFAULT_REFRESH_LIMIT,
     now: Callable[[], datetime] = clock.now,
+    cache: MealCache | None = None,
 ) -> MealOutcome:
     """`suggester` = None khi tính năng tắt hoặc thiếu key (AC10).
 
     `images` = None khi tính năng ảnh tắt: mọi món có `image_id = None` (5.11 AC8).
+    `cache` = None khi cache CD10 tắt (5.09 AC11). Cache chỉ được chạm sau PEP (5.09 AC9).
     """
     # WRITE: chỉ chính chủ có consent ai_meal; người thân, admin, người chờ xóa → 403.
     access.authorize(
@@ -172,9 +208,11 @@ def suggest_meals(
         count=NEW_ON_REFRESH if previous is not None else None,
     )
     if previous is None:
-        result = parse_suggestions(suggester.suggest(prompt), prompt)
+        result, cache_status = _first_suggestions(suggester, cache, prompt)
         dishes = result.suggestions
     else:
+        # Gợi ý lại không dùng cache (5.09 AC10): prompt chứa món cũ nên gần như không trùng.
+        cache_status = CACHE_OFF if cache is None else CACHE_BYPASS
         result = parse_suggestions(
             suggester.suggest(prompt), prompt, avoid_dish_names=avoid_names, max_new=NEW_ON_REFRESH
         )
@@ -197,7 +235,11 @@ def suggest_meals(
         "suggestions": [_stored(s) for s in result.suggestions],
     }
     suggestion_id, created_at = store.insert(
-        uow, patient_id, content, request.previous_suggestion_id
+        uow,
+        patient_id,
+        content,
+        request.previous_suggestion_id,
+        served_from_cache=cache_status == CACHE_HIT,
     )
     return MealOutcome(
         suggestion_id,
@@ -207,4 +249,5 @@ def suggest_meals(
         refreshes_remaining=remaining(refresh_limit, used, is_refresh=previous is not None),
         images=states,
         enqueue_image_ids=enqueue,
+        cache_status=cache_status,
     )
