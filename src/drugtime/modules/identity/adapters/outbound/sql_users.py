@@ -48,6 +48,20 @@ class SqlUsers:
             {"id": user_id, "phone": phone, "email": email},
         )
 
+    def missed_dose_family_alerts(self, user_id: UUID) -> bool:
+        value = self._c.execute(
+            text("SELECT missed_dose_family_alerts FROM users WHERE id = :id"),
+            {"id": user_id},
+        ).scalar()
+        # Không có dòng thì giữ mặc định của cột (bật).
+        return value is not False
+
+    def set_missed_dose_family_alerts(self, user_id: UUID, enabled: bool) -> None:
+        self._c.execute(
+            text("UPDATE users SET missed_dose_family_alerts = :on WHERE id = :id"),
+            {"id": user_id, "on": enabled},
+        )
+
     def get_profile(self, user_id: UUID) -> ProfileRecord | None:
         row = self._c.execute(
             text(
