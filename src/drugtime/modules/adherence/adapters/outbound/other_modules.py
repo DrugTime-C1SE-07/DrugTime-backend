@@ -62,6 +62,10 @@ class AccessGuardAdapter:
         )
 
     def caregivers_of(self, uow: UnitOfWork, patient_id: UUID) -> list[UUID]:
+        # Chỉ dùng cho cảnh báo bỏ lỡ liều: patient tắt "báo người giám sát" thì không ai nhận,
+        # đọc lại mỗi lượt quét và trước khi gửi push.
+        if not identity.missed_dose_family_alerts(uow, patient_id):
+            return []
         return access.authorized_caregivers(uow, patient_id)
 
 

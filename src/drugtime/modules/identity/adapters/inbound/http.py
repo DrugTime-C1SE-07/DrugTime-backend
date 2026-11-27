@@ -13,6 +13,7 @@ from drugtime.modules.identity.application import manage_device_tokens, sign_in
 from drugtime.modules.identity.domain.user import CurrentUser
 from drugtime.shared.clock import now
 from drugtime.shared.db import SqlUnitOfWork, get_uow
+from drugtime.shared.errors import Forbidden
 
 router = APIRouter(tags=["identity"])
 auth_router = APIRouter(prefix="/auth")
@@ -157,6 +158,47 @@ class DeviceTokenRegistration(BaseModel):
 class DeviceTokenRemoval(BaseModel):
     model_config = ConfigDict(extra="forbid")
     fcm_token: FcmToken
+
+
+class NotificationPreferences(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    missed_dose_family_alerts: bool
+
+
+def _patient(user: CurrentUser) -> CurrentUser:
+    if user.is_admin:
+        raise Forbidden("khong_co_quyen")
+    return user
+
+
+@router.get(
+    "/me/notification-preferences",
+    response_model=NotificationPreferences,
+    responses=_errors(401, 403),
+    operation_id="getMyNotificationPreferences",
+)
+def get_notification_preferences(
+    user: CurrentUser = Depends(device_token_user),
+    uow: SqlUnitOfWork = Depends(get_uow, scope="function"),
+) -> dict:
+    user = _patient(user)
+    return {"missed_dose_family_alerts": SqlUsers(uow).missed_dose_family_alerts(user.id)}
+
+
+@router.put(
+    "/me/notification-preferences",
+    response_model=NotificationPreferences,
+    responses=_errors(401, 403),
+    operation_id="updateMyNotificationPreferences",
+)
+def put_notification_preferences(
+    body: NotificationPreferences,
+    user: CurrentUser = Depends(device_token_user),
+    uow: SqlUnitOfWork = Depends(get_uow, scope="function"),
+) -> dict:
+    user = _patient(user)
+    SqlUsers(uow).set_missed_dose_family_alerts(user.id, body.missed_dose_family_alerts)
+    return body.model_dump()
 
 
 @router.put(

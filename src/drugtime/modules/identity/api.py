@@ -78,6 +78,11 @@ def user_exists(uow: UnitOfWork, user_id: UUID) -> bool:
     return SqlUsers(uow).get(user_id) is not None
 
 
+def missed_dose_family_alerts(uow: UnitOfWork, user_id: UUID) -> bool:
+    """Patient có cho báo người giám sát khi bỏ lỡ liều không (mặc định có)."""
+    return SqlUsers(uow).missed_dose_family_alerts(user_id)
+
+
 def get_profile(uow: UnitOfWork, user_id: UUID) -> ProfileRecord:
     return _profile.get_profile(SqlUsers(uow), user_id)
 
