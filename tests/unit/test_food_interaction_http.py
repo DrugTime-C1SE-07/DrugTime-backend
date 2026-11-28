@@ -151,3 +151,65 @@ def test_access_log_failure_is_500_without_data__AC14b():
     r = _get(_client(user), user.id, use_case)
     assert r.status_code == 500
     assert "medications" not in r.text
+
+
+@pytest.mark.parametrize(
+    "state,report",
+    [
+        ("co_tuong_tac", _report()),
+        (
+            "da_kiem_tra_khong_thay",
+            FoodReport(
+                status=CheckResult.NONE_FOUND,
+                medications=(
+                    FoodMedicationResult(
+                        user_medication_id=43,
+                        medication=MedicationSummary(
+                            1008, "Vitamin D3", "Cholecalciferol", "1000", "Viên"
+                        ),
+                        is_active=True,
+                        status=CheckResult.NONE_FOUND,
+                        ingredients=(IngredientRef(12, "Cholecalciferol"),),
+                        warnings=(),
+                    ),
+                ),
+            ),
+        ),
+        (
+            "khong_du_du_lieu",
+            FoodReport(
+                status=CheckResult.INSUFFICIENT_DATA,
+                medications=(
+                    FoodMedicationResult(
+                        user_medication_id=44,
+                        medication=MedicationSummary(1009, "Thảo dược", None, None, "Gói"),
+                        is_active=True,
+                        status=CheckResult.INSUFFICIENT_DATA,
+                        ingredients=(),
+                        warnings=(),
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+def test_family_and_patient_food_parity_all_three_states__TC_BE_09_11(state, report):
+    """Task 5.25 (PB28): GET /patients/{id}/food-interactions trả payload khớp y hệt
+    giữa Patient và Family Member trên cả 3 trạng thái và luôn kèm FOOD_DISCLAIMER."""
+    patient_id = uuid4()
+    patient = identity.CurrentUser(id=patient_id, is_admin=False)
+    family = identity.CurrentUser(id=uuid4(), is_admin=False)
+    use_case = MagicMock(return_value=report)
+
+    r_patient = _get(_client(patient), patient_id, use_case)
+    r_family = _get(_client(family), patient_id, use_case)
+
+    assert r_patient.status_code == 200 and r_family.status_code == 200
+    assert r_family.headers["cache-control"] == "no-store"
+    assert r_family.json() == r_patient.json()
+    assert r_family.json()["status"] == state
+    assert r_family.json()["disclaimer"] == FOOD_DISCLAIMER
+    assert r_family.json()["patient_id"] == str(patient_id)
+    assert use_case.call_args_list[0].kwargs["caller_id"] == patient.id
+    assert use_case.call_args_list[1].kwargs["caller_id"] == family.id
+    assert use_case.call_args_list[1].kwargs["patient_id"] == patient_id

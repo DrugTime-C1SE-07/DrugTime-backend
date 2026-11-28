@@ -591,3 +591,213 @@ def test_commit_failure_returns_500_without_data__AC24():
         resp = client.post(f"/patients/{caller.id}/interaction-checks", json={})
     assert resp.status_code == 500
     assert "disclaimer" not in resp.text
+
+
+@pytest.mark.parametrize(
+    "case,facts_kw,expected_role",
+    [
+        (
+            "health_data_revoked",
+            {
+                "purpose_consent": False,
+                "active_sharing_link": True,
+                "family_sharing_consent": True,
+            },
+            "khong_co_quyen",
+        ),
+        (
+            "family_sharing_revoked",
+            {
+                "purpose_consent": True,
+                "active_sharing_link": True,
+                "family_sharing_consent": False,
+            },
+            "khong_co_quyen",
+        ),
+        (
+            "sharing_off",
+            {
+                "purpose_consent": True,
+                "active_sharing_link": False,
+                "family_sharing_consent": True,
+            },
+            "khong_co_quyen",
+        ),
+        (
+            "link_revoked",
+            {
+                "purpose_consent": True,
+                "active_sharing_link": False,
+                "family_sharing_consent": True,
+            },
+            "khong_co_quyen",
+        ),
+        (
+            "other_patient_swap",
+            {
+                "purpose_consent": True,
+                "active_sharing_link": False,
+                "family_sharing_consent": False,
+            },
+            "khong_co_quyen",
+        ),
+        (
+            "pending_deletion",
+            {
+                "purpose_consent": True,
+                "active_sharing_link": True,
+                "family_sharing_consent": True,
+                "pending_deletion": True,
+            },
+            "family",
+        ),
+    ],
+)
+def test_family_revocation_matrix_via_real_pep_rules__TC_BE_01_06(
+    case, facts_kw, expected_role
+):
+    """Task 5.22 (PB27): unit-level PEP check across all 6 FM denial/revocation states."""
+    from drugtime.modules.access.domain.rules import AccessFacts, ActorRole, Scope
+
+    patient_id = uuid4()
+    family = identity.CurrentUser(id=uuid4(), is_admin=False)
+    client = _client(user=family)
+    facts = AccessFacts(
+        caller_id=family.id,
+        caller_is_admin=False,
+        patient_id=patient_id,
+        **facts_kw,
+    )
+    fake_reader = MagicMock()
+    fake_reader.read.return_value = facts
+    fake_log = MagicMock()
+
+    with patch("drugtime.modules.access.api.ModuleFactsReader", return_value=fake_reader), patch(
+        "drugtime.modules.access.api.SqlAccessLog", return_value=fake_log
+    ):
+        resp = client.post(f"/patients/{patient_id}/interaction-checks", json={})
+
+    assert resp.status_code == 403, f"{case}: {resp.text}"
+    assert resp.json() == {"detail": "khong_co_quyen"}
+    assert "disclaimer" not in resp.text and "interactions" not in resp.text
+    fake_log.append_allowed.assert_not_called()
+    fake_log.append_denied.assert_called_once_with(
+        family.id,
+        ActorRole(expected_role),
+        patient_id,
+        Scope.INTERACTIONS,
+        "khong_co_quyen",
+    )
+
+
+def test_family_and_patient_response_parity__TC_BE_07_08(uow_box):
+    """Task 5.22 (PB27): FM và Patient nhận kết quả interaction-checks giống hệt nhau
+    (cả bộ thuốc đang dùng lẫn bộ lọc medication_ids + candidate_medication_id)."""
+    from drugtime.modules.access.domain.rules import AccessFacts, ActorRole, Scope
+
+    patient_id = uuid4()
+    patient = identity.CurrentUser(id=patient_id, is_admin=False)
+    family = identity.CurrentUser(id=uuid4(), is_admin=False)
+
+    med_a = CatalogMedication(
+        id=100,
+        name="Warfarin 5mg",
+        strength_text="5mg",
+        dosage_form="Viên nén",
+        has_active_ingredients=True,
+    )
+    med_b = CatalogMedication(
+        id=200,
+        name="Aspirin 81mg",
+        strength_text="81mg",
+        dosage_form="Viên nén",
+        has_active_ingredients=True,
+    )
+    med_c = CatalogMedication(
+        id=300,
+        name="Thảo dược chưa có hoạt chất",
+        strength_text=None,
+        dosage_form="Gói",
+        has_active_ingredients=False,
+    )
+    med_map = {100: med_a, 200: med_b, 300: med_c}
+    ing_map = {100: [1], 200: [2], 300: []}
+
+    rule = RuleRecord(
+        content=DrugInteractionContent(
+            ingredient_a_id=1,
+            ingredient_b_id=2,
+            ingredient_b_external_name=None,
+            interaction_type=InteractionType.CONTRAINDICATED,
+            severity_level=4,
+            handling_type=HandlingType.AVOID,
+            min_interval_hours=None,
+            description="Nguy cơ xuất huyết nặng.",
+            source="Dược thư Quốc gia Việt Nam",
+        ),
+        meta=MagicMock(),
+    )
+
+    active_rows = [
+        MagicMock(medication_id=100, quantity_per_dose=1.0),
+        MagicMock(medication_id=200, quantity_per_dose=1.0),
+        MagicMock(medication_id=300, quantity_per_dose=1.0),
+    ]
+    uow_box["uow"].connection.execute.return_value.all.return_value = active_rows
+
+    def read_facts(_uow, caller_id, caller_is_admin, target_patient_id, _scope):
+        return AccessFacts(
+            caller_id=caller_id,
+            caller_is_admin=caller_is_admin,
+            patient_id=target_patient_id,
+            purpose_consent=True,
+            active_sharing_link=True,
+            family_sharing_consent=True,
+        )
+
+    fake_reader = MagicMock()
+    fake_reader.read.side_effect = read_facts
+    fake_log = MagicMock()
+
+    payloads = [
+        {},
+        {"medication_ids": [100, 200]},
+        {"medication_ids": [100], "candidate_medication_id": 200},
+    ]
+    with patch("drugtime.modules.access.api.ModuleFactsReader", return_value=fake_reader), patch(
+        "drugtime.modules.access.api.SqlAccessLog", return_value=fake_log
+    ), patch(
+        f"{APP_SERVICE}.catalog.get_medication",
+        side_effect=lambda _uow, mid, include_deleted=True: med_map.get(mid),
+    ), patch(
+        f"{APP_SERVICE}.catalog.ingredient_ids_of_medication",
+        side_effect=lambda _uow, mid: ing_map.get(mid, []),
+    ), patch(
+        f"{APP_SERVICE}.catalog.ingredient_names",
+        return_value={1: "Warfarin", 2: "Aspirin"},
+    ), patch(
+        f"{APP_SERVICE}.SqlDrugInteractions.active_rules_for_ingredients",
+        return_value=[rule],
+    ):
+        patient_client = _client(user=patient)
+        family_client = _client(user=family)
+        for body in payloads:
+            r_p = patient_client.post(f"/patients/{patient_id}/interaction-checks", json=body)
+            r_f = family_client.post(f"/patients/{patient_id}/interaction-checks", json=body)
+            assert r_p.status_code == 200 and r_f.status_code == 200
+            assert r_f.json() == r_p.json()
+            assert r_f.json()["disclaimer"] == NFR03_DISCLAIMER
+            assert r_f.json()["status"] == "co_tuong_tac"
+            assert r_f.json()["interactions"][0]["severity_level"] == 4
+            assert r_f.json()["interactions"][0]["handling_type"] == "tranh_phoi_hop"
+
+    fm_allowed = [
+        call.args
+        for call in fake_log.append_allowed.call_args_list
+        if call.args[1] == family.id
+    ]
+    assert len(fm_allowed) == len(payloads)
+    assert all(
+        args[2] is ActorRole.FAMILY and args[3] == patient_id and args[4] is Scope.INTERACTIONS
+        for args in fm_allowed
+    )

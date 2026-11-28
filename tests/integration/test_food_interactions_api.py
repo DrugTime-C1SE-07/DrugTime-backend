@@ -306,3 +306,45 @@ def test_catalog_deleted_medication_still_evaluated__AC23(
         "co_tuong_tac",
     )
     assert make.medication_row(um) == before
+
+
+def test_family_food_interactions_parity_with_patient__TC_BE_09_11(
+    client, make, auth, admin_auth, scheduled_body
+):
+    """Task 5.25 (PB28): kết quả food-interactions trả cho người thân khớp y hệt bệnh nhân
+    trên đủ 3 trạng thái (co_tuong_tac, da_kiem_tra_khong_thay, khong_du_du_lieu) và disclaimer."""
+    _, admin_h = admin_auth
+    p = make.user()
+    family = make.family_of(p)
+    x, z = make.ingredient(), make.ingredient()
+    _rule(client, admin_h, x, "Rượu và đồ uống có cồn", 4, "Phản ứng disulfiram", "Dược thư")
+
+    um_found = _add(client, auth, p, scheduled_body, make.medication_with([x]))
+    um_none = _add(client, auth, p, scheduled_body, make.medication_with([z]))
+    um_insuff = _add(
+        client, auth, p, scheduled_body, make.catalog_medication(with_ingredient=False)
+    )
+
+    cases = [
+        ({}, "co_tuong_tac"),
+        ({"user_medication_id": um_found}, "co_tuong_tac"),
+        ({"user_medication_id": um_none}, "da_kiem_tra_khong_thay"),
+        ({"user_medication_id": um_insuff}, "khong_du_du_lieu"),
+    ]
+    for params, expected_status in cases:
+        patient_body = _ok(_lookup(client, auth, p, p, **params))
+        family_body = _ok(_lookup(client, auth, family, p, **params))
+        assert patient_body["status"] == expected_status
+        assert family_body["status"] == expected_status
+        assert family_body["disclaimer"] == DISCLAIMER
+        assert {k: v for k, v in family_body.items() if k != "as_of"} == {
+            k: v for k, v in patient_body.items() if k != "as_of"
+        }
+
+    fm_logs = [row for row in make.access_logs(p) if row["actor_user_id"] == family]
+    assert len(fm_logs) == len(cases)
+    assert all(
+        (row["actor_role"], row["data_scope"], row["result"], row["rejection_reason"])
+        == ("family", "canh_bao_tuong_tac", "allowed", None)
+        for row in fm_logs
+    )
